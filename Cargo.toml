@@ -8,4 +8,5 @@ edition = "2018"
 
 [dependencies]
 nom = "6"
+nom_locate = "3"
 #structopt = "0.3"
