@@ -50,33 +50,33 @@ struct Instruction<'a> {
     addressing_mode: LocatedAddressingMode<'a>,
 }
 
-fn immediate_byte(data: Span) -> IResult<Span, u8> {
+fn immediate_byte(input: Span) -> IResult<Span, u8> {
     alt((
         preceded(tag("$"), hex_u8),
         dec_u8
-    ))(data)
+    ))(input)
 }
 
-fn addressing_mode(data: Span) -> IResult<Span, LocatedAddressingMode> {
-    let (data, position) = position(data)?;
-    let (data, mode) = alt((
+fn addressing_mode(input: Span) -> IResult<Span, LocatedAddressingMode> {
+    let (input, position) = position(input)?;
+    let (input, data) = alt((
         map( preceded(tag("#"), immediate_byte), |val: u8| AddressingMode::Immediate(ImmediateValue::Constant(val))),
         map( tag(""), |_| AddressingMode::Implied)
-    ))(data)?;
-    Ok((data, LocatedAddressingMode { position, data: mode }))
+    ))(input)?;
+    Ok((input, LocatedAddressingMode { position, data }))
 }
 
-fn instruction(data: Span) -> IResult<Span, Instruction> {
+fn instruction(input: Span) -> IResult<Span, Instruction> {
     map(
         tuple((ws(Mnemonic::parse), ws(addressing_mode))),
         |(mnemonic, addressing_mode)| {
             Instruction { mnemonic, addressing_mode }
         }
-    )(data)
+    )(input)
 }
 
-fn parse(data: Span) -> IResult<Span, Vec<Instruction>> {
-    all_consuming(many1(instruction))(data)
+fn parse(input: Span) -> IResult<Span, Vec<Instruction>> {
+    all_consuming(many1(instruction))(input)
 }
 
 #[cfg(test)]

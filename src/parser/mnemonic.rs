@@ -78,10 +78,10 @@ macro_rules! parse_mnemonic {
 }
 
 impl Mnemonic {
-    pub(super) fn parse(data: Span) -> IResult<Span, LocatedMnemonic> {
-        let (data, position) = position(data)?;
+    pub(super) fn parse(input: Span) -> IResult<Span, LocatedMnemonic> {
+        let (input, position) = position(input)?;
 
-        let (data, mnemonic) = alt((
+        let (input, data) = alt((
             alt((
                 parse_mnemonic!("adc", Mnemonic::Adc),
                 parse_mnemonic!("and", Mnemonic::And),
@@ -144,8 +144,8 @@ impl Mnemonic {
                 parse_mnemonic!("txs", Mnemonic::Txs),
                 parse_mnemonic!("tya", Mnemonic::Tya),
             ))
-        ))(data)?;
+        ))(input)?;
 
-        Ok((data, LocatedMnemonic { position, data: mnemonic }))
+        Ok((input, LocatedMnemonic { position, data }))
     }
 }
