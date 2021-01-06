@@ -51,53 +51,67 @@ struct Instruction<'a> {
     addressing_mode: LocatedAddressingMode<'a>,
 }
 
-fn absolute_xy_indexed<'a>(input: Span<'a>, register: &'a str) -> IResult<Span<'a>, u16> {
-    terminated(
-        terminated(hexdec_u16, ws(tag_no_case(","))),
-        ws(tag_no_case(register)),
+#[derive(Debug, PartialEq)]
+enum Token<'a> {
+    Instruction(Instruction<'a>),
+}
+
+fn absolute_xy_indexed<'a>(
+    input: Span<'a>,
+    register: &'a str,
+) -> IResult<Span<'a>, AddressedValue> {
+    map(
+        terminated(
+            terminated(hexdec_u16, ws(tag_no_case(","))),
+            ws(tag_no_case(register)),
+        ),
+        |val: u16| AddressedValue::U16(val),
     )(input)
 }
 
-fn absolute_x_indexed(input: Span) -> IResult<Span, u16> {
+fn absolute_x_indexed(input: Span) -> IResult<Span, AddressedValue> {
     absolute_xy_indexed(input, "x")
 }
 
-fn absolute_y_indexed(input: Span) -> IResult<Span, u16> {
+fn absolute_y_indexed(input: Span) -> IResult<Span, AddressedValue> {
     absolute_xy_indexed(input, "y")
 }
 
-fn zp_xy_indexed<'a>(input: Span<'a>, register: &'a str) -> IResult<Span<'a>, u8> {
-    terminated(
-        terminated(hexdec_u8, ws(tag_no_case(","))),
-        ws(tag_no_case(register)),
+fn zp_xy_indexed<'a>(input: Span<'a>, register: &'a str) -> IResult<Span<'a>, AddressedValue> {
+    map(
+        terminated(
+            terminated(hexdec_u8, ws(tag_no_case(","))),
+            ws(tag_no_case(register)),
+        ),
+        |val: u8| AddressedValue::U8(val),
     )(input)
 }
 
-fn zp_x_indexed(input: Span) -> IResult<Span, u8> {
+fn zp_x_indexed(input: Span) -> IResult<Span, AddressedValue> {
     zp_xy_indexed(input, "x")
 }
 
-fn zp_y_indexed(input: Span) -> IResult<Span, u8> {
+fn zp_y_indexed(input: Span) -> IResult<Span, AddressedValue> {
     zp_xy_indexed(input, "y")
 }
 
-fn constant_u8(input: Span) -> IResult<Span, u8> {
-    hexdec_u8(input)
+fn constant_u8(input: Span) -> IResult<Span, AddressedValue> {
+    map(hexdec_u8, |val: u8| AddressedValue::U8(val))(input)
 }
 
-fn constant_u16(input: Span) -> IResult<Span, u16> {
-    hexdec_u16(input)
+fn constant_u16(input: Span) -> IResult<Span, AddressedValue> {
+    map(hexdec_u16, |val: u16| AddressedValue::U16(val))(input)
 }
 
-fn indirect_u8(input: Span) -> IResult<Span, u8> {
+fn indirect_u8(input: Span) -> IResult<Span, AddressedValue> {
     terminated(preceded(ws(tag("(")), constant_u8), ws(tag(")")))(input)
 }
 
-fn indirect_u16(input: Span) -> IResult<Span, u16> {
+fn indirect_u16(input: Span) -> IResult<Span, AddressedValue> {
     terminated(preceded(ws(tag("(")), constant_u16), ws(tag(")")))(input)
 }
 
-fn x_indexed_indirect(input: Span) -> IResult<Span, u8> {
+fn x_indexed_indirect(input: Span) -> IResult<Span, AddressedValue> {
     terminated(
         preceded(
             ws(tag("(")),
@@ -110,7 +124,7 @@ fn x_indexed_indirect(input: Span) -> IResult<Span, u8> {
     )(input)
 }
 
-fn indirect_y_indexed(input: Span) -> IResult<Span, u8> {
+fn indirect_y_indexed(input: Span) -> IResult<Span, AddressedValue> {
     terminated(
         preceded(
             ws(tag("(")),
@@ -123,36 +137,26 @@ fn indirect_y_indexed(input: Span) -> IResult<Span, u8> {
 fn addressing_mode(input: Span) -> IResult<Span, LocatedAddressingMode> {
     let (input, position) = position(input)?;
     let (input, data) = alt((
-        map(absolute_x_indexed, |val: u16| {
-            AddressingMode::AbsoluteXIndexed(AddressedValue::U16(val))
+        map(absolute_x_indexed, |val| {
+            AddressingMode::AbsoluteXIndexed(val)
         }),
-        map(absolute_y_indexed, |val: u16| {
-            AddressingMode::AbsoluteYIndexed(AddressedValue::U16(val))
+        map(absolute_y_indexed, |val| {
+            AddressingMode::AbsoluteYIndexed(val)
         }),
-        map(constant_u16, |val: u16| {
-            AddressingMode::Absolute(AddressedValue::U16(val))
+        map(constant_u16, |val| AddressingMode::Absolute(val)),
+        map(indirect_u16, |val| AddressingMode::Indirect(val)),
+        map(x_indexed_indirect, |val| {
+            AddressingMode::XIndexedIndirect(val)
         }),
-        map(indirect_u16, |val: u16| {
-            AddressingMode::Indirect(AddressedValue::U16(val))
+        map(indirect_y_indexed, |val| {
+            AddressingMode::IndirectYIndexed(val)
         }),
-        map(x_indexed_indirect, |val: u8| {
-            AddressingMode::XIndexedIndirect(AddressedValue::U8(val))
+        map(preceded(tag("#"), constant_u8), |val| {
+            AddressingMode::Immediate(val)
         }),
-        map(indirect_y_indexed, |val: u8| {
-            AddressingMode::IndirectYIndexed(AddressedValue::U8(val))
-        }),
-        map(preceded(tag("#"), constant_u8), |val: u8| {
-            AddressingMode::Immediate(AddressedValue::U8(val))
-        }),
-        map(zp_x_indexed, |val: u8| {
-            AddressingMode::ZpXIndexed(AddressedValue::U8(val))
-        }),
-        map(zp_y_indexed, |val: u8| {
-            AddressingMode::ZpYIndexed(AddressedValue::U8(val))
-        }),
-        map(constant_u8, |val: u8| {
-            AddressingMode::RelativeOrZp(AddressedValue::U8(val))
-        }),
+        map(zp_x_indexed, |val| AddressingMode::ZpXIndexed(val)),
+        map(zp_y_indexed, |val| AddressingMode::ZpYIndexed(val)),
+        map(constant_u8, |val| AddressingMode::RelativeOrZp(val)),
         map(tag(""), |_| AddressingMode::Implied),
     ))(input)?;
     Ok((input, LocatedAddressingMode { position, data }))
@@ -168,8 +172,8 @@ fn instruction(input: Span) -> IResult<Span, Instruction> {
     )(input)
 }
 
-fn parse(input: Span) -> IResult<Span, Vec<Instruction>> {
-    all_consuming(many1(instruction))(input)
+fn parse(input: Span) -> IResult<Span, Vec<Token>> {
+    all_consuming(many1(map(instruction, |i| Token::Instruction(i))))(input)
 }
 
 #[cfg(test)]
@@ -178,7 +182,7 @@ mod tests {
 
     #[test]
     fn can_parse() {
-        let asm = Span::new("lda #$0c\nbrk\nadc #1\ncmp #2");
+        let asm = Span::new("lda #$0c brk adc #1 cmp #2");
         let result = parse(asm);
         let (remaining, parsed) = result.unwrap();
         assert_eq!(remaining.len(), 0);
@@ -194,104 +198,113 @@ mod tests {
 
     #[test]
     fn test_locations() {
-        let i = parse(Span::new("lda #255")).unwrap().1;
-        assert_eq!(i[0].mnemonic.position.get_column(), 1);
-        assert_eq!(i[0].addressing_mode.position.get_column(), 5);
+        let i = test_instruction("lda #255");
+        assert_eq!(i.mnemonic.position.get_column(), 1);
+        assert_eq!(i.addressing_mode.position.get_column(), 5);
     }
 
     #[test]
     fn test_am_absolute_constant() {
-        let i = parse(Span::new("lda $fce2")).unwrap().1;
+        let i = test_instruction("lda $fce2");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::Absolute(AddressedValue::U16(64738))
         );
     }
 
     #[test]
     fn test_am_absolute_x_indexed_constant() {
-        let i = parse(Span::new("lda $fce2   , x")).unwrap().1;
+        let i = test_instruction("lda $fce2   , x");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::AbsoluteXIndexed(AddressedValue::U16(64738))
         );
     }
 
     #[test]
     fn test_am_absolute_y_indexed_constant() {
-        let i = parse(Span::new("lda $fce2   , Y")).unwrap().1;
+        let i = test_instruction("lda $fce2   , Y");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::AbsoluteYIndexed(AddressedValue::U16(64738))
         );
     }
 
     #[test]
     fn test_am_immediate_constant() {
-        let i = parse(Span::new("lda #255")).unwrap().1;
+        let i = test_instruction("lda #255");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::Immediate(AddressedValue::U8(255))
         );
     }
 
     #[test]
     fn test_am_implied() {
-        let i = parse(Span::new("rol")).unwrap().1;
-        assert_eq!(i[0].addressing_mode.data, AddressingMode::Implied);
+        let i = test_instruction("rol");
+        assert_eq!(i.addressing_mode.data, AddressingMode::Implied);
     }
 
     #[test]
     fn test_am_indirect_constant() {
-        let i = parse(Span::new("jsr   (  $fce2 )")).unwrap().1;
+        let i = test_instruction("jsr   (  $fce2 )");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::Indirect(AddressedValue::U16(64738))
         );
     }
 
     #[test]
     fn test_am_x_indexed_indirect() {
-        let i = parse(Span::new("sta ( $  fb , x  )")).unwrap().1;
+        let i = test_instruction("sta ( $  fb , x  )");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::XIndexedIndirect(AddressedValue::U8(0xfb))
         );
     }
 
     #[test]
     fn test_am_indirect_y_indexed() {
-        let i = parse(Span::new("sta ( $  fb ) , y")).unwrap().1;
+        let i = test_instruction("sta ( $  fb ) , y");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::IndirectYIndexed(AddressedValue::U8(0xfb))
         );
     }
 
     #[test]
     fn test_am_relative_or_zp() {
-        let i = parse(Span::new("bne $3f")).unwrap().1;
+        let i = test_instruction("bne $3f");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::RelativeOrZp(AddressedValue::U8(0x3f))
         );
     }
 
     #[test]
     fn test_am_zp_x_indexed() {
-        let i = parse(Span::new("dec $3f , x")).unwrap().1;
+        let i = test_instruction("dec $3f , x");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::ZpXIndexed(AddressedValue::U8(0x3f))
         );
     }
 
     #[test]
     fn test_am_zp_y_indexed() {
-        let i = parse(Span::new("stx $3f , y")).unwrap().1;
+        let i = test_instruction("stx $3f , y");
         assert_eq!(
-            i[0].addressing_mode.data,
+            i.addressing_mode.data,
             AddressingMode::ZpYIndexed(AddressedValue::U8(0x3f))
         );
+    }
+
+    fn test_instruction(input: &str) -> Instruction {
+        let mut tokens = parse(Span::new(input)).unwrap().1;
+        let token = tokens.pop().unwrap();
+        match token {
+            Token::Instruction(i) => i,
+            //_ => panic!(),
+        }
     }
 }
