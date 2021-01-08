@@ -68,9 +68,11 @@ fn inside_c_comment<'a, E: ParseError<Span<'a>>>(
 ) -> IResult<Span<'a>, Span<'a>, E> {
     // Once we're inside a C comment, we don't care about anything except perhaps another /*
     let (input, _) = take_until("/*")(input)?;
+
+    // Found another /*, so let's consume it
     let (input, _) = tag("/*")(input)?;
 
-    // Found another /*, so now we either recurse or we go on until the matching */
+    // Found another /*, so now we either recurse or we go on until we're at the closing */
     let (input, _) = map(
         value(
             (),
@@ -79,7 +81,7 @@ fn inside_c_comment<'a, E: ParseError<Span<'a>>>(
         |_| Span::new(""),
     )(input)?;
 
-    // Ignore any trailing characters until we're up to the next */, so the outer function can deal with that
+    // Ignore any trailing characters until we're up to the next (one level up) */, so the outer function can deal with that
     take_until("*/")(input)
 }
 
