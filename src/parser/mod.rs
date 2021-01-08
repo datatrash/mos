@@ -1,14 +1,15 @@
 #![allow(dead_code, unused_imports)]
 
+use mnemonic::*;
 use nom::branch::alt;
-use nom::bytes::complete::{tag, tag_no_case};
-use nom::combinator::{all_consuming, map};
+use nom::bytes::complete::{is_not, tag, tag_no_case};
+use nom::character::complete::char;
+use nom::combinator::{all_consuming, map, value};
+use nom::error::ParseError;
 use nom::multi::{many0, many1};
-use nom::sequence::{preceded, terminated, tuple};
+use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::IResult;
 use nom_locate::{position, LocatedSpan};
-
-use mnemonic::*;
 use parse_tools::*;
 
 mod mnemonic;
@@ -25,12 +26,11 @@ enum AddressedValue {
 
 #[derive(Debug, PartialEq)]
 enum AddressingMode {
-    Accumulator,
     Absolute(AddressedValue),
     AbsoluteXIndexed(AddressedValue),
     AbsoluteYIndexed(AddressedValue),
     Immediate(AddressedValue),
-    Implied,
+    ImpliedOrAccumulator,
     Indirect(AddressedValue),
     IndirectYIndexed(AddressedValue),
     RelativeOrZp(AddressedValue),
@@ -157,7 +157,7 @@ fn addressing_mode(input: Span) -> IResult<Span, LocatedAddressingMode> {
         map(zp_x_indexed, |val| AddressingMode::ZpXIndexed(val)),
         map(zp_y_indexed, |val| AddressingMode::ZpYIndexed(val)),
         map(constant_u8, |val| AddressingMode::RelativeOrZp(val)),
-        map(tag(""), |_| AddressingMode::Implied),
+        map(tag(""), |_| AddressingMode::ImpliedOrAccumulator),
     ))(input)?;
     Ok((input, LocatedAddressingMode { position, data }))
 }
@@ -181,12 +181,21 @@ mod tests {
     use crate::parser::*;
 
     #[test]
-    fn can_parse() {
+    fn can_parse_multiple_statements_on_line() {
         let asm = Span::new("lda #$0c brk adc #1 cmp #2");
         let result = parse(asm);
         let (remaining, parsed) = result.unwrap();
         assert_eq!(remaining.len(), 0);
         assert_eq!(parsed.len(), 4);
+    }
+
+    #[test]
+    fn can_parse_with_comments() {
+        let asm = Span::new("lda #$0c /*foo!*/ brk");
+        let result = parse(asm);
+        let (remaining, parsed) = result.unwrap();
+        assert_eq!(remaining.len(), 0);
+        assert_eq!(parsed.len(), 2);
     }
 
     #[test]
@@ -242,7 +251,7 @@ mod tests {
     #[test]
     fn test_am_implied() {
         let i = test_instruction("rol");
-        assert_eq!(i.addressing_mode.data, AddressingMode::Implied);
+        assert_eq!(i.addressing_mode.data, AddressingMode::ImpliedOrAccumulator);
     }
 
     #[test]
