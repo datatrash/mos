@@ -87,7 +87,14 @@ fn inside_c_comment<'a, E: ParseError<Span<'a>>>(
 
 fn c_comment<'a, E: ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
     map(
-        value((), tuple((tag("/*"), inside_c_comment, tag("*/")))),
+        value(
+            (),
+            tuple((
+                tag("/*"),
+                alt((inside_c_comment, take_until("*/"))),
+                tag("*/"),
+            )),
+        ),
         |_| Span::new(""),
     )(input)
 }
@@ -127,6 +134,19 @@ mod tests {
     #[test]
     fn can_ignore_cpp_comments() {
         let input = Span::new("   foo // hello  \n   bar");
+        let parser: IResult<Span, Vec<Span>> = many0(alt((ws(tag("foo")), ws(tag("bar")))))(input);
+        let fragments: Vec<&str> = parser
+            .unwrap()
+            .1
+            .into_iter()
+            .map(|span| span.fragment().clone())
+            .collect();
+        assert_eq!(fragments, vec!["foo", "bar"]);
+    }
+
+    #[test]
+    fn can_ignore_unnested_c_comments() {
+        let input = Span::new("   foo /* hello */   \n   bar");
         let parser: IResult<Span, Vec<Span>> = many0(alt((ws(tag("foo")), ws(tag("bar")))))(input);
         let fragments: Vec<&str> = parser
             .unwrap()
