@@ -186,7 +186,7 @@ fn instruction(input: Span) -> IResult<Span, Instruction> {
 }
 
 fn label(input: Span) -> IResult<Span, Span> {
-    terminated(identifier, char(':'))(input)
+    map(ws(terminated(identifier, char(':'))), |id| id)(input)
 }
 
 fn parse(input: Span) -> IResult<Span, Vec<Token>> {
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_label() {
-        let mut tokens = parse(Span::new("my_label  :")).unwrap().1;
+        let mut tokens = parse(Span::new("      my_label:  ")).unwrap().1;
         let token = tokens.pop().unwrap();
         match token {
             Token::Label(i) => assert_eq!(i, "my_label"),

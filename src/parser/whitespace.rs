@@ -63,10 +63,10 @@ where
 }
 
 pub(super) fn identifier(input: Span) -> IResult<Span, Span> {
-    ws(recognize(pair(
+    recognize(pair(
         alt((alpha1, tag("_"))),
         many0(alt((alphanumeric1, tag("_")))),
-    )))(input)
+    ))(input)
 }
 
 pub(super) fn eof_or_eol<'a, E: 'a + ParseError<Span<'a>>>(
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn can_parse_identifier() {
         assert_eq!(
-            identifier(Span::new("      hello_there  "))
+            delimited(multispace1, identifier, multispace1)(Span::new("      hello_there  "))
                 .unwrap()
                 .1
                 .fragment(),
