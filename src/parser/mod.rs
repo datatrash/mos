@@ -62,7 +62,7 @@ enum Token<'a> {
 
 fn addressed_value_u8(input: Span) -> IResult<Span, AddressedValue> {
     alt((
-        map(hexdec_u8, |val: u8| AddressedValue::U8(val)),
+        map(hexdec_u8, AddressedValue::U8),
         map(identifier, |val: Span| {
             AddressedValue::Label(val.fragment())
         }),
@@ -71,7 +71,7 @@ fn addressed_value_u8(input: Span) -> IResult<Span, AddressedValue> {
 
 fn addressed_value_u16(input: Span) -> IResult<Span, AddressedValue> {
     alt((
-        map(hexdec_u16, |val: u16| AddressedValue::U16(val)),
+        map(hexdec_u16, AddressedValue::U16),
         map(identifier, |val: Span| {
             AddressedValue::Label(val.fragment())
         }),
@@ -163,13 +163,13 @@ fn addressing_mode(input: Span) -> IResult<Span, LocatedAddressingMode> {
         map(preceded(tag("#"), addressed_value_u8), |val| {
             AddressingMode::Immediate(val)
         }),
-        map(zp_x_indexed, |val| AddressingMode::ZpXIndexed(val)),
-        map(zp_y_indexed, |val| AddressingMode::ZpYIndexed(val)),
-        map(indirect_u16, |val| AddressingMode::Indirect(val)),
+        map(zp_x_indexed, AddressingMode::ZpXIndexed),
+        map(zp_y_indexed, AddressingMode::ZpYIndexed),
+        map(indirect_u16, AddressingMode::Indirect),
         map(hexdec_u8, |val| {
             AddressingMode::RelativeOrZp(AddressedValue::U8(val))
         }),
-        map(addressed_value_u16, |val| AddressingMode::Absolute(val)),
+        map(addressed_value_u16, AddressingMode::Absolute),
         map(tag(""), |_| AddressingMode::ImpliedOrAccumulator),
     ))(input)?;
     Ok((input, LocatedAddressingMode { position, data }))
@@ -193,7 +193,7 @@ fn parse(input: Span) -> IResult<Span, Vec<Token>> {
     all_consuming(many1(map(
         tuple((
             alt((
-                map(instruction, |i| Token::Instruction(i)),
+                map(instruction, Token::Instruction),
                 map(label, |s| Token::Label(s.fragment())),
             )),
             eof_or_eol(),
