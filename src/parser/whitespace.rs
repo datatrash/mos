@@ -75,6 +75,7 @@ pub(super) fn eof_or_eol<'a, E: 'a + ParseError<Span<'a>>>(
     alt((eol, eof))
 }
 
+#[allow(clippy::clone_double_ref)]
 #[cfg(test)]
 mod tests {
     use super::Span;

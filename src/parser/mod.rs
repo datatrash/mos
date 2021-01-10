@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
-use ast::*;
+pub use ast::*;
+
 use mnemonic::*;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, tag_no_case};
@@ -149,7 +150,7 @@ fn label(input: Span) -> IResult<Span, Span> {
     map(ws(terminated(identifier, char(':'))), |id| id)(input)
 }
 
-fn parse(input: Span) -> IResult<Span, Vec<Token>> {
+pub(crate) fn parse<'a, S: Into<Span<'a>>>(input: S) -> IResult<Span<'a>, Vec<Token<'a>>> {
     all_consuming(many1(map(
         tuple((
             alt((
@@ -159,7 +160,7 @@ fn parse(input: Span) -> IResult<Span, Vec<Token>> {
             eof_or_eol(),
         )),
         |(token, _)| token,
-    )))(input)
+    )))(input.into())
 }
 
 #[cfg(test)]
@@ -168,15 +169,13 @@ mod tests {
 
     #[test]
     fn cannot_parse_multiple_statements_on_line() {
-        let asm = Span::new("lda #$0c brk adc #1 cmp #2");
-        let result = parse(asm);
+        let result = parse("lda #$0c brk adc #1 cmp #2");
         let _ = result.unwrap_err();
     }
 
     #[test]
     fn can_parse_with_comments() {
-        let asm = Span::new("lda #$0c /*foo!*/\nbrk");
-        let result = parse(asm);
+        let result = parse("lda #$0c /*foo!*/\nbrk");
         let (remaining, parsed) = result.unwrap();
         assert_eq!(remaining.len(), 0);
         assert_eq!(parsed.len(), 2);
@@ -184,8 +183,7 @@ mod tests {
 
     #[test]
     fn can_fail_parsing() {
-        let asm = Span::new("invalid");
-        let result = parse(asm);
+        let result = parse("invalid");
         let _ = result.unwrap_err();
     }
 
@@ -384,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_label() {
-        let mut tokens = parse(Span::new("      my_label:  ")).unwrap().1;
+        let mut tokens = parse("      my_label:  ").unwrap().1;
         let token = tokens.pop().unwrap();
         match token {
             Token::Label(i) => assert_eq!(i, "my_label"),

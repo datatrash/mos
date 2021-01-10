@@ -2,16 +2,25 @@ use nom_locate::LocatedSpan;
 
 use super::mnemonic;
 
-pub(crate) type Span<'a> = LocatedSpan<&'a str>;
+pub type Span<'a> = LocatedSpan<&'a str>;
 #[derive(Debug, PartialEq)]
-pub(crate) enum AddressedValue<'a> {
+pub enum AddressedValue<'a> {
     U8(u8),
     U16(u16),
     Label(&'a str),
 }
 
+impl<'a> AddressedValue<'a> {
+    pub fn try_u8(&self) -> Option<u8> {
+        match &self {
+            AddressedValue::U8(val) => Some(*val),
+            _ => None
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
-pub(crate) enum AddressingMode<'a> {
+pub enum AddressingMode<'a> {
     Absolute(AddressedValue<'a>),
     AbsoluteXIndexed(AddressedValue<'a>),
     AbsoluteYIndexed(AddressedValue<'a>),
@@ -26,13 +35,13 @@ pub(crate) enum AddressingMode<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct LocatedAddressingMode<'a> {
-    pub(crate) position: Span<'a>,
-    pub(crate) data: AddressingMode<'a>,
+pub struct LocatedAddressingMode<'a> {
+    pub position: Span<'a>,
+    pub data: AddressingMode<'a>,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Mnemonic {
+pub enum Mnemonic {
     Adc,
     And,
     Asl,
@@ -92,19 +101,28 @@ pub(crate) enum Mnemonic {
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct LocatedMnemonic<'a> {
+pub struct LocatedMnemonic<'a> {
     pub position: Span<'a>,
     pub data: Mnemonic
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct Instruction<'a> {
-    pub(crate) mnemonic: LocatedMnemonic<'a>,
-    pub(crate) addressing_mode: LocatedAddressingMode<'a>,
+pub struct Instruction<'a> {
+    pub mnemonic: LocatedMnemonic<'a>,
+    pub addressing_mode: LocatedAddressingMode<'a>,
+}
+
+impl<'a> Instruction<'a> {
+    pub fn new(mnemonic: Mnemonic, am: AddressingMode<'a>) -> Self {
+        Self {
+            mnemonic: LocatedMnemonic { position: Span::new(""), data: mnemonic },
+            addressing_mode: LocatedAddressingMode { position: Span::new(""), data: am },
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum Token<'a> {
+pub enum Token<'a> {
     Instruction(Instruction<'a>),
     Label(&'a str),
 }
