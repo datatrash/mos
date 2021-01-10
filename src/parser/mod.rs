@@ -1,6 +1,6 @@
 #![allow(dead_code, unused_imports)]
 
-use crate::parser::whitespace::{eof_or_eol, identifier, ws};
+use ast::*;
 use mnemonic::*;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, tag_no_case};
@@ -11,54 +11,14 @@ use nom::lib::std::ops::Add;
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::IResult;
-use nom_locate::{position, LocatedSpan};
+use nom_locate::position;
 use numbers::*;
+use whitespace::*;
 
+mod ast;
 mod mnemonic;
 mod numbers;
 mod whitespace;
-
-pub(crate) type Span<'a> = LocatedSpan<&'a str>;
-
-#[derive(Debug, PartialEq)]
-enum AddressedValue<'a> {
-    U8(u8),
-    U16(u16),
-    Label(&'a str),
-}
-
-#[derive(Debug, PartialEq)]
-enum AddressingMode<'a> {
-    Absolute(AddressedValue<'a>),
-    AbsoluteXIndexed(AddressedValue<'a>),
-    AbsoluteYIndexed(AddressedValue<'a>),
-    Immediate(AddressedValue<'a>),
-    ImpliedOrAccumulator,
-    Indirect(AddressedValue<'a>),
-    IndirectYIndexed(AddressedValue<'a>),
-    RelativeOrZp(AddressedValue<'a>),
-    XIndexedIndirect(AddressedValue<'a>),
-    ZpXIndexed(AddressedValue<'a>),
-    ZpYIndexed(AddressedValue<'a>),
-}
-
-#[derive(Debug, PartialEq)]
-struct LocatedAddressingMode<'a> {
-    position: Span<'a>,
-    data: AddressingMode<'a>,
-}
-
-#[derive(Debug, PartialEq)]
-struct Instruction<'a> {
-    mnemonic: LocatedMnemonic<'a>,
-    addressing_mode: LocatedAddressingMode<'a>,
-}
-
-#[derive(Debug, PartialEq)]
-enum Token<'a> {
-    Instruction(Instruction<'a>),
-    Label(&'a str),
-}
 
 fn addressed_value_u8(input: Span) -> IResult<Span, AddressedValue> {
     alt((
@@ -177,7 +137,7 @@ fn addressing_mode(input: Span) -> IResult<Span, LocatedAddressingMode> {
 
 fn instruction(input: Span) -> IResult<Span, Instruction> {
     map(
-        tuple((ws(Mnemonic::parse), ws(addressing_mode))),
+        tuple((ws(parse_mnemonic), ws(addressing_mode))),
         |(mnemonic, addressing_mode)| Instruction {
             mnemonic,
             addressing_mode,
