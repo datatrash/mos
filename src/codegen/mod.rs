@@ -87,8 +87,8 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn generate_instruction_bytes(&mut self, i: &'a Instruction) -> (u8, SmallVec<[u8; 2]>) {
-        match (&i.mnemonic.data, &i.addressing_mode.data) {
+    fn generate_instruction_bytes(&mut self, i: Instruction<'a>) -> (u8, SmallVec<[u8; 2]>) {
+        match (i.mnemonic.data, i.addressing_mode.data) {
             (Mnemonic::Jmp, am) => {
                 let opcode = match am {
                     AddressingMode::Absolute(_) => 0x4c,
@@ -109,7 +109,7 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn emit(&mut self, i: &'a Instruction) {
+    fn emit(&mut self, i: Instruction<'a>) {
         let (opcode, operands) = self.generate_instruction_bytes(i);
         let operands_len = operands.len() as u16;
         let segment = self.segments.get_mut(self.current_segment).unwrap();
@@ -144,16 +144,18 @@ impl<'a> CodegenContext<'a> {
     }
 }
 
-pub fn codegen<'a>(ast: &'a [Token<'a>], options: CodegenOptions) -> AsmResult<CodegenContext<'a>> {
+pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext> {
     let mut ctx = CodegenContext::new(options);
 
     // First pass
-    ast.iter().for_each(|token| match token {
-        Token::Label(label) => {
-            ctx.register_label(label);
+    for token in ast {
+        match token {
+            Token::Label(label) => {
+                ctx.register_label(label);
+            }
+            Token::Instruction(i) => ctx.emit(i),
         }
-        Token::Instruction(i) => ctx.emit(i),
-    });
+    }
 
     // Resolve passes
     while !ctx.to_resolve.is_empty() {
@@ -169,21 +171,22 @@ mod tests {
 
     #[test]
     fn most_basic_codegen() -> AsmResult<()> {
-        let ast = parse("LDA #123")?.1;
-        let ctx = codegen(&ast, CodegenOptions { pc: 0xc000 })?;
-        let segment = ctx.segment("Default").unwrap();
-        assert_eq!(segment.data, vec![0xa9, 123]);
-        assert_eq!(segment.pc, 0xc002);
+        let ctx = test_codegen("lda #123")?;
+        assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
+        assert_eq!(ctx.current_segment().pc, 0xc002);
         Ok(())
     }
 
     #[test]
     fn can_access_forward_declared_labels() -> AsmResult<()> {
-        let ast = parse("jmp my_label\nmy_label: nop")?.1;
-        let ctx = codegen(&ast, CodegenOptions { pc: 0xc000 })?;
-        let segment = ctx.segment("Default").unwrap();
-        assert_eq!(segment.data, vec![0x4c, 0x03, 0xc0, 0xea]);
-        assert_eq!(segment.pc, 0xc004);
+        let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
+        assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
+        assert_eq!(ctx.current_segment().pc, 0xc004);
         Ok(())
+    }
+
+    fn test_codegen<'a>(code: &'static str) -> AsmResult<CodegenContext<'a>> {
+        let ast = parse(code.clone())?.1;
+        codegen(ast, CodegenOptions { pc: 0xc000 })
     }
 }
