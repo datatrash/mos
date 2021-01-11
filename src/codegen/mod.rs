@@ -82,12 +82,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test() -> AsmResult<()> {
+    fn most_basic_codegen() -> AsmResult<()> {
         let ast = parse("LDA #123")?.1;
         let ctx = codegen(&ast, CodegenOptions { pc: 0xc000 })?;
         let segment = ctx.segment("Default").unwrap();
         assert_eq!(segment.data, vec![0xa9, 123]);
         assert_eq!(segment.pc, 0xc002);
+        Ok(())
+    }
+
+    #[test]
+    fn can_access_forward_declared_labels() -> AsmResult<()> {
+        let ast = parse("jmp my_label\nmy_label: nop")?.1;
         Ok(())
     }
 }

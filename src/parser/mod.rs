@@ -151,16 +151,12 @@ fn label(input: Span) -> IResult<Span, Span> {
 }
 
 pub(crate) fn parse<'a, S: Into<Span<'a>>>(input: S) -> IResult<Span<'a>, Vec<Token<'a>>> {
-    all_consuming(many1(map(
-        tuple((
-            alt((
-                map(instruction, Token::Instruction),
-                map(label, |s| Token::Label(s.fragment())),
-            )),
-            eof_or_eol(),
-        )),
-        |(token, _)| token,
-    )))(input.into())
+    all_consuming(many1(alt((
+        map(tuple((instruction, eof_or_eol())), |(i, _)| {
+            Token::Instruction(i)
+        }),
+        map(label, |s| Token::Label(s.fragment())),
+    ))))(input.into())
 }
 
 #[cfg(test)]
@@ -382,8 +378,8 @@ mod tests {
 
     #[test]
     fn test_label() {
-        let mut tokens = parse("      my_label:  ").unwrap().1;
-        let token = tokens.pop().unwrap();
+        let tokens = parse("      my_label:  nop").unwrap().1;
+        let token = tokens.into_iter().nth(0).unwrap();
         match token {
             Token::Label(i) => assert_eq!(i, "my_label"),
             _ => panic!(),
