@@ -14,7 +14,14 @@ impl<'a> AddressedValue<'a> {
     pub fn try_u8(&self) -> Option<u8> {
         match &self {
             AddressedValue::U8(val) => Some(*val),
-            _ => None
+            _ => None,
+        }
+    }
+
+    pub fn try_u16(&self) -> Option<u16> {
+        match &self {
+            AddressedValue::U16(val) => Some(*val),
+            _ => None,
         }
     }
 }
@@ -32,6 +39,24 @@ pub enum AddressingMode<'a> {
     XIndexedIndirect(AddressedValue<'a>),
     ZpXIndexed(AddressedValue<'a>),
     ZpYIndexed(AddressedValue<'a>),
+}
+
+impl<'a> AddressingMode<'a> {
+    pub fn value(&self) -> &AddressedValue<'a> {
+        match self {
+            AddressingMode::Absolute(val) => val,
+            AddressingMode::AbsoluteXIndexed(val) => val,
+            AddressingMode::AbsoluteYIndexed(val) => val,
+            AddressingMode::Immediate(val) => val,
+            AddressingMode::Indirect(val) => val,
+            AddressingMode::IndirectYIndexed(val) => val,
+            AddressingMode::RelativeOrZp(val) => val,
+            AddressingMode::XIndexedIndirect(val) => val,
+            AddressingMode::ZpXIndexed(val) => val,
+            AddressingMode::ZpYIndexed(val) => val,
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -103,7 +128,7 @@ pub enum Mnemonic {
 #[derive(Debug, PartialEq)]
 pub struct LocatedMnemonic<'a> {
     pub position: Span<'a>,
-    pub data: Mnemonic
+    pub data: Mnemonic,
 }
 
 #[derive(Debug, PartialEq)]
@@ -115,8 +140,14 @@ pub struct Instruction<'a> {
 impl<'a> Instruction<'a> {
     pub fn new(mnemonic: Mnemonic, am: AddressingMode<'a>) -> Self {
         Self {
-            mnemonic: LocatedMnemonic { position: Span::new(""), data: mnemonic },
-            addressing_mode: LocatedAddressingMode { position: Span::new(""), data: am },
+            mnemonic: LocatedMnemonic {
+                position: Span::new(""),
+                data: mnemonic,
+            },
+            addressing_mode: LocatedAddressingMode {
+                position: Span::new(""),
+                data: am,
+            },
         }
     }
 }

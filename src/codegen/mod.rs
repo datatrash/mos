@@ -2,6 +2,8 @@
 use std::collections::HashMap;
 
 use crate::{errors::AsmResult, parser::*};
+use smallvec::smallvec;
+use smallvec::SmallVec;
 
 pub struct CodegenOptions {
     pc: u16,
@@ -9,6 +11,12 @@ pub struct CodegenOptions {
 
 pub struct Segment {
     data: Vec<u8>,
+    start_pc: u16,
+    pc: u16,
+}
+
+pub struct ToResolve<'a> {
+    segment: &'a str,
     pc: u16,
 }
 
@@ -16,6 +24,7 @@ pub struct CodegenContext<'a> {
     segments: HashMap<&'a str, Segment>,
     current_segment: &'a str,
     labels: HashMap<&'a str, u16>,
+    to_resolve: HashMap<&'a str, Vec<ToResolve<'a>>>,
 }
 
 impl<'a> CodegenContext<'a> {
@@ -23,6 +32,7 @@ impl<'a> CodegenContext<'a> {
         let mut segments = HashMap::new();
         let default_segment = Segment {
             data: vec![],
+            start_pc: options.pc,
             pc: options.pc,
         };
         segments.insert("Default", default_segment);
@@ -31,6 +41,7 @@ impl<'a> CodegenContext<'a> {
             segments,
             current_segment: "Default",
             labels: HashMap::new(),
+            to_resolve: HashMap::new(),
         }
     }
 
@@ -38,41 +49,116 @@ impl<'a> CodegenContext<'a> {
         self.segments.get(name)
     }
 
-    fn register_label(&mut self, label: &'a str) {
-        self.labels.insert(label, 123);
+    fn segment_mut(&mut self, name: &str) -> Option<&mut Segment> {
+        self.segments.get_mut(name)
     }
 
-    fn generate_instruction_bytes(&self, i: &Instruction) -> Vec<u8> {
-        match (&i.mnemonic.data, &i.addressing_mode.data) {
-            (Mnemonic::Lda, am) => match am {
-                AddressingMode::Immediate(val) => {
-                    vec![0xa9, val.try_u8().unwrap()]
-                }
-                _ => vec![],
-            },
-            (Mnemonic::Sta, _am) => vec![],
-            _ => vec![],
+    fn current_segment(&self) -> &Segment {
+        self.segments.get(self.current_segment).unwrap()
+    }
+
+    fn register_label(&mut self, label: &'a str) {
+        self.labels.insert(label, self.current_segment().pc);
+    }
+
+    fn resolve_label(&mut self, label: &'a str, target_pc: u16) -> Option<u16> {
+        match self.labels.get(label) {
+            Some(label_pc) => Some(label_pc.clone()),
+            None => {
+                let to_resolve = self.to_resolve.entry(label).or_insert_with(|| vec![]);
+                to_resolve.push(ToResolve {
+                    segment: self.current_segment,
+                    pc: target_pc,
+                });
+                None
+            }
         }
     }
 
-    fn emit(&mut self, i: &Instruction) {
-        let bytes = self.generate_instruction_bytes(i);
-        let len = bytes.len() as u16;
+    fn resolve_addressed_value(&mut self, val: &AddressedValue<'a>) -> SmallVec<[u8; 2]> {
+        match val {
+            AddressedValue::Label(label) => SmallVec::from_buf(
+                self.resolve_label(label, self.current_segment().pc + 1)
+                    .unwrap_or(0)
+                    .to_le_bytes(),
+            ),
+            AddressedValue::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
+            AddressedValue::U8(u8) => smallvec![*u8],
+        }
+    }
+
+    fn generate_instruction_bytes(&mut self, i: &'a Instruction) -> (u8, SmallVec<[u8; 2]>) {
+        match (&i.mnemonic.data, &i.addressing_mode.data) {
+            (Mnemonic::Jmp, am) => {
+                let opcode = match am {
+                    AddressingMode::Absolute(_) => 0x4c,
+                    _ => panic!(),
+                };
+                (opcode, self.resolve_addressed_value(am.value()))
+            }
+            (Mnemonic::Lda, am) => {
+                let opcode = match am {
+                    AddressingMode::Immediate(_) => 0xa9,
+                    _ => panic!(),
+                };
+                (opcode, self.resolve_addressed_value(am.value()))
+            }
+            (Mnemonic::Nop, _am) => (0xea, smallvec![]),
+            (Mnemonic::Sta, _am) => panic!(),
+            _ => panic!(),
+        }
+    }
+
+    fn emit(&mut self, i: &'a Instruction) {
+        let (opcode, operands) = self.generate_instruction_bytes(i);
+        let operands_len = operands.len() as u16;
         let segment = self.segments.get_mut(self.current_segment).unwrap();
-        segment.data.extend(bytes);
-        segment.pc += len;
+        segment.data.push(opcode);
+        segment.data.extend(operands);
+        segment.pc += 1 + operands_len;
+    }
+
+    fn resolve_all(&mut self) {
+        let to_resolve = std::mem::replace(&mut self.to_resolve, HashMap::new());
+
+        self.to_resolve = to_resolve
+            .into_iter()
+            .filter_map(|(label, to_resolves)| {
+                let label_pc = self.labels.get(label).cloned();
+                match label_pc {
+                    Some(label_pc) => {
+                        for to_resolve in to_resolves {
+                            let segment = self.segment_mut(to_resolve.segment).unwrap();
+                            let offset = (to_resolve.pc - segment.start_pc) as usize;
+                            let le = label_pc.to_le_bytes();
+                            segment.data[offset] = le[0];
+                            segment.data[offset + 1] = le[1];
+                        }
+
+                        None
+                    }
+                    None => Some((label, to_resolves)), // label does not exist yet, so keep it around
+                }
+            })
+            .collect();
     }
 }
 
-pub fn codegen<'a>(ast: &[Token<'a>], options: CodegenOptions) -> AsmResult<CodegenContext<'a>> {
+pub fn codegen<'a>(ast: &'a [Token<'a>], options: CodegenOptions) -> AsmResult<CodegenContext<'a>> {
     let mut ctx = CodegenContext::new(options);
 
+    // First pass
     ast.iter().for_each(|token| match token {
         Token::Label(label) => {
             ctx.register_label(label);
         }
         Token::Instruction(i) => ctx.emit(i),
     });
+
+    // Resolve passes
+    while !ctx.to_resolve.is_empty() {
+        ctx.resolve_all();
+    }
 
     Ok(ctx)
 }
@@ -94,6 +180,10 @@ mod tests {
     #[test]
     fn can_access_forward_declared_labels() -> AsmResult<()> {
         let ast = parse("jmp my_label\nmy_label: nop")?.1;
+        let ctx = codegen(&ast, CodegenOptions { pc: 0xc000 })?;
+        let segment = ctx.segment("Default").unwrap();
+        assert_eq!(segment.data, vec![0x4c, 0x03, 0xc0, 0xea]);
+        assert_eq!(segment.pc, 0xc004);
         Ok(())
     }
 }
