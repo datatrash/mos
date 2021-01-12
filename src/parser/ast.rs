@@ -1,60 +1,32 @@
 use nom_locate::LocatedSpan;
 
 use super::mnemonic;
+use crate::parser::expressions::Expression;
 
 pub type Span<'a> = LocatedSpan<&'a str>;
 
 #[derive(Debug, PartialEq)]
-pub enum Operand<'a> {
-    U8(u8),
-    U16(u16),
-    Label(&'a str),
-}
-
-impl<'a> Operand<'a> {
-    pub fn try_u8(&self) -> Option<u8> {
-        match &self {
-            Operand::U8(val) => Some(*val),
-            _ => None,
-        }
-    }
-
-    pub fn try_u16(&self) -> Option<u16> {
-        match &self {
-            Operand::U16(val) => Some(*val),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
 pub enum AddressingMode<'a> {
-    Absolute(Operand<'a>),
-    AbsoluteXIndexed(Operand<'a>),
-    AbsoluteYIndexed(Operand<'a>),
-    Immediate(Operand<'a>),
+    AbsoluteOrRelativeOrZp(Expression<'a>),
+    Immediate(Expression<'a>),
     ImpliedOrAccumulator,
-    Indirect(Operand<'a>),
-    IndirectYIndexed(Operand<'a>),
-    RelativeOrZp(Operand<'a>),
-    XIndexedIndirect(Operand<'a>),
-    ZpXIndexed(Operand<'a>),
-    ZpYIndexed(Operand<'a>),
+    Indirect(Expression<'a>),
+    IndirectYIndexed(Expression<'a>),
+    XIndexed(Expression<'a>),
+    XIndexedIndirect(Expression<'a>),
+    YIndexed(Expression<'a>),
 }
 
 impl<'a> AddressingMode<'a> {
-    pub fn value(&self) -> &Operand<'a> {
+    pub fn value(&self) -> &Expression<'a> {
         match self {
-            AddressingMode::Absolute(val) => val,
-            AddressingMode::AbsoluteXIndexed(val) => val,
-            AddressingMode::AbsoluteYIndexed(val) => val,
+            AddressingMode::AbsoluteOrRelativeOrZp(val) => val,
             AddressingMode::Immediate(val) => val,
             AddressingMode::Indirect(val) => val,
             AddressingMode::IndirectYIndexed(val) => val,
-            AddressingMode::RelativeOrZp(val) => val,
+            AddressingMode::XIndexed(val) => val,
             AddressingMode::XIndexedIndirect(val) => val,
-            AddressingMode::ZpXIndexed(val) => val,
-            AddressingMode::ZpYIndexed(val) => val,
+            AddressingMode::YIndexed(val) => val,
             _ => panic!(),
         }
     }

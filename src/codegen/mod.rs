@@ -75,15 +75,16 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn resolve_addressed_value(&mut self, val: &Operand<'a>) -> SmallVec<[u8; 2]> {
-        match val {
-            Operand::Label(label) => SmallVec::from_buf(
+    fn resolve_expression(&mut self, expr: &Expression<'a>) -> SmallVec<[u8; 2]> {
+        match expr {
+            Expression::Label(label) => SmallVec::from_buf(
                 self.resolve_label(label, self.current_segment().pc + 1)
                     .unwrap_or(0)
                     .to_le_bytes(),
             ),
-            Operand::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
-            Operand::U8(u8) => smallvec![*u8],
+            Expression::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
+            Expression::U8(u8) => smallvec![*u8],
+            _ => panic!(),
         }
     }
 
@@ -91,17 +92,17 @@ impl<'a> CodegenContext<'a> {
         match (i.mnemonic.data, i.addressing_mode.data) {
             (Mnemonic::Jmp, am) => {
                 let opcode = match am {
-                    AddressingMode::Absolute(_) => 0x4c,
+                    AddressingMode::AbsoluteOrRelativeOrZp(_) => 0x4c,
                     _ => panic!(),
                 };
-                (opcode, self.resolve_addressed_value(am.value()))
+                (opcode, self.resolve_expression(am.value()))
             }
             (Mnemonic::Lda, am) => {
                 let opcode = match am {
                     AddressingMode::Immediate(_) => 0xa9,
                     _ => panic!(),
                 };
-                (opcode, self.resolve_addressed_value(am.value()))
+                (opcode, self.resolve_expression(am.value()))
             }
             (Mnemonic::Nop, _am) => (0xea, smallvec![]),
             (Mnemonic::Sta, _am) => panic!(),

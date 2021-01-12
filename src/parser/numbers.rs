@@ -2,7 +2,9 @@ use super::Span;
 use crate::parser::whitespace::ws;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_until, take_while, take_while_m_n};
-use nom::character::complete::{alpha1, alphanumeric1, hex_digit1, multispace0, newline, space1};
+use nom::character::complete::{
+    alpha1, alphanumeric1, digit1, hex_digit1, multispace0, newline, space1,
+};
 use nom::character::complete::{char, multispace1};
 use nom::combinator::{eof, map, map_opt, map_res, recognize, value};
 use nom::error::{context, Error, ErrorKind, ParseError};
@@ -14,6 +16,9 @@ fn is_hex_digit(c: char) -> bool {
     c.is_digit(16)
 }
 
+fn try_map_dec_u8(input: Span) -> Option<u8> {
+    u8::from_str_radix(input.fragment(), 10).ok()
+}
 fn try_map_hex_u8(input: Span) -> Option<u8> {
     u8::from_str_radix(input.fragment(), 16).ok()
 }
@@ -45,7 +50,7 @@ fn from_dec_u16(input: Span) -> Result<u16, std::num::ParseIntError> {
 }
 
 pub(super) fn dec_u8(input: Span) -> IResult<Span, u8> {
-    map_res(take_while_m_n(1, 3, is_dec_digit), from_dec_u8)(input)
+    map_opt(digit1, try_map_dec_u8)(input)
 }
 
 pub(super) fn dec_u16(input: Span) -> IResult<Span, u16> {
@@ -89,6 +94,7 @@ mod tests {
         assert_eq!(dec_u8(Span::new("5")).unwrap().1, 5);
         assert_eq!(dec_u8(Span::new("25")).unwrap().1, 25);
         assert_eq!(dec_u8(Span::new("255")).unwrap().1, 255);
+        assert_eq!(dec_u8(Span::new("2555")).is_err(), true);
     }
 
     #[test]

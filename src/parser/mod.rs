@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub use ast::*;
+pub use expressions::*;
 
 use mnemonic::*;
 use nom::branch::alt;
@@ -22,64 +23,34 @@ mod mnemonic;
 mod numbers;
 mod whitespace;
 
-fn addressed_value_u8(input: Span) -> IResult<Span, Operand> {
-    alt((
-        map(hexdec_u8, Operand::U8),
-        map(identifier, |val: Span| Operand::Label(val.fragment())),
-    ))(input)
-}
-
-fn addressed_value_u16(input: Span) -> IResult<Span, Operand> {
-    alt((
-        map(hexdec_u16, Operand::U16),
-        map(identifier, |val: Span| Operand::Label(val.fragment())),
-    ))(input)
-}
-
-fn absolute_xy_indexed<'a>(input: Span<'a>, register: &'a str) -> IResult<Span<'a>, Operand<'a>> {
+fn absolute_xy_indexed<'a>(
+    input: Span<'a>,
+    register: &'a str,
+) -> IResult<Span<'a>, Expression<'a>> {
     terminated(
-        terminated(addressed_value_u16, ws(tag_no_case(","))),
+        terminated(expression, ws(tag_no_case(","))),
         ws(tag_no_case(register)),
     )(input)
 }
 
-fn absolute_x_indexed(input: Span) -> IResult<Span, Operand> {
+fn x_indexed(input: Span) -> IResult<Span, Expression> {
     absolute_xy_indexed(input, "x")
 }
 
-fn absolute_y_indexed(input: Span) -> IResult<Span, Operand> {
+fn y_indexed(input: Span) -> IResult<Span, Expression> {
     absolute_xy_indexed(input, "y")
 }
 
-fn zp_xy_indexed<'a>(input: Span<'a>, register: &'a str) -> IResult<Span<'a>, Operand<'a>> {
-    terminated(
-        terminated(addressed_value_u8, ws(tag_no_case(","))),
-        ws(tag_no_case(register)),
-    )(input)
+fn indirect(input: Span) -> IResult<Span, Expression> {
+    terminated(preceded(ws(tag("(")), expression), ws(tag(")")))(input)
 }
 
-fn zp_x_indexed(input: Span) -> IResult<Span, Operand> {
-    zp_xy_indexed(input, "x")
-}
-
-fn zp_y_indexed(input: Span) -> IResult<Span, Operand> {
-    zp_xy_indexed(input, "y")
-}
-
-fn indirect_u8(input: Span) -> IResult<Span, Operand> {
-    terminated(preceded(ws(tag("(")), addressed_value_u8), ws(tag(")")))(input)
-}
-
-fn indirect_u16(input: Span) -> IResult<Span, Operand> {
-    terminated(preceded(ws(tag("(")), addressed_value_u16), ws(tag(")")))(input)
-}
-
-fn x_indexed_indirect(input: Span) -> IResult<Span, Operand> {
+fn x_indexed_indirect(input: Span) -> IResult<Span, Expression> {
     terminated(
         preceded(
             ws(tag("(")),
             terminated(
-                terminated(addressed_value_u8, ws(tag_no_case(","))),
+                terminated(expression /* u8 */, ws(tag_no_case(","))),
                 ws(tag_no_case("x")),
             ),
         ),
@@ -87,12 +58,12 @@ fn x_indexed_indirect(input: Span) -> IResult<Span, Operand> {
     )(input)
 }
 
-fn indirect_y_indexed(input: Span) -> IResult<Span, Operand> {
+fn indirect_y_indexed(input: Span) -> IResult<Span, Expression> {
     terminated(
         preceded(
             ws(tag("(")),
             terminated(
-                terminated(addressed_value_u8, ws(tag_no_case(")"))),
+                terminated(expression /* u8 */, ws(tag_no_case(")"))),
                 ws(tag(",")),
             ),
         ),
@@ -103,28 +74,19 @@ fn indirect_y_indexed(input: Span) -> IResult<Span, Operand> {
 fn addressing_mode(input: Span) -> IResult<Span, LocatedAddressingMode> {
     let (input, position) = position(input)?;
     let (input, data) = alt((
-        map(absolute_x_indexed, |val| {
-            AddressingMode::AbsoluteXIndexed(val)
-        }),
-        map(absolute_y_indexed, |val| {
-            AddressingMode::AbsoluteYIndexed(val)
-        }),
+        map(x_indexed, |val| AddressingMode::XIndexed(val)),
+        map(y_indexed, |val| AddressingMode::YIndexed(val)),
         map(x_indexed_indirect, |val| {
             AddressingMode::XIndexedIndirect(val)
         }),
         map(indirect_y_indexed, |val| {
             AddressingMode::IndirectYIndexed(val)
         }),
-        map(preceded(tag("#"), addressed_value_u8), |val| {
+        map(preceded(tag("#"), expression), |val| {
             AddressingMode::Immediate(val)
         }),
-        map(zp_x_indexed, AddressingMode::ZpXIndexed),
-        map(zp_y_indexed, AddressingMode::ZpYIndexed),
-        map(indirect_u16, AddressingMode::Indirect),
-        map(hexdec_u8, |val| {
-            AddressingMode::RelativeOrZp(Operand::U8(val))
-        }),
-        map(addressed_value_u16, AddressingMode::Absolute),
+        map(indirect, AddressingMode::Indirect),
+        map(expression, AddressingMode::AbsoluteOrRelativeOrZp),
         map(tag(""), |_| AddressingMode::ImpliedOrAccumulator),
     ))(input)?;
     Ok((input, LocatedAddressingMode { position, data }))
@@ -189,7 +151,7 @@ mod tests {
         let i = test_instruction("lda $fce2");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::Absolute(Operand::U16(64738))
+            AddressingMode::AbsoluteOrRelativeOrZp(Expression::U16(64738))
         );
     }
 
@@ -198,16 +160,16 @@ mod tests {
         let i = test_instruction("lda foo");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::Absolute(Operand::Label("foo"))
+            AddressingMode::AbsoluteOrRelativeOrZp(Expression::Label("foo"))
         );
     }
 
     #[test]
-    fn test_am_absolute_x_indexed_constant() {
+    fn test_am_x_indexed_constant() {
         let i = test_instruction("lda $fce2   , x");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::AbsoluteXIndexed(Operand::U16(64738))
+            AddressingMode::XIndexed(Expression::U16(64738))
         );
     }
 
@@ -216,7 +178,7 @@ mod tests {
         let i = test_instruction("lda foo   , x");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::AbsoluteXIndexed(Operand::Label("foo"))
+            AddressingMode::XIndexed(Expression::Label("foo"))
         );
     }
 
@@ -225,7 +187,7 @@ mod tests {
         let i = test_instruction("lda $fce2   , Y");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::AbsoluteYIndexed(Operand::U16(64738))
+            AddressingMode::YIndexed(Expression::U16(64738))
         );
     }
 
@@ -234,7 +196,7 @@ mod tests {
         let i = test_instruction("lda foo   , Y");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::AbsoluteYIndexed(Operand::Label("foo"))
+            AddressingMode::YIndexed(Expression::Label("foo"))
         );
     }
 
@@ -243,7 +205,7 @@ mod tests {
         let i = test_instruction("lda #255");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::Immediate(Operand::U8(255))
+            AddressingMode::Immediate(Expression::U8(255))
         );
     }
 
@@ -252,7 +214,7 @@ mod tests {
         let i = test_instruction("lda #foo");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::Immediate(Operand::Label("foo"))
+            AddressingMode::Immediate(Expression::Label("foo"))
         );
     }
 
@@ -267,7 +229,7 @@ mod tests {
         let i = test_instruction("jsr   (  $fce2 )");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::Indirect(Operand::U16(64738))
+            AddressingMode::Indirect(Expression::U16(64738))
         );
     }
 
@@ -276,7 +238,7 @@ mod tests {
         let i = test_instruction("jsr   (  foo )");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::Indirect(Operand::Label("foo"))
+            AddressingMode::Indirect(Expression::Label("foo"))
         );
     }
 
@@ -285,7 +247,7 @@ mod tests {
         let i = test_instruction("sta ( $  fb , x  )");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::XIndexedIndirect(Operand::U8(0xfb))
+            AddressingMode::XIndexedIndirect(Expression::U8(0xfb))
         );
     }
 
@@ -294,7 +256,7 @@ mod tests {
         let i = test_instruction("sta ( foo , x  )");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::XIndexedIndirect(Operand::Label("foo"))
+            AddressingMode::XIndexedIndirect(Expression::Label("foo"))
         );
     }
 
@@ -303,7 +265,7 @@ mod tests {
         let i = test_instruction("sta ( $  fb ) , y");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::IndirectYIndexed(Operand::U8(0xfb))
+            AddressingMode::IndirectYIndexed(Expression::U8(0xfb))
         );
     }
 
@@ -312,61 +274,7 @@ mod tests {
         let i = test_instruction("sta ( foo ) , y");
         assert_eq!(
             i.addressing_mode.data,
-            AddressingMode::IndirectYIndexed(Operand::Label("foo"))
-        );
-    }
-
-    #[test]
-    fn test_am_relative_or_zp() {
-        let i = test_instruction("bne $3f");
-        assert_eq!(
-            i.addressing_mode.data,
-            AddressingMode::RelativeOrZp(Operand::U8(0x3f))
-        );
-    }
-
-    #[test]
-    fn test_am_relative_or_zp_label() {
-        let i = test_instruction("bne foo");
-        assert_eq!(
-            i.addressing_mode.data,
-            AddressingMode::Absolute(Operand::Label("foo"))
-        );
-    }
-
-    #[test]
-    fn test_am_zp_x_indexed() {
-        let i = test_instruction("dec $3f , x");
-        assert_eq!(
-            i.addressing_mode.data,
-            AddressingMode::ZpXIndexed(Operand::U8(0x3f))
-        );
-    }
-
-    #[test]
-    fn test_am_zp_x_indexed_label() {
-        let i = test_instruction("dec foo , x");
-        assert_eq!(
-            i.addressing_mode.data,
-            AddressingMode::AbsoluteXIndexed(Operand::Label("foo"))
-        );
-    }
-
-    #[test]
-    fn test_am_zp_y_indexed() {
-        let i = test_instruction("stx $3f , y");
-        assert_eq!(
-            i.addressing_mode.data,
-            AddressingMode::ZpYIndexed(Operand::U8(0x3f))
-        );
-    }
-
-    #[test]
-    fn test_am_zp_y_indexed_label() {
-        let i = test_instruction("stx foo , y");
-        assert_eq!(
-            i.addressing_mode.data,
-            AddressingMode::AbsoluteYIndexed(Operand::Label("foo"))
+            AddressingMode::IndirectYIndexed(Expression::Label("foo"))
         );
     }
 

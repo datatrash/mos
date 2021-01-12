@@ -11,7 +11,8 @@ use nom::IResult;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 
-enum Expression<'a> {
+#[derive(PartialEq)]
+pub enum Expression<'a> {
     U8(u8),
     U16(u16),
     Label(&'a str),
@@ -40,7 +41,7 @@ impl<'a> Display for Expression<'a> {
             Sub(ref left, ref right) => write!(format, "{} - {}", left, right),
             Mul(ref left, ref right) => write!(format, "{} * {}", left, right),
             Div(ref left, ref right) => write!(format, "{} / {}", left, right),
-            Parens(ref expr) => write!(format, "({})", expr),
+            Parens(ref expr) => write!(format, "[{}]", expr),
         }
     }
 }
@@ -52,10 +53,10 @@ impl<'a> Debug for Expression<'a> {
             U8(val) => write!(format, "{}", val),
             U16(val) => write!(format, "{}", val),
             Label(val) => write!(format, "{}", val),
-            Add(ref left, ref right) => write!(format, "({:?} + {:?})", left, right),
-            Sub(ref left, ref right) => write!(format, "({:?} - {:?})", left, right),
-            Mul(ref left, ref right) => write!(format, "({:?} * {:?})", left, right),
-            Div(ref left, ref right) => write!(format, "({:?} / {:?})", left, right),
+            Add(ref left, ref right) => write!(format, "[{:?} + {:?}]", left, right),
+            Sub(ref left, ref right) => write!(format, "[{:?} - {:?}]", left, right),
+            Mul(ref left, ref right) => write!(format, "[{:?} * {:?}]", left, right),
+            Div(ref left, ref right) => write!(format, "[{:?} / {:?}]", left, right),
             Parens(ref expr) => write!(format, "[{:?}]", expr),
         }
     }
@@ -65,9 +66,9 @@ fn parens(input: Span) -> IResult<Span, Expression> {
     delimited(
         multispace0,
         delimited(
-            tag("("),
+            tag("["),
             map(expression, |e| Expression::Parens(Box::new(e))),
-            tag(")"),
+            tag("]"),
         ),
         multispace0,
     )(input)
@@ -75,8 +76,8 @@ fn parens(input: Span) -> IResult<Span, Expression> {
 
 fn factor(input: Span) -> IResult<Span, Expression> {
     alt((
-        map(hexdec_u16, |u16| Expression::U16(u16)),
         map(hexdec_u8, |u8| Expression::U8(u8)),
+        map(hexdec_u16, |u16| Expression::U16(u16)),
         map(identifier, |val: Span| Expression::Label(val.fragment())),
         parens,
     ))(input)
@@ -114,7 +115,7 @@ fn term(input: Span) -> IResult<Span, Expression> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-fn expression(input: Span) -> IResult<Span, Expression> {
+pub fn expression(input: Span) -> IResult<Span, Expression> {
     let (input, initial) = term(input)?;
     let (input, remainder) = many0(alt((
         |input| {
@@ -138,30 +139,30 @@ mod tests {
     #[test]
     fn parse_add() {
         let exp = expression(Span::new("1 + $ff")).unwrap().1;
-        assert_eq!(format!("{:?}", exp), "(1 + 255)");
+        assert_eq!(format!("{:?}", exp), "[1 + 255]");
     }
 
     #[test]
     fn parse_sub() {
         let exp = expression(Span::new("16384 - 2")).unwrap().1;
-        assert_eq!(format!("{:?}", exp), "(16384 - 2)");
+        assert_eq!(format!("{:?}", exp), "[16384 - 2]");
     }
 
     #[test]
     fn parse_mul() {
         let exp = expression(Span::new("1 * 2")).unwrap().1;
-        assert_eq!(format!("{:?}", exp), "(1 * 2)");
+        assert_eq!(format!("{:?}", exp), "[1 * 2]");
     }
 
     #[test]
     fn parse_div() {
         let exp = expression(Span::new("1 / 2")).unwrap().1;
-        assert_eq!(format!("{:?}", exp), "(1 / 2)");
+        assert_eq!(format!("{:?}", exp), "[1 / 2]");
     }
 
     #[test]
     fn parse_complex() {
-        let exp = expression(Span::new("(5 * foo) / bar + baz")).unwrap().1;
-        assert_eq!(format!("{:?}", exp), "(([(5 * foo)] / bar) + baz)");
+        let exp = expression(Span::new("[5 * foo] / bar + baz")).unwrap().1;
+        assert_eq!(format!("{:?}", exp), "[[[[5 * foo]] / bar] + baz]");
     }
 }
