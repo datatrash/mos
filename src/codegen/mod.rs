@@ -75,15 +75,15 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn resolve_addressed_value(&mut self, val: &AddressedValue<'a>) -> SmallVec<[u8; 2]> {
+    fn resolve_addressed_value(&mut self, val: &Operand<'a>) -> SmallVec<[u8; 2]> {
         match val {
-            AddressedValue::Label(label) => SmallVec::from_buf(
+            Operand::Label(label) => SmallVec::from_buf(
                 self.resolve_label(label, self.current_segment().pc + 1)
                     .unwrap_or(0)
                     .to_le_bytes(),
             ),
-            AddressedValue::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
-            AddressedValue::U8(u8) => smallvec![*u8],
+            Operand::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
+            Operand::U8(u8) => smallvec![*u8],
         }
     }
 

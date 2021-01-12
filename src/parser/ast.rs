@@ -3,24 +3,25 @@ use nom_locate::LocatedSpan;
 use super::mnemonic;
 
 pub type Span<'a> = LocatedSpan<&'a str>;
+
 #[derive(Debug, PartialEq)]
-pub enum AddressedValue<'a> {
+pub enum Operand<'a> {
     U8(u8),
     U16(u16),
     Label(&'a str),
 }
 
-impl<'a> AddressedValue<'a> {
+impl<'a> Operand<'a> {
     pub fn try_u8(&self) -> Option<u8> {
         match &self {
-            AddressedValue::U8(val) => Some(*val),
+            Operand::U8(val) => Some(*val),
             _ => None,
         }
     }
 
     pub fn try_u16(&self) -> Option<u16> {
         match &self {
-            AddressedValue::U16(val) => Some(*val),
+            Operand::U16(val) => Some(*val),
             _ => None,
         }
     }
@@ -28,21 +29,21 @@ impl<'a> AddressedValue<'a> {
 
 #[derive(Debug, PartialEq)]
 pub enum AddressingMode<'a> {
-    Absolute(AddressedValue<'a>),
-    AbsoluteXIndexed(AddressedValue<'a>),
-    AbsoluteYIndexed(AddressedValue<'a>),
-    Immediate(AddressedValue<'a>),
+    Absolute(Operand<'a>),
+    AbsoluteXIndexed(Operand<'a>),
+    AbsoluteYIndexed(Operand<'a>),
+    Immediate(Operand<'a>),
     ImpliedOrAccumulator,
-    Indirect(AddressedValue<'a>),
-    IndirectYIndexed(AddressedValue<'a>),
-    RelativeOrZp(AddressedValue<'a>),
-    XIndexedIndirect(AddressedValue<'a>),
-    ZpXIndexed(AddressedValue<'a>),
-    ZpYIndexed(AddressedValue<'a>),
+    Indirect(Operand<'a>),
+    IndirectYIndexed(Operand<'a>),
+    RelativeOrZp(Operand<'a>),
+    XIndexedIndirect(Operand<'a>),
+    ZpXIndexed(Operand<'a>),
+    ZpYIndexed(Operand<'a>),
 }
 
 impl<'a> AddressingMode<'a> {
-    pub fn value(&self) -> &AddressedValue<'a> {
+    pub fn value(&self) -> &Operand<'a> {
         match self {
             AddressingMode::Absolute(val) => val,
             AddressingMode::AbsoluteXIndexed(val) => val,
