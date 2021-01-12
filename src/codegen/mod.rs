@@ -15,6 +15,26 @@ pub struct Segment {
     pc: u16,
 }
 
+impl Segment {
+    fn set(&mut self, pc: u16, opcode: u8, operands: SmallVec<[u8; 2]>) -> u16 {
+        self.pc = pc;
+
+        let length = 1 + operands.len();
+        let target = self.pc as usize - self.start_pc as usize;
+        if self.data.len() < target + length {
+            self.data.resize(target + length, 0);
+        }
+        self.data[target] = opcode;
+        let mut offset = 1;
+        for op in operands {
+            self.data[target + offset] = op;
+            offset += 1;
+        }
+        self.pc += length as u16;
+        self.pc
+    }
+}
+
 pub struct CodegenContext<'a> {
     segments: HashMap<&'a str, Segment>,
     current_segment: &'a str,
@@ -53,20 +73,6 @@ impl<'a> CodegenContext<'a> {
     fn register_label(&mut self, label: &'a str) {
         self.labels.insert(label, self.current_segment().pc);
     }
-
-    /*fn resolve_label(&mut self, label: &'a str, target_pc: u16) -> Option<u16> {
-        match self.labels.get(label) {
-            Some(label_pc) => Some(label_pc.clone()),
-            None => {
-                let to_resolve = self.to_resolve.entry(label).or_insert_with(|| vec![]);
-                to_resolve.push(ToResolve {
-                    segment: self.current_segment,
-                    pc: target_pc,
-                });
-                None
-            }
-        }
-    }*/
 
     fn evaluate_expression(&self, expr: &Expression<'a>) -> Option<SmallVec<[u8; 2]>> {
         let (result, missing_labels) = expr.evaluate(&self.labels);
@@ -125,36 +131,26 @@ impl<'a> CodegenContext<'a> {
 
     fn emit(&mut self, i: Instruction<'a>) -> EmitResult<'a> {
         let (could_emit, opcode, operands) = self.generate_instruction_bytes(&i);
-        let operands_len = operands.len() as u16;
         let segment = self.segments.get_mut(self.current_segment).unwrap();
-        segment.data.push(opcode);
-        segment.data.extend(operands);
+        let orig_pc = segment.pc;
+        segment.set(orig_pc, opcode, operands);
 
-        let result = if could_emit {
+        if could_emit {
             EmitResult::Emitted
         } else {
-            EmitResult::EmitLater(segment.pc, i)
-        };
-
-        segment.pc += 1 + operands_len;
-
-        result
+            EmitResult::EmitLater(orig_pc, i)
+        }
     }
 
     fn emit_at(&mut self, pc: u16, i: Instruction<'a>) -> EmitResult<'a> {
-        let (could_emit, _, operands) = self.generate_instruction_bytes(&i);
+        let (could_emit, opcode, operands) = self.generate_instruction_bytes(&i);
         let segment = self.segments.get_mut(self.current_segment).unwrap();
+        segment.set(pc, opcode, operands);
 
         if could_emit {
-            let mut offset = 1;
-            for op in operands {
-                segment.data[pc as usize - segment.start_pc as usize + offset] = op;
-                offset = offset + 1;
-            }
-
             EmitResult::Emitted
         } else {
-            EmitResult::EmitLater(segment.pc, i)
+            EmitResult::EmitLater(pc, i)
         }
     }
 }
@@ -204,7 +200,6 @@ mod tests {
     fn most_basic_codegen() -> AsmResult<()> {
         let ctx = test_codegen("lda #123")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
-        assert_eq!(ctx.current_segment().pc, 0xc002);
         Ok(())
     }
 
@@ -212,7 +207,6 @@ mod tests {
     fn most_basic_codegen_with_expression() -> AsmResult<()> {
         let ctx = test_codegen("lda #10 * 12")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 120]);
-        assert_eq!(ctx.current_segment().pc, 0xc002);
         Ok(())
     }
 
@@ -220,7 +214,6 @@ mod tests {
     fn can_access_forward_declared_labels() -> AsmResult<()> {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
-        assert_eq!(ctx.current_segment().pc, 0xc004);
         Ok(())
     }
 
