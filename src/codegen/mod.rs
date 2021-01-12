@@ -15,16 +15,10 @@ pub struct Segment {
     pc: u16,
 }
 
-pub struct ToResolve<'a> {
-    segment: &'a str,
-    pc: u16,
-}
-
 pub struct CodegenContext<'a> {
     segments: HashMap<&'a str, Segment>,
     current_segment: &'a str,
     labels: HashMap<&'a str, u16>,
-    to_resolve: HashMap<&'a str, Vec<ToResolve<'a>>>,
 }
 
 impl<'a> CodegenContext<'a> {
@@ -41,7 +35,6 @@ impl<'a> CodegenContext<'a> {
             segments,
             current_segment: "Default",
             labels: HashMap::new(),
-            to_resolve: HashMap::new(),
         }
     }
 
@@ -61,7 +54,7 @@ impl<'a> CodegenContext<'a> {
         self.labels.insert(label, self.current_segment().pc);
     }
 
-    fn resolve_label(&mut self, label: &'a str, target_pc: u16) -> Option<u16> {
+    /*fn resolve_label(&mut self, label: &'a str, target_pc: u16) -> Option<u16> {
         match self.labels.get(label) {
             Some(label_pc) => Some(label_pc.clone()),
             None => {
@@ -73,41 +66,40 @@ impl<'a> CodegenContext<'a> {
                 None
             }
         }
-    }
+    }*/
 
-    fn resolve_expression(&mut self, expr: &Expression<'a>) -> SmallVec<[u8; 2]> {
-        match expr {
-            Expression::Label(label) => SmallVec::from_buf(
-                self.resolve_label(label, self.current_segment().pc + 1)
-                    .unwrap_or(0)
-                    .to_le_bytes(),
-            ),
-            Expression::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
-            Expression::U8(u8) => smallvec![*u8],
-            _ => panic!(),
+    fn evaluate_expression(&mut self, expr: &Expression<'a>) -> Option<SmallVec<[u8; 2]>> {
+        let (result, missing_labels) = expr.evaluate(&self.labels);
+        match missing_labels.is_empty() {
+            true => None,
+            false => Some(match result {
+                ResolvedExpression::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
+                ResolvedExpression::U8(u8) => smallvec![u8],
+            }),
         }
     }
 
-    fn generate_instruction_bytes(&mut self, i: Instruction<'a>) -> (u8, SmallVec<[u8; 2]>) {
-        match (i.mnemonic.data, i.addressing_mode.data) {
+    fn generate_instruction_bytes(&mut self, _i: Instruction<'a>) -> (u8, SmallVec<[u8; 2]>) {
+        /*match (i.mnemonic.data, i.addressing_mode.data) {
             (Mnemonic::Jmp, am) => {
                 let opcode = match am {
                     AddressingMode::AbsoluteOrRelativeOrZp(_) => 0x4c,
                     _ => panic!(),
                 };
-                (opcode, self.resolve_expression(am.value()))
+                (opcode, self.evaluate_expression(am.value()))
             }
             (Mnemonic::Lda, am) => {
                 let opcode = match am {
                     AddressingMode::Immediate(_) => 0xa9,
                     _ => panic!(),
                 };
-                (opcode, self.resolve_expression(am.value()))
+                (opcode, self.evaluate_expression(am.value()))
             }
             (Mnemonic::Nop, _am) => (0xea, smallvec![]),
             (Mnemonic::Sta, _am) => panic!(),
             _ => panic!(),
-        }
+        }*/
+        (0, smallvec![])
     }
 
     fn emit(&mut self, i: Instruction<'a>) {
@@ -119,7 +111,7 @@ impl<'a> CodegenContext<'a> {
         segment.pc += 1 + operands_len;
     }
 
-    fn resolve_all(&mut self) {
+    /*fn resolve_all(&mut self) {
         let to_resolve = std::mem::replace(&mut self.to_resolve, HashMap::new());
 
         self.to_resolve = to_resolve
@@ -142,7 +134,7 @@ impl<'a> CodegenContext<'a> {
                 }
             })
             .collect();
-    }
+    }*/
 }
 
 pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext> {
@@ -159,9 +151,9 @@ pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenCon
     }
 
     // Resolve passes
-    while !ctx.to_resolve.is_empty() {
+    /*while !ctx.to_resolve.is_empty() {
         ctx.resolve_all();
-    }
+    }*/
 
     Ok(ctx)
 }
@@ -179,12 +171,33 @@ mod tests {
     }
 
     #[test]
+    fn most_basic_codegen_with_expression() -> AsmResult<()> {
+        let ctx = test_codegen("lda #10 * 12")?;
+        assert_eq!(ctx.current_segment().data, vec![0xa9, 120]);
+        assert_eq!(ctx.current_segment().pc, 0xc002);
+        Ok(())
+    }
+
+    #[test]
     fn can_access_forward_declared_labels() -> AsmResult<()> {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
         assert_eq!(ctx.current_segment().pc, 0xc004);
         Ok(())
     }
+
+    /*#[test]
+    fn can_perform_operations_on_labels() -> AsmResult<()> {
+        // Create two labels, 'foo' and 'bar', separated by three nops.
+        // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 nops).
+        let ctx = test_codegen("foo: .word bar - foo\nnop\nnop\nnop\nbar: nop")?;
+        assert_eq!(
+            ctx.current_segment().data,
+            vec![0x05, 0x00, 0xea, 0xea, 0xea, 0xea]
+        );
+        assert_eq!(ctx.current_segment().pc, 0xc006);
+        Ok(())
+    }*/
 
     fn test_codegen<'a>(code: &'static str) -> AsmResult<CodegenContext<'a>> {
         let ast = parse(code.clone())?.1;

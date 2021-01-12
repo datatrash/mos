@@ -8,6 +8,7 @@ use nom::combinator::{map, value};
 use nom::multi::many0;
 use nom::sequence::{delimited, preceded, tuple};
 use nom::IResult;
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -21,6 +22,54 @@ pub enum Expression<'a> {
     Sub(Box<Expression<'a>>, Box<Expression<'a>>),
     Mul(Box<Expression<'a>>, Box<Expression<'a>>),
     Div(Box<Expression<'a>>, Box<Expression<'a>>),
+}
+
+pub enum ResolvedExpression {
+    U8(u8),
+    U16(u16),
+}
+
+fn eval<'a>(
+    expr: &Expression<'a>,
+    available_labels: &HashMap<&'a str, u16>,
+) -> (i32, Vec<&'a str>) {
+    match expr {
+        Expression::U8(val) => (*val as i32, vec![]),
+        Expression::U16(val) => (*val as i32, vec![]),
+        Expression::Label(label) => match available_labels.get(label) {
+            Some(result) => (*result as i32, vec![]),
+            None => (1, vec![label]),
+        },
+        Expression::Parens(expr) => eval(expr, available_labels),
+        Expression::Add(lhs, rhs)
+        | Expression::Sub(lhs, rhs)
+        | Expression::Mul(lhs, rhs)
+        | Expression::Div(lhs, rhs) => {
+            let (lhs_result, lhs_missing_labels) = eval(lhs, available_labels);
+            let (rhs_result, rhs_missing_labels) = eval(rhs, available_labels);
+            let mut missing_labels = vec![];
+            missing_labels.extend(lhs_missing_labels);
+            missing_labels.extend(rhs_missing_labels);
+
+            match expr {
+                Expression::Add(_, _) => (lhs_result + rhs_result, missing_labels),
+                Expression::Sub(_, _) => (lhs_result - rhs_result, missing_labels),
+                Expression::Mul(_, _) => (lhs_result * rhs_result, missing_labels),
+                Expression::Div(_, _) => (lhs_result / rhs_result, missing_labels),
+                _ => panic!(),
+            }
+        }
+    }
+}
+
+impl<'a> Expression<'a> {
+    pub fn evaluate(
+        &self,
+        available_labels: &HashMap<&'a str, u16>,
+    ) -> (ResolvedExpression, Vec<&'a str>) {
+        let (result, missing_labels) = eval(&self, available_labels);
+        (ResolvedExpression::U16(result as u16), missing_labels)
+    }
 }
 
 enum Operation {
@@ -133,8 +182,9 @@ pub fn expression(input: Span) -> IResult<Span, Expression> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::expressions::{expression, Expression};
+    use crate::parser::expressions::{expression, Expression, ResolvedExpression};
     use crate::parser::Span;
+    use std::collections::HashMap;
 
     #[test]
     fn parse_add() {
@@ -164,5 +214,34 @@ mod tests {
     fn parse_complex() {
         let exp = expression(Span::new("[5 * foo] / bar + baz")).unwrap().1;
         assert_eq!(format!("{:?}", exp), "[[[[5 * foo]] / bar] + baz]");
+    }
+
+    #[test]
+    fn basic_eval() {
+        let exp = expression(Span::new("[5 * 8] / 2 - 6")).unwrap().1;
+        match exp.evaluate(&HashMap::new()).0 {
+            ResolvedExpression::U16(val) => assert_eq!(val, 14),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn eval_complex() {
+        let exp = expression(Span::new("[5 * foo] / bar - baz")).unwrap().1;
+        let (_, missing_labels) = exp.evaluate(&HashMap::new());
+        assert_eq!(missing_labels.contains(&"foo"), true);
+        assert_eq!(missing_labels.contains(&"bar"), true);
+        assert_eq!(missing_labels.contains(&"baz"), true);
+
+        let mut labels = HashMap::new();
+        labels.insert("foo", 8);
+        labels.insert("bar", 2);
+        labels.insert("baz", 6);
+        let (result, missing_labels) = exp.evaluate(&labels);
+        assert_eq!(missing_labels.is_empty(), true);
+        match result {
+            ResolvedExpression::U16(val) => assert_eq!(val, 14),
+            _ => panic!(),
+        }
     }
 }
