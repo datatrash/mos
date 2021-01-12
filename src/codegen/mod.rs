@@ -68,92 +68,130 @@ impl<'a> CodegenContext<'a> {
         }
     }*/
 
-    fn evaluate_expression(&mut self, expr: &Expression<'a>) -> Option<SmallVec<[u8; 2]>> {
+    fn evaluate_expression(&self, expr: &Expression<'a>) -> Option<SmallVec<[u8; 2]>> {
         let (result, missing_labels) = expr.evaluate(&self.labels);
         match missing_labels.is_empty() {
-            true => None,
-            false => Some(match result {
+            true => Some(match result {
                 ResolvedExpression::U16(u16) => SmallVec::from_buf(u16.to_le_bytes()),
                 ResolvedExpression::U8(u8) => smallvec![u8],
             }),
+            false => None,
         }
     }
 
-    fn generate_instruction_bytes(&mut self, _i: Instruction<'a>) -> (u8, SmallVec<[u8; 2]>) {
-        /*match (i.mnemonic.data, i.addressing_mode.data) {
+    fn try_evaluate_expression(
+        &self,
+        am: &AddressingMode,
+        opcode: u8,
+    ) -> (bool, u8, SmallVec<[u8; 2]>) {
+        match self.evaluate_expression(am.value()) {
+            Some(val) => (true, opcode, val),
+            None => (false, opcode, smallvec![0, 0]),
+        }
+    }
+
+    fn try_evaluate_expression_u8(
+        &self,
+        am: &AddressingMode,
+        opcode: u8,
+    ) -> (bool, u8, SmallVec<[u8; 2]>) {
+        match self.evaluate_expression(am.value()) {
+            Some(val) => (true, opcode, smallvec![val[0]]),
+            None => (false, opcode, smallvec![0]),
+        }
+    }
+
+    fn generate_instruction_bytes(&mut self, i: &Instruction<'a>) -> (bool, u8, SmallVec<[u8; 2]>) {
+        match (&i.mnemonic.data, &i.addressing_mode.data) {
             (Mnemonic::Jmp, am) => {
                 let opcode = match am {
                     AddressingMode::AbsoluteOrRelativeOrZp(_) => 0x4c,
                     _ => panic!(),
                 };
-                (opcode, self.evaluate_expression(am.value()))
+                self.try_evaluate_expression(am, opcode)
             }
             (Mnemonic::Lda, am) => {
                 let opcode = match am {
                     AddressingMode::Immediate(_) => 0xa9,
                     _ => panic!(),
                 };
-                (opcode, self.evaluate_expression(am.value()))
+                self.try_evaluate_expression_u8(am, opcode)
             }
-            (Mnemonic::Nop, _am) => (0xea, smallvec![]),
-            (Mnemonic::Sta, _am) => panic!(),
+            (Mnemonic::Nop, _am) => (true, 0xea, smallvec![]),
+            //(Mnemonic::Sta, _am) => panic!(),
             _ => panic!(),
-        }*/
-        (0, smallvec![])
+        }
     }
 
-    fn emit(&mut self, i: Instruction<'a>) {
-        let (opcode, operands) = self.generate_instruction_bytes(i);
+    fn emit(&mut self, i: Instruction<'a>) -> EmitResult<'a> {
+        let (could_emit, opcode, operands) = self.generate_instruction_bytes(&i);
         let operands_len = operands.len() as u16;
         let segment = self.segments.get_mut(self.current_segment).unwrap();
         segment.data.push(opcode);
         segment.data.extend(operands);
+
+        let result = if could_emit {
+            EmitResult::Emitted
+        } else {
+            EmitResult::EmitLater(segment.pc, i)
+        };
+
         segment.pc += 1 + operands_len;
+
+        result
     }
 
-    /*fn resolve_all(&mut self) {
-        let to_resolve = std::mem::replace(&mut self.to_resolve, HashMap::new());
+    fn emit_at(&mut self, pc: u16, i: Instruction<'a>) -> EmitResult<'a> {
+        let (could_emit, _, operands) = self.generate_instruction_bytes(&i);
+        let segment = self.segments.get_mut(self.current_segment).unwrap();
 
-        self.to_resolve = to_resolve
-            .into_iter()
-            .filter_map(|(label, to_resolves)| {
-                let label_pc = self.labels.get(label).cloned();
-                match label_pc {
-                    Some(label_pc) => {
-                        for to_resolve in to_resolves {
-                            let segment = self.segment_mut(to_resolve.segment).unwrap();
-                            let offset = (to_resolve.pc - segment.start_pc) as usize;
-                            let le = label_pc.to_le_bytes();
-                            segment.data[offset] = le[0];
-                            segment.data[offset + 1] = le[1];
-                        }
+        if could_emit {
+            let mut offset = 1;
+            for op in operands {
+                segment.data[pc as usize - segment.start_pc as usize + offset] = op;
+                offset = offset + 1;
+            }
 
-                        None
-                    }
-                    None => Some((label, to_resolves)), // label does not exist yet, so keep it around
-                }
-            })
-            .collect();
-    }*/
+            EmitResult::Emitted
+        } else {
+            EmitResult::EmitLater(segment.pc, i)
+        }
+    }
+}
+
+enum EmitResult<'a> {
+    Emitted,
+    EmitLater(u16, Instruction<'a>),
 }
 
 pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext> {
     let mut ctx = CodegenContext::new(options);
 
     // First pass
-    for token in ast {
-        match token {
+    let mut unprocessed = ast
+        .into_iter()
+        .filter_map(|token| match token {
             Token::Label(label) => {
                 ctx.register_label(label);
+                None
             }
-            Token::Instruction(i) => ctx.emit(i),
-        }
-    }
+            Token::Instruction(i) => match ctx.emit(i) {
+                EmitResult::Emitted => None,
+                EmitResult::EmitLater(pc, i) => Some((pc, i)),
+            },
+        })
+        .collect::<HashMap<_, _>>();
 
-    // Resolve passes
-    /*while !ctx.to_resolve.is_empty() {
-        ctx.resolve_all();
-    }*/
+    // Other passes
+    while !unprocessed.is_empty() {
+        unprocessed = unprocessed
+            .into_iter()
+            .filter_map(|(pc, i)| match ctx.emit_at(pc, i) {
+                EmitResult::Emitted => None,
+                EmitResult::EmitLater(pc, i) => Some((pc, i)),
+            })
+            .collect();
+    }
 
     Ok(ctx)
 }
