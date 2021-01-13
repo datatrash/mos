@@ -1,9 +1,9 @@
-use super::{Mnemonic, LocatedMnemonic, Span};
-use nom::IResult;
+use super::{Mnemonic, Span};
+use crate::parser::ParseResult;
 use nom::branch::alt;
-use nom::combinator::map;
 use nom::bytes::complete::tag_no_case;
-use nom_locate::position;
+use nom::combinator::map;
+use nom::IResult;
 
 macro_rules! parse_mnemonic {
     ( $ input : expr , $ expected : expr ) => {
@@ -11,10 +11,8 @@ macro_rules! parse_mnemonic {
     };
 }
 
-pub(super) fn parse_mnemonic(input: Span) -> IResult<Span, LocatedMnemonic> {
-    let (input, position) = position(input)?;
-
-    let (input, data) = alt((
+pub(super) fn parse_mnemonic(input: Span) -> ParseResult<Span, Mnemonic> {
+    let (input, mnemonic) = alt((
         alt((
             parse_mnemonic!("adc", Mnemonic::Adc),
             parse_mnemonic!("and", Mnemonic::And),
@@ -76,8 +74,8 @@ pub(super) fn parse_mnemonic(input: Span) -> IResult<Span, LocatedMnemonic> {
             parse_mnemonic!("txa", Mnemonic::Txa),
             parse_mnemonic!("txs", Mnemonic::Txs),
             parse_mnemonic!("tya", Mnemonic::Tya),
-        ))
+        )),
     ))(input)?;
 
-    Ok((input, LocatedMnemonic { position, data }))
+    Ok((input, mnemonic))
 }

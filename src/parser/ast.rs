@@ -1,9 +1,7 @@
-use nom_locate::LocatedSpan;
-
 use super::mnemonic;
 use crate::parser::expressions::Expression;
 
-pub type Span<'a> = LocatedSpan<&'a str>;
+pub type Span<'a> = &'a str;
 
 #[derive(Debug, PartialEq)]
 pub enum AddressingMode<'a> {
@@ -30,12 +28,6 @@ impl<'a> AddressingMode<'a> {
             _ => panic!(),
         }
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct LocatedAddressingMode<'a> {
-    pub position: Span<'a>,
-    pub data: AddressingMode<'a>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -99,28 +91,16 @@ pub enum Mnemonic {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct LocatedMnemonic<'a> {
-    pub position: Span<'a>,
-    pub data: Mnemonic,
-}
-
-#[derive(Debug, PartialEq)]
 pub struct Instruction<'a> {
-    pub mnemonic: LocatedMnemonic<'a>,
-    pub addressing_mode: LocatedAddressingMode<'a>,
+    pub mnemonic: Mnemonic,
+    pub addressing_mode: AddressingMode<'a>,
 }
 
 impl<'a> Instruction<'a> {
-    pub fn new(mnemonic: Mnemonic, am: AddressingMode<'a>) -> Self {
+    pub fn new(mnemonic: Mnemonic, addressing_mode: AddressingMode<'a>) -> Self {
         Self {
-            mnemonic: LocatedMnemonic {
-                position: Span::new(""),
-                data: mnemonic,
-            },
-            addressing_mode: LocatedAddressingMode {
-                position: Span::new(""),
-                data: am,
-            },
+            mnemonic,
+            addressing_mode,
         }
     }
 }

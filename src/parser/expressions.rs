@@ -1,6 +1,6 @@
 use crate::parser::numbers::{hexdec_u16, hexdec_u8};
 use crate::parser::whitespace::{identifier, ws};
-use crate::parser::Span;
+use crate::parser::{ParseResult, Span};
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::{char, multispace0};
@@ -111,7 +111,7 @@ impl<'a> Debug for Expression<'a> {
     }
 }
 
-fn parens(input: Span) -> IResult<Span, Expression> {
+fn parens(input: Span) -> ParseResult<Span, Expression> {
     delimited(
         multispace0,
         delimited(
@@ -123,11 +123,11 @@ fn parens(input: Span) -> IResult<Span, Expression> {
     )(input)
 }
 
-fn factor(input: Span) -> IResult<Span, Expression> {
+fn factor(input: Span) -> ParseResult<Span, Expression> {
     alt((
         map(hexdec_u8, |u8| Expression::U8(u8)),
         map(hexdec_u16, |u16| Expression::U16(u16)),
-        map(identifier, |val: Span| Expression::Label(val.fragment())),
+        map(identifier, |val: Span| Expression::Label(val)),
         parens,
     ))(input)
 }
@@ -148,7 +148,7 @@ fn fold_expressions<'a>(
     })
 }
 
-fn term(input: Span) -> IResult<Span, Expression> {
+fn term(input: Span) -> ParseResult<Span, Expression> {
     let (input, initial) = factor(input)?;
     let (input, remainder) = many0(alt((
         |input| {
@@ -164,7 +164,7 @@ fn term(input: Span) -> IResult<Span, Expression> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn expression(input: Span) -> IResult<Span, Expression> {
+pub fn expression(input: Span) -> ParseResult<Span, Expression> {
     let (input, initial) = term(input)?;
     let (input, remainder) = many0(alt((
         |input| {
@@ -188,37 +188,37 @@ mod tests {
 
     #[test]
     fn parse_add() {
-        let exp = expression(Span::new("1 + $ff")).unwrap().1;
+        let exp = expression("1 + $ff").unwrap().1;
         assert_eq!(format!("{:?}", exp), "[1 + 255]");
     }
 
     #[test]
     fn parse_sub() {
-        let exp = expression(Span::new("16384 - 2")).unwrap().1;
+        let exp = expression("16384 - 2").unwrap().1;
         assert_eq!(format!("{:?}", exp), "[16384 - 2]");
     }
 
     #[test]
     fn parse_mul() {
-        let exp = expression(Span::new("1 * 2")).unwrap().1;
+        let exp = expression("1 * 2").unwrap().1;
         assert_eq!(format!("{:?}", exp), "[1 * 2]");
     }
 
     #[test]
     fn parse_div() {
-        let exp = expression(Span::new("1 / 2")).unwrap().1;
+        let exp = expression("1 / 2").unwrap().1;
         assert_eq!(format!("{:?}", exp), "[1 / 2]");
     }
 
     #[test]
     fn parse_complex() {
-        let exp = expression(Span::new("[5 * foo] / bar + baz")).unwrap().1;
+        let exp = expression("[5 * foo] / bar + baz").unwrap().1;
         assert_eq!(format!("{:?}", exp), "[[[[5 * foo]] / bar] + baz]");
     }
 
     #[test]
     fn basic_eval() {
-        let exp = expression(Span::new("[5 * 8] / 2 - 6")).unwrap().1;
+        let exp = expression("[5 * 8] / 2 - 6").unwrap().1;
         match exp.evaluate(&HashMap::new()).0 {
             ResolvedExpression::U16(val) => assert_eq!(val, 14),
             _ => panic!(),
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn eval_complex() {
-        let exp = expression(Span::new("[5 * foo] / bar - baz")).unwrap().1;
+        let exp = expression("[5 * foo] / bar - baz").unwrap().1;
         let (_, missing_labels) = exp.evaluate(&HashMap::new());
         assert_eq!(missing_labels.contains(&"foo"), true);
         assert_eq!(missing_labels.contains(&"bar"), true);

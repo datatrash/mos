@@ -6,7 +6,7 @@ pub type AsmResult<T> = Result<T, AsmError>;
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum AsmError {
     #[error("parser error")]
-    Parser(#[from] nom::Err<nom::error::Error<Span<'static>>>),
+    Parser(#[from] nom::Err<nom::error::VerboseError<Span<'static>>>),
     #[error("unknown error")]
     Unknown,
 }

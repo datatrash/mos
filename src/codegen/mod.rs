@@ -108,7 +108,7 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn generate_instruction_bytes(&mut self, i: &Instruction<'a>) -> (bool, u8, SmallVec<[u8; 2]>) {
-        match (&i.mnemonic.data, &i.addressing_mode.data) {
+        match (&i.mnemonic, &i.addressing_mode) {
             (Mnemonic::Jmp, am) => {
                 let opcode = match am {
                     AddressingMode::AbsoluteOrRelativeOrZp(_) => 0x4c,
@@ -216,6 +216,13 @@ mod tests {
         assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
         Ok(())
     }
+
+    /*#[test]
+    fn can_store_data() -> AsmResult<()> {
+        let ctx = test_codegen(".byte 123\n.word 64738")?;
+        assert_eq!(ctx.current_segment().data, vec![123, 0xe2, 0xfc]);
+        Ok(())
+    }*/
 
     /*#[test]
     fn can_perform_operations_on_labels() -> AsmResult<()> {

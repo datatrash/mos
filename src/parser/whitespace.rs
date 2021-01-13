@@ -1,4 +1,5 @@
 use super::Span;
+use crate::parser::ParseResult;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, take_until, take_while, take_while_m_n};
 use nom::character::complete::{alpha1, alphanumeric1, hex_digit1, multispace0, newline, space1};
@@ -9,15 +10,11 @@ use nom::multi::{fold_many0, many0, many1};
 use nom::sequence::{delimited, pair, preceded, tuple};
 use nom::{FindSubstring, IResult, InputLength, InputTake};
 
-fn cpp_comment<'a, E: ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
-    map(value((), pair(tag("//"), is_not("\n\r"))), |_| {
-        Span::new("")
-    })(input)
+fn cpp_comment(input: Span) -> ParseResult<Span, Span> {
+    map(value((), pair(tag("//"), is_not("\n\r"))), |_| "")(input)
 }
 
-fn inside_c_comment<'a, E: ParseError<Span<'a>>>(
-    input: Span<'a>,
-) -> IResult<Span<'a>, Span<'a>, E> {
+fn inside_c_comment(input: Span) -> ParseResult<Span, Span> {
     // Once we're inside a C comment, we don't care about anything except perhaps another /*
     let (input, _) = take_until("/*")(input)?;
 
@@ -30,14 +27,14 @@ fn inside_c_comment<'a, E: ParseError<Span<'a>>>(
             (),
             pair(alt((inside_c_comment, take_until("*/"))), tag("*/")),
         ),
-        |_| Span::new(""),
+        |_| "",
     )(input)?;
 
     // Ignore any trailing characters until we're up to the next (one level up) */, so the outer function can deal with that
     take_until("*/")(input)
 }
 
-fn c_comment<'a, E: ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
+fn c_comment(input: Span) -> ParseResult<Span, Span> {
     map(
         value(
             (),
@@ -47,31 +44,28 @@ fn c_comment<'a, E: ParseError<Span<'a>>>(input: Span<'a>) -> IResult<Span<'a>, 
                 tag("*/"),
             )),
         ),
-        |_| Span::new(""),
+        |_| "",
     )(input)
 }
 
-pub(super) fn ws<'a, F: 'a, O, E: 'a + ParseError<Span<'a>>>(
-    inner: F,
-) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, O, E>
+pub(super) fn ws<'a, F: 'a, O>(inner: F) -> impl FnMut(Span<'a>) -> ParseResult<Span<'a>, O>
 where
-    F: FnMut(Span<'a>) -> IResult<Span<'a>, O, E>,
+    F: FnMut(Span<'a>) -> ParseResult<Span<'a>, O>,
 {
     let left = many0(alt((space1, cpp_comment, c_comment)));
     let right = many0(alt((space1, cpp_comment, c_comment)));
     delimited(left, inner, right)
 }
 
-pub(super) fn identifier(input: Span) -> IResult<Span, Span> {
+pub(super) fn identifier(input: Span) -> ParseResult<Span, Span> {
     recognize(pair(
         alt((alpha1, tag("_"))),
         many0(alt((alphanumeric1, tag("_")))),
     ))(input)
 }
 
-pub(super) fn eof_or_eol<'a, E: 'a + ParseError<Span<'a>>>(
-) -> impl FnMut(Span<'a>) -> IResult<Span<'a>, Span<'a>, E> {
-    let eol = map(many1(newline), |_| Span::new(""));
+pub(super) fn eof_or_eol<'a>() -> impl FnMut(Span<'a>) -> ParseResult<Span<'a>, Span<'a>> {
+    let eol = map(many1(newline), |_| "");
     alt((eol, eof))
 }
 
@@ -87,8 +81,8 @@ mod tests {
 
     #[test]
     fn can_ignore_whitespace() {
-        let input = Span::new("   foo   \n   bar");
-        let parser: IResult<Span, Vec<Span>> = many0(alt((
+        let input = "   foo   \n   bar";
+        let parser: ParseResult<Span, Vec<Span>> = many0(alt((
             terminated(ws(tag("foo")), eof_or_eol()),
             ws(tag("bar")),
         )))(input);
@@ -96,15 +90,15 @@ mod tests {
             .unwrap()
             .1
             .into_iter()
-            .map(|span| span.fragment().clone())
+            .map(|span| span.clone())
             .collect();
         assert_eq!(fragments, vec!["foo", "bar"]);
     }
 
     #[test]
     fn can_ignore_cpp_comments() {
-        let input = Span::new("   foo // hello  \n   bar");
-        let parser: IResult<Span, Vec<Span>> = many0(alt((
+        let input = "   foo // hello  \n   bar";
+        let parser: ParseResult<Span, Vec<Span>> = many0(alt((
             terminated(ws(tag("foo")), eof_or_eol()),
             ws(tag("bar")),
         )))(input);
@@ -112,15 +106,15 @@ mod tests {
             .unwrap()
             .1
             .into_iter()
-            .map(|span| span.fragment().clone())
+            .map(|span| span.clone())
             .collect();
         assert_eq!(fragments, vec!["foo", "bar"]);
     }
 
     #[test]
     fn can_ignore_unnested_c_comments() {
-        let input = Span::new("   foo /* hello */   \n   bar");
-        let parser: IResult<Span, Vec<Span>> = many0(alt((
+        let input = "   foo /* hello */   \n   bar";
+        let parser: ParseResult<Span, Vec<Span>> = many0(alt((
             terminated(ws(tag("foo")), eof_or_eol()),
             ws(tag("bar")),
         )))(input);
@@ -128,15 +122,15 @@ mod tests {
             .unwrap()
             .1
             .into_iter()
-            .map(|span| span.fragment().clone())
+            .map(|span| span.clone())
             .collect();
         assert_eq!(fragments, vec!["foo", "bar"]);
     }
 
     #[test]
     fn can_ignore_nested_c_comments() {
-        let input = Span::new("   foo /* /*  /*hello */ */*/   \n   bar");
-        let parser: IResult<Span, Vec<Span>> = many0(alt((
+        let input = "   foo /* /*  /*hello */ */*/   \n   bar";
+        let parser: ParseResult<Span, Vec<Span>> = many0(alt((
             terminated(ws(tag("foo")), eof_or_eol()),
             ws(tag("bar")),
         )))(input);
@@ -144,7 +138,7 @@ mod tests {
             .unwrap()
             .1
             .into_iter()
-            .map(|span| span.fragment().clone())
+            .map(|span| span.clone())
             .collect();
         assert_eq!(fragments, vec!["foo", "bar"]);
     }
@@ -152,11 +146,10 @@ mod tests {
     #[test]
     fn can_parse_identifier() {
         assert_eq!(
-            delimited(multispace1, identifier, multispace1)(Span::new("      hello_there  "))
+            delimited(multispace1, identifier, multispace1)("      hello_there  ")
                 .unwrap()
-                .1
-                .fragment(),
-            &"hello_there"
+                .1,
+            "hello_there"
         );
     }
 }
