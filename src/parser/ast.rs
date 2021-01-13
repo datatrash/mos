@@ -106,7 +106,14 @@ impl<'a> Instruction<'a> {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum DataType {
+    Byte,
+    Word,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     Instruction(Instruction<'a>),
     Label(&'a str),
+    Data(DataType, Expression<'a>),
 }

@@ -16,18 +16,17 @@ pub struct Segment {
 }
 
 impl Segment {
-    fn set(&mut self, pc: u16, opcode: u8, operands: SmallVec<[u8; 2]>) -> u16 {
+    fn set(&mut self, pc: u16, bytes: &[u8]) -> u16 {
         self.pc = pc;
 
-        let length = 1 + operands.len();
+        let length = bytes.len();
         let target = self.pc as usize - self.start_pc as usize;
         if self.data.len() < target + length {
             self.data.resize(target + length, 0);
         }
-        self.data[target] = opcode;
-        let mut offset = 1;
-        for op in operands {
-            self.data[target + offset] = op;
+        let mut offset = 0;
+        for byte in bytes {
+            self.data[target + offset] = *byte;
             offset += 1;
         }
         self.pc += length as u16;
@@ -70,6 +69,10 @@ impl<'a> CodegenContext<'a> {
         self.segments.get(self.current_segment).unwrap()
     }
 
+    fn current_segment_mut(&mut self) -> &mut Segment {
+        self.segments.get_mut(self.current_segment).unwrap()
+    }
+
     fn register_label(&mut self, label: &'a str) {
         self.labels.insert(label, self.current_segment().pc);
     }
@@ -89,10 +92,10 @@ impl<'a> CodegenContext<'a> {
         &self,
         am: &AddressingMode,
         opcode: u8,
-    ) -> (bool, u8, SmallVec<[u8; 2]>) {
+    ) -> (bool, SmallVec<[u8; 3]>) {
         match self.evaluate_expression(am.value()) {
-            Some(val) => (true, opcode, val),
-            None => (false, opcode, smallvec![0, 0]),
+            Some(val) => (true, smallvec![opcode, val[0], val[1]]),
+            None => (false, smallvec![opcode, 0, 0]),
         }
     }
 
@@ -100,14 +103,14 @@ impl<'a> CodegenContext<'a> {
         &self,
         am: &AddressingMode,
         opcode: u8,
-    ) -> (bool, u8, SmallVec<[u8; 2]>) {
+    ) -> (bool, SmallVec<[u8; 3]>) {
         match self.evaluate_expression(am.value()) {
-            Some(val) => (true, opcode, smallvec![val[0]]),
-            None => (false, opcode, smallvec![0]),
+            Some(val) => (true, smallvec![opcode, val[0]]),
+            None => (false, smallvec![opcode, 0]),
         }
     }
 
-    fn generate_instruction_bytes(&mut self, i: &Instruction<'a>) -> (bool, u8, SmallVec<[u8; 2]>) {
+    fn generate_instruction_bytes(&mut self, i: &Instruction<'a>) -> (bool, SmallVec<[u8; 3]>) {
         match (&i.mnemonic, &i.addressing_mode) {
             (Mnemonic::Jmp, am) => {
                 let opcode = match am {
@@ -123,17 +126,17 @@ impl<'a> CodegenContext<'a> {
                 };
                 self.try_evaluate_expression_u8(am, opcode)
             }
-            (Mnemonic::Nop, _am) => (true, 0xea, smallvec![]),
+            (Mnemonic::Nop, _am) => (true, smallvec![0xea]),
             //(Mnemonic::Sta, _am) => panic!(),
             _ => panic!(),
         }
     }
 
     fn emit(&mut self, i: Instruction<'a>) -> EmitResult<'a> {
-        let (could_emit, opcode, operands) = self.generate_instruction_bytes(&i);
-        let segment = self.segments.get_mut(self.current_segment).unwrap();
+        let (could_emit, bytes) = self.generate_instruction_bytes(&i);
+        let segment = self.current_segment_mut();
         let orig_pc = segment.pc;
-        segment.set(orig_pc, opcode, operands);
+        segment.set(orig_pc, &bytes);
 
         if could_emit {
             EmitResult::Emitted
@@ -143,9 +146,8 @@ impl<'a> CodegenContext<'a> {
     }
 
     fn emit_at(&mut self, pc: u16, i: Instruction<'a>) -> EmitResult<'a> {
-        let (could_emit, opcode, operands) = self.generate_instruction_bytes(&i);
-        let segment = self.segments.get_mut(self.current_segment).unwrap();
-        segment.set(pc, opcode, operands);
+        let (could_emit, bytes) = self.generate_instruction_bytes(&i);
+        self.current_segment_mut().set(pc, &bytes);
 
         if could_emit {
             EmitResult::Emitted
@@ -175,6 +177,30 @@ pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenCon
                 EmitResult::Emitted => None,
                 EmitResult::EmitLater(pc, i) => Some((pc, i)),
             },
+            Token::Data(ty, expr) => {
+                let (resolved, missing_labels) = expr.evaluate(&ctx.labels);
+                assert_eq!(missing_labels.is_empty(), true);
+                let segment = ctx.current_segment_mut();
+                match ty {
+                    DataType::Byte => {
+                        match resolved {
+                            ResolvedExpression::U8(data) => segment.set(segment.pc, &[data]),
+                            ResolvedExpression::U16(data) => segment.set(segment.pc, &[data as u8]),
+                        };
+                    }
+                    DataType::Word => {
+                        match resolved {
+                            ResolvedExpression::U8(data) => {
+                                segment.set(segment.pc, &(data as u16).to_le_bytes())
+                            }
+                            ResolvedExpression::U16(data) => {
+                                segment.set(segment.pc, &data.to_le_bytes())
+                            }
+                        };
+                    }
+                }
+                None
+            }
         })
         .collect::<HashMap<_, _>>();
 
@@ -217,12 +243,12 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn can_store_data() -> AsmResult<()> {
         let ctx = test_codegen(".byte 123\n.word 64738")?;
         assert_eq!(ctx.current_segment().data, vec![123, 0xe2, 0xfc]);
         Ok(())
-    }*/
+    }
 
     /*#[test]
     fn can_perform_operations_on_labels() -> AsmResult<()> {

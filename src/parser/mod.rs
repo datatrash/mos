@@ -121,6 +121,26 @@ fn label(input: Span) -> ParseResult<Span, Span> {
     context("label", map(ws(terminated(identifier, char(':'))), |id| id))(input)
 }
 
+fn data(input: Span) -> ParseResult<Span, (DataType, Expression)> {
+    context(
+        "data",
+        map(
+            tuple((
+                ws(alt((tag_no_case(".byte"), tag_no_case(".word")))),
+                ws(expression),
+            )),
+            |(ty, expr)| {
+                let ty = match ty.to_lowercase().as_str() {
+                    ".byte" => DataType::Byte,
+                    ".word" => DataType::Word,
+                    _ => panic!(),
+                };
+                (ty, expr)
+            },
+        ),
+    )(input)
+}
+
 pub(crate) fn parse<'a, S: Into<Span<'a>>>(input: S) -> ParseResult<Span<'a>, Vec<Token<'a>>> {
     context(
         "parse",
@@ -129,6 +149,9 @@ pub(crate) fn parse<'a, S: Into<Span<'a>>>(input: S) -> ParseResult<Span<'a>, Ve
                 Token::Instruction(i)
             }),
             map(label, |s| Token::Label(s)),
+            map(tuple((data, eof_or_eol())), |((ty, expr), _)| {
+                Token::Data(ty, expr)
+            }),
         )))),
     )(input.into())
 }
@@ -137,6 +160,7 @@ pub(crate) fn parse<'a, S: Into<Span<'a>>>(input: S) -> ParseResult<Span<'a>, Ve
 mod tests {
     use crate::parser::*;
     use nom::error::convert_error;
+    use nom::lib::std::collections::HashMap;
 
     #[test]
     fn cannot_parse_multiple_statements_on_line() {
@@ -304,6 +328,36 @@ mod tests {
             Token::Label(i) => assert_eq!(i, "my_label"),
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn test_data_byte() {
+        let tokens = parse("      .byte   76    ").unwrap().1;
+        let token = tokens.into_iter().next().unwrap();
+        match token {
+            Token::Data(DataType::Byte, expr) => {
+                assert_eq!(format!("{:?}", expr), "76");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_data_word() {
+        let tokens = parse("      .word   some_label    ").unwrap().1;
+        let token = tokens.into_iter().next().unwrap();
+        match token {
+            Token::Data(DataType::Word, expr) => {
+                assert_eq!(format!("{:?}", expr), "some_label");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn test_multiple_data() {
+        let tokens = parse(".byte 1\n.byte 2\n.byte 3").unwrap().1;
+        assert_eq!(tokens.len(), 3);
     }
 
     fn test_instruction(input: &str) -> Instruction {
