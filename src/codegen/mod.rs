@@ -132,34 +132,63 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn emit(&mut self, i: Instruction<'a>) -> EmitResult<'a> {
+    fn emit_instruction(&mut self, pc: Option<u16>, i: Instruction<'a>) -> Option<EmitResult<'a>> {
         let (could_emit, bytes) = self.generate_instruction_bytes(&i);
         let segment = self.current_segment_mut();
-        let orig_pc = segment.pc;
-        segment.set(orig_pc, &bytes);
+        let pc = pc.unwrap_or(segment.pc);
+        segment.set(pc, &bytes);
 
         if could_emit {
-            EmitResult::Emitted
+            None
         } else {
-            EmitResult::EmitLater(orig_pc, i)
+            Some(EmitResult::EmitInstructionLater(pc, i))
         }
     }
 
-    fn emit_at(&mut self, pc: u16, i: Instruction<'a>) -> EmitResult<'a> {
-        let (could_emit, bytes) = self.generate_instruction_bytes(&i);
-        self.current_segment_mut().set(pc, &bytes);
+    fn emit_data(
+        &mut self,
+        pc: Option<u16>,
+        ty: DataType,
+        expr: Expression<'a>,
+    ) -> Option<EmitResult<'a>> {
+        let (resolved, missing_labels) = expr.evaluate(&self.labels);
+        let segment = self.current_segment_mut();
+        let pc = pc.unwrap_or(segment.pc);
+
+        let could_emit = missing_labels.is_empty();
+
+        let bytes: SmallVec<[u8; 2]> = if could_emit {
+            match ty {
+                DataType::Byte => match resolved {
+                    ResolvedExpression::U8(data) => smallvec![data],
+                    ResolvedExpression::U16(data) => smallvec![data as u8],
+                },
+                DataType::Word => match resolved {
+                    ResolvedExpression::U8(data) => SmallVec::from_buf((data as u16).to_le_bytes()),
+                    ResolvedExpression::U16(data) => SmallVec::from_buf(data.to_le_bytes()),
+                },
+            }
+        } else {
+            // Just emit some placeholders
+            match ty {
+                DataType::Byte => smallvec![0],
+                DataType::Word => smallvec![0, 0],
+            }
+        };
+
+        segment.set(pc, &bytes);
 
         if could_emit {
-            EmitResult::Emitted
+            None
         } else {
-            EmitResult::EmitLater(pc, i)
+            Some(EmitResult::EmitDataLater(pc, ty, expr))
         }
     }
 }
 
 enum EmitResult<'a> {
-    Emitted,
-    EmitLater(u16, Instruction<'a>),
+    EmitInstructionLater(u16, Instruction<'a>),
+    EmitDataLater(u16, DataType, Expression<'a>),
 }
 
 pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext> {
@@ -173,44 +202,18 @@ pub fn codegen(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenCon
                 ctx.register_label(label);
                 None
             }
-            Token::Instruction(i) => match ctx.emit(i) {
-                EmitResult::Emitted => None,
-                EmitResult::EmitLater(pc, i) => Some((pc, i)),
-            },
-            Token::Data(ty, expr) => {
-                let (resolved, missing_labels) = expr.evaluate(&ctx.labels);
-                assert_eq!(missing_labels.is_empty(), true);
-                let segment = ctx.current_segment_mut();
-                match ty {
-                    DataType::Byte => {
-                        match resolved {
-                            ResolvedExpression::U8(data) => segment.set(segment.pc, &[data]),
-                            ResolvedExpression::U16(data) => segment.set(segment.pc, &[data as u8]),
-                        };
-                    }
-                    DataType::Word => {
-                        match resolved {
-                            ResolvedExpression::U8(data) => {
-                                segment.set(segment.pc, &(data as u16).to_le_bytes())
-                            }
-                            ResolvedExpression::U16(data) => {
-                                segment.set(segment.pc, &data.to_le_bytes())
-                            }
-                        };
-                    }
-                }
-                None
-            }
+            Token::Instruction(i) => ctx.emit_instruction(None, i),
+            Token::Data(ty, expr) => ctx.emit_data(None, ty, expr),
         })
-        .collect::<HashMap<_, _>>();
+        .collect::<Vec<_>>();
 
     // Other passes
     while !unprocessed.is_empty() {
         unprocessed = unprocessed
             .into_iter()
-            .filter_map(|(pc, i)| match ctx.emit_at(pc, i) {
-                EmitResult::Emitted => None,
-                EmitResult::EmitLater(pc, i) => Some((pc, i)),
+            .filter_map(|er| match er {
+                EmitResult::EmitInstructionLater(pc, i) => ctx.emit_instruction(Some(pc), i),
+                EmitResult::EmitDataLater(pc, ty, expr) => ctx.emit_data(Some(pc), ty, expr),
             })
             .collect();
     }
@@ -250,7 +253,7 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn can_perform_operations_on_labels() -> AsmResult<()> {
         // Create two labels, 'foo' and 'bar', separated by three NOPs.
         // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 NOPs).
@@ -259,9 +262,8 @@ mod tests {
             ctx.current_segment().data,
             vec![0x05, 0x00, 0xea, 0xea, 0xea, 0xea]
         );
-        assert_eq!(ctx.current_segment().pc, 0xc006);
         Ok(())
-    }*/
+    }
 
     fn test_codegen<'a>(code: &'static str) -> AsmResult<CodegenContext<'a>> {
         let ast = parse(code)?.1;
