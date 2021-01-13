@@ -86,8 +86,8 @@ fn indirect_y_indexed(input: Span) -> ParseResult<Span, Expression> {
 
 fn addressing_mode(input: Span) -> ParseResult<Span, AddressingMode> {
     let (input, am) = alt((
-        map(x_indexed, |val| AddressingMode::XIndexed(val)),
-        map(y_indexed, |val| AddressingMode::YIndexed(val)),
+        map(x_indexed, AddressingMode::XIndexed),
+        map(y_indexed, AddressingMode::YIndexed),
         map(x_indexed_indirect, |val| {
             AddressingMode::XIndexedIndirect(val)
         }),
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn can_fail_parsing() {
         let source = "lda `@#^%";
-        let result = parse(source.clone());
+        let result = parse(source);
         match result {
             Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
                 log::trace!("{}", convert_error(source, e));
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_label() {
         let tokens = parse("      my_label:  nop").unwrap().1;
-        let token = tokens.into_iter().nth(0).unwrap();
+        let token = tokens.into_iter().next().unwrap();
         match token {
             Token::Label(i) => assert_eq!(i, "my_label"),
             _ => panic!(),

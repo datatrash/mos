@@ -226,8 +226,8 @@ mod tests {
 
     /*#[test]
     fn can_perform_operations_on_labels() -> AsmResult<()> {
-        // Create two labels, 'foo' and 'bar', separated by three nops.
-        // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 nops).
+        // Create two labels, 'foo' and 'bar', separated by three NOPs.
+        // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 NOPs).
         let ctx = test_codegen("foo: .word bar - foo\nnop\nnop\nnop\nbar: nop")?;
         assert_eq!(
             ctx.current_segment().data,
@@ -238,7 +238,7 @@ mod tests {
     }*/
 
     fn test_codegen<'a>(code: &'static str) -> AsmResult<CodegenContext<'a>> {
-        let ast = parse(code.clone())?.1;
+        let ast = parse(code)?.1;
         codegen(ast, CodegenOptions { pc: 0xc000 })
     }
 }
