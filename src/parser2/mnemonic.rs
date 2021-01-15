@@ -1,4 +1,4 @@
-use crate::parser2::{Expr, IResult, LocatedSpan};
+use crate::parser2::{IResult, LocatedSpan, Token};
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
@@ -69,8 +69,8 @@ macro_rules! parse_mnemonic {
     };
 }
 
-pub(super) fn mnemonic(input: LocatedSpan) -> IResult<Expr> {
-    let parse = alt((
+pub(super) fn mnemonic(input: LocatedSpan) -> IResult<Mnemonic> {
+    alt((
         alt((
             parse_mnemonic!("adc", Mnemonic::Adc),
             parse_mnemonic!("and", Mnemonic::And),
@@ -133,7 +133,5 @@ pub(super) fn mnemonic(input: LocatedSpan) -> IResult<Expr> {
             parse_mnemonic!("txs", Mnemonic::Txs),
             parse_mnemonic!("tya", Mnemonic::Tya),
         )),
-    ));
-
-    map(parse, |m| Expr::Mnemonic(m))(input)
+    ))(input)
 }
