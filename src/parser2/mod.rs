@@ -1,40 +1,20 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
 use std::cell::RefCell;
-use std::ops::Range;
 
-use crate::parser2::mnemonic::{mnemonic, Mnemonic};
+use crate::parser2::mnemonic::mnemonic;
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, tag, tag_no_case, take, take_till1, take_until, take_while};
+use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{
-    alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, multispace1, newline, space1,
+    alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
 };
-use nom::combinator::{
-    all_consuming, map, map_opt, map_res, not, opt, recognize, rest, value, verify,
-};
-use nom::lib::std::fmt::Formatter;
-use nom::multi::{many0, many1};
-use nom::sequence::{delimited, pair, preceded, terminated, tuple};
-use std::fmt::Display;
+use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest};
 
+use nom::multi::many0;
+use nom::sequence::{delimited, pair, preceded, terminated, tuple};
+
+mod ast;
 mod mnemonic;
 
-type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
-type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
-
-#[derive(Debug)]
-struct Error(Location, String);
-
-#[derive(Clone, Debug)]
-struct State<'a> {
-    errors: &'a RefCell<Vec<Error>>,
-}
-
-impl<'a> State<'a> {
-    pub fn report_error(&self, error: Error) {
-        self.errors.borrow_mut().push(error);
-    }
-}
+pub use ast::*;
 
 fn expect<'a, F, E, T>(
     mut parser: F,
@@ -49,7 +29,10 @@ where
         match parser(input) {
             Ok((remaining, out)) => Ok((remaining, Some(out))),
             Err(nom::Err::Error(_)) | Err(nom::Err::Failure(_)) => {
-                let err = Error(Location::from(&i), error_msg.to_string());
+                let err = Error {
+                    location: Location::from(&i),
+                    message: error_msg.to_string(),
+                };
                 i.extra.report_error(err);
                 Ok((i, None))
             }
@@ -89,21 +72,15 @@ fn c_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
     )))(input)
 }
 
-#[derive(Debug)]
-enum Comment {
-    CStyle(String),
-    CppStyle(String),
-}
-
 fn whitespace_or_comment<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Vec<Comment>> {
     map(
         many0(alt((
             map(space1, |_| None),
             map(c_comment, |span| {
-                Some(Comment::CStyle(span.fragment().clone().into()))
+                Some(Comment::CStyle(span.fragment().to_owned().into()))
             }),
             map(cpp_comment, |span| {
-                Some(Comment::CppStyle(span.fragment().clone().into()))
+                Some(Comment::CppStyle(span.fragment().to_owned().into()))
             }),
         ))),
         |comments| comments.into_iter().flatten().collect::<Vec<_>>(),
@@ -124,43 +101,6 @@ where
             }
         },
     )
-}
-
-#[derive(Debug)]
-struct Identifier(String);
-
-#[derive(Clone, Copy, Debug)]
-struct Location {
-    line: u32,
-    column: u32,
-}
-
-impl<'a> From<&LocatedSpan<'a>> for Location {
-    fn from(span: &LocatedSpan) -> Self {
-        Self {
-            line: span.location_line(),
-            column: span.get_column() as u32,
-        }
-    }
-}
-
-#[derive(Debug)]
-enum Register {
-    A,
-    X,
-    Y,
-}
-
-#[derive(Debug)]
-enum Token {
-    Identifier(Identifier),
-    Label(Identifier),
-    Mnemonic(Mnemonic),
-    Number(usize),
-    Instruction((Location, Mnemonic, Option<Box<Token>>)),
-    IndirectAddressing((Box<Token>, Option<Register>)),
-    Ws((Vec<Comment>, Box<Token>, Vec<Comment>)),
-    Error,
 }
 
 fn identifier(input: LocatedSpan) -> IResult<Token> {
@@ -191,7 +131,10 @@ where
                 map(tuple((char(','), tag_no_case("x"))), |_| Some(Register::X)),
                 map(tuple((char(','), tag_no_case("y"))), |_| Some(Register::Y)),
                 map(tuple((char(','), alpha1)), |(_, i)| {
-                    let err = Error(Location::from(&i), format!("invalid register: {}", i));
+                    let err = Error {
+                        location: Location::from(&i),
+                        message: format!("invalid register: {}", i),
+                    };
                     i.extra.report_error(err);
                     None
                 }),
@@ -206,11 +149,6 @@ where
             register.flatten().flatten(),
         ))
     })
-}
-
-enum Expression {
-    Identifier(Identifier),
-    Number(usize),
 }
 
 fn operand(input: LocatedSpan) -> IResult<Token> {
@@ -229,7 +167,7 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
     ));
 
     map(instruction, move |(mnemonic, operand)| {
-        let operand = operand.flatten().map(|operand| Box::new(operand));
+        let operand = operand.flatten().map(Box::new);
         Token::Instruction((location, mnemonic, operand))
     })(input)
 }
@@ -238,10 +176,10 @@ fn error(input: LocatedSpan) -> IResult<Token> {
     map(
         take_till1(|c| c == ')' || c == '\n' || c == '\r'),
         |span: LocatedSpan| {
-            let err = Error(
-                Location::from(&span),
-                format!("unexpected `{}`", span.fragment()),
-            );
+            let err = Error {
+                location: Location::from(&span),
+                message: format!("unexpected `{}`", span.fragment()),
+            };
             span.extra.report_error(err);
             Token::Error
         },
@@ -286,77 +224,26 @@ fn number(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
-fn parse(source: &str) -> (Vec<Token>, Vec<Error>) {
+pub fn parse(source: &str) -> (Vec<Token>, Vec<Error>) {
     let errors = RefCell::new(Vec::new());
     let input = LocatedSpan::new_extra(source, State { errors: &errors });
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
     (expr, errors.into_inner())
 }
 
-impl Display for Mnemonic {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        let mnem = format!("{:?}", self).to_uppercase();
-        write!(f, "{}", mnem)
-    }
-}
-
-impl Display for Comment {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            Comment::CStyle(str) => write!(f, "{}", str),
-            Comment::CppStyle(str) => write!(f, "{}", str),
-        }
-    }
-}
-
-impl Display for Token {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        match self {
-            Token::Label(id) => {
-                write!(f, "{}:", id.0)
-            }
-            Token::Instruction((_location, mnemonic, operand)) => match operand {
-                Some(o) => write!(f, "{} {}", mnemonic, o),
-                None => write!(f, "{}", mnemonic),
-            },
-            Token::Identifier(id) => {
-                write!(f, "{}", id.0)
-            }
-            Token::IndirectAddressing((id, reg)) => match reg {
-                Some(r) => {
-                    let r = format!("{:?}", r).to_lowercase();
-                    write!(f, "({}), {}", id, r)
-                }
-                None => write!(f, "({})", id),
-            },
-            Token::Ws((l, inner, r)) => {
-                for w in l {
-                    let _ = write!(f, "{}", w);
-                }
-                let _ = write!(f, "{}", inner);
-                for w in r {
-                    let _ = write!(f, "\t\t{}", w);
-                }
-                Ok(())
-            }
-            _ => Ok(()),
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use crate::parser2::parse;
+    use super::*;
 
     #[test]
-    fn test() {
+    fn print_ast() {
         println!("{:?}", parse("label: lda (foo),x\nsta $fc"));
     }
 
     #[test]
     fn pretty_print() {
         for token in parse("label: lda (foo),x/* test */\nsta bar // some comment\nbrk").0 {
-            println!("\t{}", token);
+            println!("{}", token);
         }
     }
 }
