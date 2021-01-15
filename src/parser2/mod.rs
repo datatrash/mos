@@ -7,9 +7,11 @@ use crate::parser2::mnemonic::{mnemonic, Mnemonic};
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag, tag_no_case, take, take_till1, take_until, take_while};
 use nom::character::complete::{
-    alpha1, alphanumeric1, anychar, char, multispace1, newline, space1,
+    alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, multispace1, newline, space1,
 };
-use nom::combinator::{all_consuming, map, not, opt, recognize, rest, value, verify};
+use nom::combinator::{
+    all_consuming, map, map_opt, map_res, not, opt, recognize, rest, value, verify,
+};
 use nom::lib::std::fmt::Formatter;
 use nom::multi::{many0, many1};
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
@@ -87,13 +89,41 @@ fn c_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
     )))(input)
 }
 
-fn ws<'a, F, T>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<T>
+#[derive(Debug)]
+enum Comment {
+    CStyle(String),
+    CppStyle(String),
+}
+
+fn whitespace_or_comment<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Vec<Comment>> {
+    map(
+        many0(alt((
+            map(space1, |_| None),
+            map(c_comment, |span| {
+                Some(Comment::CStyle(span.fragment().clone().into()))
+            }),
+            map(cpp_comment, |span| {
+                Some(Comment::CppStyle(span.fragment().clone().into()))
+            }),
+        ))),
+        |comments| comments.into_iter().flatten().collect::<Vec<_>>(),
+    )
+}
+
+fn ws<'a, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Token>
 where
-    F: FnMut(LocatedSpan<'a>) -> IResult<T>,
+    F: FnMut(LocatedSpan<'a>) -> IResult<Token>,
 {
-    let left = many0(alt((space1, c_comment)));
-    let right = many0(alt((space1, c_comment, cpp_comment)));
-    delimited(left, inner, right)
+    map(
+        tuple((whitespace_or_comment(), inner, whitespace_or_comment())),
+        |(l, i, r)| {
+            if l.is_empty() && r.is_empty() {
+                i
+            } else {
+                Token::Ws((l, Box::new(i), r))
+            }
+        },
+    )
 }
 
 #[derive(Debug)]
@@ -124,9 +154,12 @@ enum Register {
 #[derive(Debug)]
 enum Token {
     Identifier(Identifier),
+    Label(Identifier),
     Mnemonic(Mnemonic),
+    Number(usize),
     Instruction((Location, Mnemonic, Option<Box<Token>>)),
     IndirectAddressing((Box<Token>, Option<Register>)),
+    Ws((Vec<Comment>, Box<Token>, Vec<Comment>)),
     Error,
 }
 
@@ -155,9 +188,9 @@ where
         inner_with_parens,
         opt(expect(
             alt((
-                map(tuple((tag(","), tag_no_case("x"))), |_| Some(Register::X)),
-                map(tuple((tag(","), tag_no_case("y"))), |_| Some(Register::Y)),
-                map(tuple((tag(","), alpha1)), |(_, i)| {
+                map(tuple((char(','), tag_no_case("x"))), |_| Some(Register::X)),
+                map(tuple((char(','), tag_no_case("y"))), |_| Some(Register::Y)),
+                map(tuple((char(','), alpha1)), |(_, i)| {
                     let err = Error(Location::from(&i), format!("invalid register: {}", i));
                     i.extra.report_error(err);
                     None
@@ -175,13 +208,22 @@ where
     })
 }
 
+enum Expression {
+    Identifier(Identifier),
+    Number(usize),
+}
+
+fn operand(input: LocatedSpan) -> IResult<Token> {
+    alt((identifier, number))(input)
+}
+
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     let location = Location::from(&input);
 
     let instruction = tuple((
         mnemonic,
         expect(
-            opt(alt((ws(identifier), ws(addressing_mode(ws(identifier)))))),
+            opt(alt((ws(operand), ws(addressing_mode(ws(operand)))))),
             "expected single operand after opcode",
         ),
     ));
@@ -206,14 +248,41 @@ fn error(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+fn label(input: LocatedSpan) -> IResult<Token> {
+    map(
+        tuple((identifier, expect(char(':'), "labels should end with ':'"))),
+        |(id, _)| match id {
+            Token::Identifier(id) => Token::Label(id),
+            _ => panic!(),
+        },
+    )(input)
+}
+
 fn expr(input: LocatedSpan) -> IResult<Token> {
-    alt((instruction, error))(input)
+    alt((instruction, label, error))(input)
 }
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
     terminated(
         many0(map(pair(ws(expr), many0(newline)), |(expr, _)| expr)),
         preceded(expect(not(anychar), "expected EOF"), rest),
+    )(input)
+}
+
+fn number(input: LocatedSpan) -> IResult<Token> {
+    map(
+        alt((
+            preceded(
+                char('$'),
+                map_opt(expect(hex_digit1, "expected hexadecimal value"), |input| {
+                    input.map(|i| usize::from_str_radix(i.fragment(), 16).ok())
+                }),
+            ),
+            map_opt(digit1, |input: LocatedSpan| {
+                Some(usize::from_str_radix(input.fragment(), 10).ok())
+            }),
+        )),
+        |val| Token::Number(val.unwrap()),
     )(input)
 }
 
@@ -231,9 +300,21 @@ impl Display for Mnemonic {
     }
 }
 
+impl Display for Comment {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            Comment::CStyle(str) => write!(f, "{}", str),
+            Comment::CppStyle(str) => write!(f, "{}", str),
+        }
+    }
+}
+
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
+            Token::Label(id) => {
+                write!(f, "{}:", id.0)
+            }
             Token::Instruction((_location, mnemonic, operand)) => match operand {
                 Some(o) => write!(f, "{} {}", mnemonic, o),
                 None => write!(f, "{}", mnemonic),
@@ -248,6 +329,16 @@ impl Display for Token {
                 }
                 None => write!(f, "({})", id),
             },
+            Token::Ws((l, inner, r)) => {
+                for w in l {
+                    let _ = write!(f, "{}", w);
+                }
+                let _ = write!(f, "{}", inner);
+                for w in r {
+                    let _ = write!(f, "\t\t{}", w);
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -259,12 +350,12 @@ mod test {
 
     #[test]
     fn test() {
-        println!("{:?}", parse("lda (foo),x\nsta bar"));
+        println!("{:?}", parse("label: lda (foo),x\nsta $fc"));
     }
 
     #[test]
     fn pretty_print() {
-        for token in parse("lda (foo),x\nsta bar // some comment\nbrk").0 {
+        for token in parse("label: lda (foo),x/* test */\nsta bar // some comment\nbrk").0 {
             println!("\t{}", token);
         }
     }
