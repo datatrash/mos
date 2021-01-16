@@ -62,12 +62,12 @@ pub enum Token {
     Instruction((Location, Mnemonic, Option<Box<Token>>)),
     IndirectAddressing((Box<Token>, Option<Register>)),
     Ws((Vec<Comment>, Box<Token>, Vec<Comment>)),
+    ExprParens(Box<Token>),
+    BinaryAdd(Box<Token>, Box<Token>),
+    BinarySub(Box<Token>, Box<Token>),
+    BinaryMul(Box<Token>, Box<Token>),
+    BinaryDiv(Box<Token>, Box<Token>),
     Error,
-}
-
-enum Expression {
-    Identifier(Identifier),
-    Number(usize),
 }
 
 impl Display for Mnemonic {
@@ -115,7 +115,16 @@ impl Display for Token {
                     let _ = write!(f, "\t\t{}", w);
                 }
                 Ok(())
-            }
+            },
+            Token::Number(num) => {
+                write!(f, "{}", num)
+            },
+            Token::ExprParens(inner) => {
+                write!(f, "[{}]", inner)
+            },
+            Token::BinaryAdd(lhs, rhs) => {
+                write!(f, "{} + {}", lhs, rhs)
+            },
             _ => Ok(()),
         }
     }

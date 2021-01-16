@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use crate::parser2::mnemonic::mnemonic;
-use nom::branch::alt;
+use nom::{branch::alt, character::complete::multispace0};
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{
     alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
@@ -224,6 +224,72 @@ fn number(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+fn expression_parens(input: LocatedSpan) -> IResult<Token> {
+    delimited(
+        multispace0,
+        delimited(
+            tag("["),
+            map(expression, |e| Token::ExprParens(Box::new(e))),
+            tag("]"),
+        ),
+        multispace0,
+    )(input)
+}
+
+fn expression_factor(input: LocatedSpan) -> IResult<Token> {
+    alt((number, identifier, expression_parens))(input)
+}
+
+enum Operation { Add, Sub, Mul, Div }
+
+fn fold_expressions(
+    initial: Token,
+    remainder: Vec<(Operation, Token)>,
+) -> Token {
+    remainder.into_iter().fold(initial, |acc, pair| {
+        let (oper, expr) = pair;
+
+        match oper {
+            Operation::Add => Token::BinaryAdd(Box::new(acc), Box::new(expr)),
+            Operation::Sub => Token::BinarySub(Box::new(acc), Box::new(expr)),
+            Operation::Mul => Token::BinaryMul(Box::new(acc), Box::new(expr)),
+            Operation::Div => Token::BinaryDiv(Box::new(acc), Box::new(expr)),
+        }
+    })
+}
+
+fn expression_term(input: LocatedSpan) -> IResult<Token> {
+    let (input, initial) = expression_factor(input)?;
+    let (input, remainder) = many0(alt((
+        |input| {
+            let (input, mul) = preceded(tag("*"), expression_factor)(input)?;
+            Ok((input, (Operation::Mul, mul)))
+        },
+        |input| {
+            let (input, div) = preceded(tag("/"), expression_factor)(input)?;
+            Ok((input, (Operation::Div, div)))
+        },
+    )))(input)?;
+
+    Ok((input, fold_expressions(initial, remainder)))
+}
+
+pub fn expression(input: LocatedSpan) -> IResult<Token> {
+    let (input, initial) = expression_term(input)?;
+    let (input, remainder) = many0(alt((
+        |input| {
+            let (input, add) = preceded(tag("+"), expression_term)(input)?;
+            Ok((input, (Operation::Add, add)))
+        },
+        |input| {
+            let (input, sub) = preceded(tag("-"), expression_term)(input)?;
+            Ok((input, (Operation::Sub, sub)))
+        },
+    )))(input)?;
+
+    Ok((input, fold_expressions(initial, remainder)))
+}
+
 pub fn parse(source: &str) -> (Vec<Token>, Vec<Error>) {
     let errors = RefCell::new(Vec::new());
     let input = LocatedSpan::new_extra(source, State { errors: &errors });
@@ -234,6 +300,14 @@ pub fn parse(source: &str) -> (Vec<Token>, Vec<Error>) {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn parse_add() {
+        let errors = RefCell::new(Vec::new());
+        let input = LocatedSpan::new_extra("1+$ff", State { errors: &errors });
+        let exp = expression(input).unwrap().1;
+        assert_eq!(format!("{}", exp), "1 + 255");
+    }
 
     #[test]
     fn print_ast() {
