@@ -151,10 +151,6 @@ where
     })
 }
 
-/*fn operand(input: LocatedSpan) -> IResult<Token> {
-    alt((identifier, number))(input)
-}*/
-
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     let location = Location::from(&input);
 
@@ -196,8 +192,22 @@ fn label(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+fn data(input: LocatedSpan) -> IResult<Token> {
+    map(
+        tuple((
+            alt((
+                map(tag_no_case(".byte"), |_| 8),
+                map(tag_no_case(".word"), |_| 16),
+                map(tag_no_case(".dword"), |_| 32),
+            )),
+            expect(expression_factor, "expected expression"),
+        )),
+        |(sz, exp)| Token::Data(exp.map(Box::new), sz),
+    )(input)
+}
+
 fn expr(input: LocatedSpan) -> IResult<Token> {
-    alt((instruction, label, error))(input)
+    alt((instruction, label, data, error))(input)
 }
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
@@ -308,6 +318,15 @@ mod test {
         let expr = parse("lda  1   +   [  $ff  * 12367 ] / foo  ");
         let e = expr.0.iter().next().unwrap();
         assert_eq!(format!("{}", e), "\t\tLDA 1 + [255 * 12367] / foo");
+    }
+
+    #[test]
+    fn parse_data() {
+        let expr = parse(".byte 123\n.word foo\n.dword 12345678");
+        let mut e = expr.0.iter();
+        assert_eq!(format!("{}", e.next().unwrap()), ".byte 123");
+        assert_eq!(format!("{}", e.next().unwrap()), ".word foo");
+        assert_eq!(format!("{}", e.next().unwrap()), ".dword 12345678");
     }
 
     #[test]

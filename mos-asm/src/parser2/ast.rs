@@ -67,6 +67,7 @@ pub enum Token {
     BinarySub(Box<Token>, Box<Token>),
     BinaryMul(Box<Token>, Box<Token>),
     BinaryDiv(Box<Token>, Box<Token>),
+    Data(Option<Box<Token>>, usize),
     Error,
 }
 
@@ -133,6 +134,18 @@ impl Display for Token {
             }
             Token::BinaryDiv(lhs, rhs) => {
                 write!(f, "{} / {}", lhs, rhs)
+            }
+            Token::Data(tok, sz) => {
+                let label = match sz {
+                    8 => ".byte",
+                    16 => ".word",
+                    32 => ".dword",
+                    _ => panic!(),
+                };
+                match tok {
+                    Some(t) => write!(f, "{} {}", label, t),
+                    None => write!(f, "{}", label),
+                }
             }
             _ => Ok(()),
         }
