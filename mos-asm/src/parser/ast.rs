@@ -1,23 +1,24 @@
-use crate::parser2::mnemonic::Mnemonic;
+use crate::errors::AsmError;
+use crate::parser::mnemonic::Mnemonic;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 
 pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
-#[derive(Debug)]
+/*#[derive(Debug)]
 pub struct Error {
     pub location: Location,
     pub message: String,
-}
+}*/
 
 #[derive(Clone, Debug)]
 pub struct State<'a> {
-    pub errors: &'a RefCell<Vec<Error>>,
+    pub errors: &'a RefCell<Vec<AsmError>>,
 }
 
 impl<'a> State<'a> {
-    pub fn report_error(&self, error: Error) {
+    pub fn report_error(&self, error: AsmError) {
         self.errors.borrow_mut().push(error);
     }
 }
@@ -31,7 +32,7 @@ pub enum Comment {
 #[derive(Debug)]
 pub struct Identifier(pub String);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Location {
     pub line: u32,
     pub column: u32,

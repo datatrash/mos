@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::parser2::mnemonic::mnemonic;
+use crate::parser::mnemonic::mnemonic;
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{
     alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
@@ -14,6 +14,7 @@ use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 mod ast;
 mod mnemonic;
 
+use crate::errors::AsmError;
 pub use ast::*;
 
 fn expect<'a, F, E, T>(
@@ -29,7 +30,7 @@ where
         match parser(input) {
             Ok((remaining, out)) => Ok((remaining, Some(out))),
             Err(nom::Err::Error(_)) | Err(nom::Err::Failure(_)) => {
-                let err = Error {
+                let err = AsmError::Parser {
                     location: Location::from(&i),
                     message: error_msg.to_string(),
                 };
@@ -131,7 +132,7 @@ where
                 map(tuple((char(','), tag_no_case("x"))), |_| Some(Register::X)),
                 map(tuple((char(','), tag_no_case("y"))), |_| Some(Register::Y)),
                 map(tuple((char(','), alpha1)), |(_, i)| {
-                    let err = Error {
+                    let err = AsmError::Parser {
                         location: Location::from(&i),
                         message: format!("invalid register: {}", i),
                     };
@@ -172,7 +173,7 @@ fn error(input: LocatedSpan) -> IResult<Token> {
     map(
         take_till1(|c| c == ')' || c == '\n' || c == '\r'),
         |span: LocatedSpan| {
-            let err = Error {
+            let err = AsmError::Parser {
                 location: Location::from(&span),
                 message: format!("unexpected `{}`", span.fragment()),
             };
@@ -302,7 +303,7 @@ pub fn expression(input: LocatedSpan) -> IResult<Token> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse(source: &str) -> (Vec<Token>, Vec<Error>) {
+pub fn parse(source: &str) -> (Vec<Token>, Vec<AsmError>) {
     let errors = RefCell::new(Vec::new());
     let input = LocatedSpan::new_extra(source, State { errors: &errors });
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
@@ -327,17 +328,5 @@ mod test {
         assert_eq!(format!("{}", e.next().unwrap()), ".byte 123");
         assert_eq!(format!("{}", e.next().unwrap()), ".word foo");
         assert_eq!(format!("{}", e.next().unwrap()), ".dword 12345678");
-    }
-
-    #[test]
-    fn print_ast() {
-        println!("{:?}", parse("label: lda (foo * 2),x\nsta $fc"));
-    }
-
-    #[test]
-    fn pretty_print() {
-        for token in parse("label: lda (foo * 2),x/* test */\nsta bar // some comment\nbrk").0 {
-            println!("{}", token);
-        }
     }
 }

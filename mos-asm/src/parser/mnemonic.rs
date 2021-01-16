@@ -1,4 +1,4 @@
-use crate::parser2::{IResult, LocatedSpan};
+use crate::parser::{IResult, LocatedSpan};
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
