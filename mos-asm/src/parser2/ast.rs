@@ -115,16 +115,25 @@ impl Display for Token {
                     let _ = write!(f, "\t\t{}", w);
                 }
                 Ok(())
-            },
+            }
             Token::Number(num) => {
                 write!(f, "{}", num)
-            },
+            }
             Token::ExprParens(inner) => {
                 write!(f, "[{}]", inner)
-            },
+            }
             Token::BinaryAdd(lhs, rhs) => {
                 write!(f, "{} + {}", lhs, rhs)
-            },
+            }
+            Token::BinarySub(lhs, rhs) => {
+                write!(f, "{} - {}", lhs, rhs)
+            }
+            Token::BinaryMul(lhs, rhs) => {
+                write!(f, "{} * {}", lhs, rhs)
+            }
+            Token::BinaryDiv(lhs, rhs) => {
+                write!(f, "{} / {}", lhs, rhs)
+            }
             _ => Ok(()),
         }
     }

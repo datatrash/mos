@@ -1,12 +1,12 @@
 use std::cell::RefCell;
 
 use crate::parser2::mnemonic::mnemonic;
-use nom::{branch::alt, character::complete::multispace0};
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{
     alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
 };
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest};
+use nom::{branch::alt, character::complete::multispace0};
 
 use nom::multi::many0;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
@@ -151,9 +151,9 @@ where
     })
 }
 
-fn operand(input: LocatedSpan) -> IResult<Token> {
+/*fn operand(input: LocatedSpan) -> IResult<Token> {
     alt((identifier, number))(input)
-}
+}*/
 
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     let location = Location::from(&input);
@@ -161,8 +161,8 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
     let instruction = tuple((
         mnemonic,
         expect(
-            opt(alt((ws(operand), ws(addressing_mode(ws(operand)))))),
-            "expected single operand after opcode",
+            opt(alt((ws(expression), ws(addressing_mode(ws(expression)))))),
+            "expected single expression after opcode",
         ),
     ));
 
@@ -237,15 +237,17 @@ fn expression_parens(input: LocatedSpan) -> IResult<Token> {
 }
 
 fn expression_factor(input: LocatedSpan) -> IResult<Token> {
-    alt((number, identifier, expression_parens))(input)
+    ws(alt((number, identifier, expression_parens)))(input)
 }
 
-enum Operation { Add, Sub, Mul, Div }
+enum Operation {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
 
-fn fold_expressions(
-    initial: Token,
-    remainder: Vec<(Operation, Token)>,
-) -> Token {
+fn fold_expressions(initial: Token, remainder: Vec<(Operation, Token)>) -> Token {
     remainder.into_iter().fold(initial, |acc, pair| {
         let (oper, expr) = pair;
 
@@ -302,21 +304,20 @@ mod test {
     use super::*;
 
     #[test]
-    fn parse_add() {
-        let errors = RefCell::new(Vec::new());
-        let input = LocatedSpan::new_extra("1+$ff", State { errors: &errors });
-        let exp = expression(input).unwrap().1;
-        assert_eq!(format!("{}", exp), "1 + 255");
+    fn parse_expression() {
+        let expr = parse("lda  1   +   [  $ff  * 12367 ] / foo  ");
+        let e = expr.0.iter().next().unwrap();
+        assert_eq!(format!("{}", e), "\t\tLDA 1 + [255 * 12367] / foo");
     }
 
     #[test]
     fn print_ast() {
-        println!("{:?}", parse("label: lda (foo),x\nsta $fc"));
+        println!("{:?}", parse("label: lda (foo * 2),x\nsta $fc"));
     }
 
     #[test]
     fn pretty_print() {
-        for token in parse("label: lda (foo),x/* test */\nsta bar // some comment\nbrk").0 {
+        for token in parse("label: lda (foo * 2),x/* test */\nsta bar // some comment\nbrk").0 {
             println!("{}", token);
         }
     }
