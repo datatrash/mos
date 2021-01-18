@@ -16,6 +16,7 @@ mod mnemonic;
 
 use crate::errors::AsmError;
 pub use ast::*;
+pub use mnemonic::*;
 
 fn expect<'a, F, E, T>(
     mut parser: F,
@@ -157,15 +158,26 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
 
     let instruction = tuple((
         mnemonic,
+        opt(ws(map(char('#'), |_| {
+            Token::AddressingMode(AddressingMode::Immediate)
+        }))),
         expect(
             opt(alt((ws(expression), ws(addressing_mode(ws(expression)))))),
             "expected single expression after opcode",
         ),
     ));
 
-    map(instruction, move |(mnemonic, operand)| {
+    map(instruction, move |(mnemonic, addressing_mode, operand)| {
+        let addressing_mode =
+            Box::new(addressing_mode.unwrap_or(Token::AddressingMode(AddressingMode::Other)));
         let operand = operand.flatten().map(Box::new);
-        Token::Instruction((location, mnemonic, operand))
+        let instruction = Instruction {
+            location,
+            mnemonic,
+            addressing_mode,
+            operand,
+        };
+        Token::Instruction(instruction)
     })(input)
 }
 
@@ -317,8 +329,15 @@ mod test {
     #[test]
     fn parse_expression() {
         let expr = parse("lda  1   +   [  $ff  * 12367 ] / foo  ");
-        let e = expr.0.iter().next().unwrap();
+        let e = expr.0.get(0).unwrap();
         assert_eq!(format!("{}", e), "\t\tLDA 1 + [255 * 12367] / foo");
+    }
+
+    #[test]
+    fn parse_immediate() {
+        let expr = parse("lda #123");
+        let e = expr.0.get(0).unwrap();
+        assert_eq!(format!("{}", e), "\t\tLDA #123");
     }
 
     #[test]

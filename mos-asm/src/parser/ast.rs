@@ -55,13 +55,28 @@ pub enum Register {
 }
 
 #[derive(Debug)]
+pub enum AddressingMode {
+    Immediate,
+    Other,
+}
+
+#[derive(Debug)]
+pub struct Instruction {
+    pub location: Location,
+    pub mnemonic: Mnemonic,
+    pub addressing_mode: Box<Token>,
+    pub operand: Option<Box<Token>>,
+}
+
+#[derive(Debug)]
 pub enum Token {
     Identifier(Identifier),
     Label(Identifier),
     Mnemonic(Mnemonic),
     Number(usize),
-    Instruction((Location, Mnemonic, Option<Box<Token>>)),
+    Instruction(Instruction),
     IndirectAddressing((Box<Token>, Option<Register>)),
+    AddressingMode(AddressingMode),
     Ws((Vec<Comment>, Box<Token>, Vec<Comment>)),
     ExprParens(Box<Token>),
     BinaryAdd(Box<Token>, Box<Token>),
@@ -94,9 +109,13 @@ impl Display for Token {
             Token::Label(id) => {
                 write!(f, "{}:", id.0)
             }
-            Token::Instruction((_location, mnemonic, operand)) => match operand {
-                Some(o) => write!(f, "\t\t{} {}", mnemonic, o),
-                None => write!(f, "\t\t{}", mnemonic),
+            Token::Instruction(i) => match &i.operand {
+                Some(o) => write!(f, "\t\t{} {}{}", i.mnemonic, i.addressing_mode, o),
+                None => write!(f, "\t\t{}", i.mnemonic),
+            },
+            Token::AddressingMode(am) => match am {
+                AddressingMode::Immediate => write!(f, "#"),
+                _ => Ok(()),
             },
             Token::Identifier(id) => {
                 write!(f, "{}", id.0)
