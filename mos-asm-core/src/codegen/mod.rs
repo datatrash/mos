@@ -264,6 +264,11 @@ mod tests {
             println!("{:?}", errors);
         }
         assert_eq!(errors.is_empty(), true);
-        codegen(ast, CodegenOptions { pc: 0xc000 })
+        codegen(
+            ast,
+            CodegenOptions {
+                pc: ProgramCounter::new(0xc000),
+            },
+        )
     }
 }

@@ -6,12 +6,6 @@ use std::fmt::{Display, Formatter};
 pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
-/*#[derive(Debug)]
-pub struct Error {
-    pub location: Location,
-    pub message: String,
-}*/
-
 #[derive(Clone, Debug)]
 pub struct State<'a> {
     pub errors: &'a RefCell<Vec<AsmError>>,

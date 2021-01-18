@@ -1,0 +1,14 @@
+[package]
+name = "mos-asm-core"
+version = "0.1.0"
+authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
+edition = "2018"
+
+[lib]
+
+[dependencies]
+log = "0.4"
+nom = "6"
+nom_locate = "3"
+smallvec = "1"
+thiserror = "1"
