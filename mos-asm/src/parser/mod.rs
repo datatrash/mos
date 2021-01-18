@@ -209,23 +209,23 @@ fn data(input: LocatedSpan) -> IResult<Token> {
     map(
         tuple((
             alt((
-                map(tag_no_case(".byte"), |_| 8),
-                map(tag_no_case(".word"), |_| 16),
-                map(tag_no_case(".dword"), |_| 32),
+                map(tag_no_case(".byte"), |_| 1),
+                map(tag_no_case(".word"), |_| 2),
+                map(tag_no_case(".dword"), |_| 4),
             )),
-            expect(expression_factor, "expected expression"),
+            expect(expression, "expected expression"),
         )),
         |(sz, exp)| Token::Data(exp.map(Box::new), sz),
     )(input)
 }
 
-fn expr(input: LocatedSpan) -> IResult<Token> {
+fn statement(input: LocatedSpan) -> IResult<Token> {
     alt((instruction, label, data, error))(input)
 }
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
     terminated(
-        many0(map(pair(ws(expr), many0(newline)), |(expr, _)| expr)),
+        many0(map(pair(ws(statement), many0(newline)), |(expr, _)| expr)),
         preceded(expect(not(anychar), "expected EOF"), rest),
     )(input)
 }
@@ -342,10 +342,11 @@ mod test {
 
     #[test]
     fn parse_data() {
-        let expr = parse(".byte 123\n.word foo\n.dword 12345678");
+        let expr = parse(".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2");
         let mut e = expr.0.iter();
         assert_eq!(format!("{}", e.next().unwrap()), ".byte 123");
         assert_eq!(format!("{}", e.next().unwrap()), ".word foo");
         assert_eq!(format!("{}", e.next().unwrap()), ".dword 12345678");
+        assert_eq!(format!("{}", e.next().unwrap()), ".word 1 + 2");
     }
 }

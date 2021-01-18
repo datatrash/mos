@@ -29,7 +29,7 @@ pub enum Comment {
     CppStyle(String),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier(pub String);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -157,9 +157,9 @@ impl Display for Token {
             }
             Token::Data(tok, sz) => {
                 let label = match sz {
-                    8 => ".byte",
-                    16 => ".word",
-                    32 => ".dword",
+                    1 => ".byte",
+                    2 => ".word",
+                    4 => ".dword",
                     _ => panic!(),
                 };
                 match tok {
