@@ -1,3 +1,6 @@
-loop:
-    inc $d020
-    jmp loop
+    lda data
+    sta $d020
+    rts
+
+data:
+    .byte 1

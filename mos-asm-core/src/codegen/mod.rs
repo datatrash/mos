@@ -4,6 +4,7 @@ use crate::errors::AsmResult;
 use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
+use std::ops::Deref;
 
 #[derive(Copy, Clone)]
 pub struct ProgramCounter(u16);
@@ -108,6 +109,7 @@ impl<'a> CodegenContext<'a> {
                 }
             }
             Token::Identifier(label_name) => self.labels.get(label_name).map(|pc| pc.0 as usize),
+            Token::IndirectAddressing((inner, _)) => self.evaluate(inner),
             _ => panic!("Unsupported token: {:?}", expr),
         }
     }
@@ -127,14 +129,46 @@ impl<'a> CodegenContext<'a> {
         pc: Option<ProgramCounter>,
         i: &Instruction,
     ) -> Option<ProgramCounter> {
-        let (opcode, expected_operand_bytes): (u8, usize) = match (&i.mnemonic, &*i.addressing_mode)
-        {
-            (Mnemonic::Inc, Token::AddressingMode(AddressingMode::Other)) => (0xee, 2),
-            (Mnemonic::Lda, Token::AddressingMode(AddressingMode::Immediate)) => (0xa9, 1),
-            (Mnemonic::Jmp, Token::AddressingMode(AddressingMode::Other)) => (0x4c, 2),
-            (Mnemonic::Nop, _) => (0xea, 0),
-            _ => panic!(),
+        dbg!(i);
+
+        let imm = match &*i.addressing_mode {
+            Token::AddressingMode(AddressingMode::Immediate) => true,
+            _ => false,
         };
+        let (opcode, expected_operand_bytes): (u8, usize) =
+            match (&i.mnemonic, imm, &i.operand.as_ref().map(|o| o.deref())) {
+                (Mnemonic::Asl, false, Some(Token::Number(val))) => {
+                    if *val < 256 {
+                        (0x06, 1)
+                    } else {
+                        (0x0e, 2)
+                    }
+                }
+                (Mnemonic::Asl, false, None) => (0x0a, 0),
+                (Mnemonic::Brk, _, _) => (0x00, 0),
+                (Mnemonic::Inc, false, _) => (0xee, 2),
+                (Mnemonic::Lda, true, _) => (0xa9, 1),
+                (Mnemonic::Lda, false, _) => (0xad, 2),
+                (Mnemonic::Jmp, false, _) => (0x4c, 2),
+                (Mnemonic::Nop, _, _) => (0xea, 0),
+                (
+                    Mnemonic::Ora,
+                    false,
+                    Some(Token::IndirectAddressing((_, Some(Register::XIndirect)))),
+                ) => (0x01, 1),
+                (Mnemonic::Ora, false, Some(Token::Number(val))) => {
+                    if *val < 256 {
+                        (0x05, 1)
+                    } else {
+                        (0x0d, 2)
+                    }
+                }
+                (Mnemonic::Ora, true, _) => (0x09, 1),
+                (Mnemonic::Php, _, _) => (0x08, 0),
+                (Mnemonic::Rts, _, _) => (0x60, 0),
+                (Mnemonic::Sta, false, _) => (0x8d, 2),
+                _ => panic!("Unsupported mnemonic: {:?}", i.mnemonic),
+            };
 
         let (expression_is_valid, operand_bytes): (bool, SmallVec<[u8; 2]>) =
             if expected_operand_bytes != 0 {
@@ -214,6 +248,7 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<Codege
 mod tests {
     use super::*;
     use crate::parser::parse;
+    use std::fmt::Display;
 
     #[test]
     fn basic() -> AsmResult<()> {
@@ -258,9 +293,29 @@ mod tests {
         Ok(())
     }
 
-    fn test_codegen<'a>(code: &'static str) -> AsmResult<CodegenContext<'a>> {
-        let (ast, errors) = parse(code);
+    #[test]
+    fn test_all_instructions() {
+        let check = |code: &str, data: &[u8]| {
+            let ctx = test_codegen(dbg!(code)).unwrap();
+            assert_eq!(ctx.current_segment().data, data);
+        };
+        check("brk", &[0x00]);
+        check("ora ($10,x)", &[0x01, 0x10]);
+        check("ora $10", &[0x05, 0x10]);
+        check("asl $10", &[0x06, 0x10]);
+        check("php", &[0x08]);
+        check("ora #$10", &[0x09, 0x10]);
+        check("asl", &[0x0a]);
+        check("ora $1234", &[0x0d, 0x34, 0x12]);
+        check("asl $1234", &[0x0e, 0x34, 0x12]);
+        check("nop", &[0xea]);
+    }
+
+    fn test_codegen<'a, S: Display + Into<String>>(code: S) -> AsmResult<CodegenContext<'a>> {
+        let code = code.into();
+        let (ast, errors) = parse(&code.clone());
         if !errors.is_empty() {
+            println!("source:\n{}\n\nerrors:", code);
             println!("{:?}", errors);
         }
         assert_eq!(errors.is_empty(), true);

@@ -120,26 +120,53 @@ fn addressing_mode<'a, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<To
 where
     F: FnMut(LocatedSpan<'a>) -> IResult<Token>,
 {
-    let inner_with_parens = delimited(
-        char('('),
-        expect(inner, "expected expression after `(`"),
-        expect(char(')'), "missing `)`"),
-    );
+    let inner_with_parens = preceded(char('('), expect(inner, "expected expression after `(`"));
 
     let am = tuple((
         inner_with_parens,
         opt(expect(
             alt((
-                map(tuple((char(','), tag_no_case("x"))), |_| Some(Register::X)),
-                map(tuple((char(','), tag_no_case("y"))), |_| Some(Register::Y)),
-                map(tuple((char(','), alpha1)), |(_, i)| {
-                    let err = AsmError::Parser {
-                        location: Location::from(&i),
-                        message: format!("invalid register: {}", i),
-                    };
-                    i.extra.report_error(err);
-                    None
-                }),
+                map(
+                    tuple((
+                        char(','),
+                        multispace0,
+                        char('x'),
+                        multispace0,
+                        tag_no_case(")"),
+                    )),
+                    |_| Some(Register::XIndirect),
+                ),
+                map(
+                    tuple((
+                        char(')'),
+                        multispace0,
+                        char(','),
+                        multispace0,
+                        tag_no_case("x"),
+                    )),
+                    |_| Some(Register::X),
+                ),
+                map(
+                    tuple((
+                        char(')'),
+                        multispace0,
+                        char(','),
+                        multispace0,
+                        tag_no_case("y"),
+                    )),
+                    |_| Some(Register::Y),
+                ),
+                map(
+                    tuple((char(')'), multispace0, char(','), multispace0, alpha1)),
+                    |(_, _, _, _, i)| {
+                        let err = AsmError::Parser {
+                            location: Location::from(&i),
+                            message: format!("invalid register: {}", i),
+                        };
+                        i.extra.report_error(err);
+                        None
+                    },
+                ),
             )),
             "expected register X or Y",
         )),

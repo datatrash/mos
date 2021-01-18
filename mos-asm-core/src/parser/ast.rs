@@ -44,6 +44,7 @@ impl<'a> From<&LocatedSpan<'a>> for Location {
 #[derive(Debug)]
 pub enum Register {
     A,
+    XIndirect, // e.g. ora ($10,x)
     X,
     Y,
 }
