@@ -134,16 +134,6 @@ where
                         multispace0,
                         tag_no_case(")"),
                     )),
-                    |_| Some(Register::XIndirect),
-                ),
-                map(
-                    tuple((
-                        char(')'),
-                        multispace0,
-                        char(','),
-                        multispace0,
-                        tag_no_case("x"),
-                    )),
                     |_| Some(Register::X),
                 ),
                 map(

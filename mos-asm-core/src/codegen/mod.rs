@@ -4,7 +4,6 @@ use crate::errors::AsmResult;
 use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
-use std::ops::Deref;
 
 #[derive(Copy, Clone)]
 pub struct ProgramCounter(u16);
@@ -114,16 +113,6 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn evaluate_to_bytes(&self, expr: &Token, expected_bytes: usize) -> (bool, SmallVec<[u8; 2]>) {
-        match (self.evaluate(expr), expected_bytes) {
-            (Some(result), 1) => (true, smallvec![result as u8]),
-            (Some(result), 2) => (true, SmallVec::from((result as u16).to_le_bytes())),
-            (None, 1) => (false, smallvec![0]),
-            (None, 2) => (false, smallvec![0, 0]),
-            _ => panic!(),
-        }
-    }
-
     fn emit_instruction(
         &mut self,
         pc: Option<ProgramCounter>,
@@ -131,54 +120,72 @@ impl<'a> CodegenContext<'a> {
     ) -> Option<ProgramCounter> {
         dbg!(i);
 
-        let imm = match &*i.addressing_mode {
-            Token::AddressingMode(AddressingMode::Immediate) => true,
-            _ => false,
+        let imm = matches!(
+            &*i.addressing_mode,
+            Token::AddressingMode(AddressingMode::Immediate)
+        );
+        let possible_opcodes: Vec<(u8, usize)> = match (&i.mnemonic, imm, &i.operand.as_deref()) {
+            (Mnemonic::Asl, false, Some(_)) => {
+                vec![(0x06, 1), (0x0e, 2)]
+            }
+            (Mnemonic::Asl, false, None) => vec![(0x0a, 0)],
+            (Mnemonic::Brk, _, _) => vec![(0x00, 0)],
+            (Mnemonic::Inc, false, _) => vec![(0xee, 2)],
+            (Mnemonic::Lda, true, _) => vec![(0xa9, 1)],
+            (Mnemonic::Lda, false, _) => vec![(0xad, 2)],
+            (Mnemonic::Jmp, false, _) => vec![(0x4c, 2)],
+            (Mnemonic::Nop, _, _) => vec![(0xea, 0)],
+            (Mnemonic::Ora, false, Some(Token::IndirectAddressing((_, Some(reg))))) => match reg {
+                Register::X => vec![(0x01, 1)],
+                Register::Y => vec![(0x11, 1)],
+            },
+            (Mnemonic::Ora, false, _) => {
+                vec![(0x05, 1), (0x0d, 2)]
+            }
+            /*(Mnemonic::Ora, false, Some(Token::IndirectAddressing((_, Some(Register::X))))) => {
+                vec![(0x15, 1), (0x1d, 2)]
+            }*/
+            (Mnemonic::Ora, true, _) => vec![(0x09, 1)],
+            (Mnemonic::Php, _, _) => vec![(0x08, 0)],
+            (Mnemonic::Rts, _, _) => vec![(0x60, 0)],
+            (Mnemonic::Sta, false, _) => vec![(0x8d, 2)],
+            _ => panic!("Unsupported mnemonic: {:?}", i.mnemonic),
         };
-        let (opcode, expected_operand_bytes): (u8, usize) =
-            match (&i.mnemonic, imm, &i.operand.as_ref().map(|o| o.deref())) {
-                (Mnemonic::Asl, false, Some(Token::Number(val))) => {
-                    if *val < 256 {
-                        (0x06, 1)
-                    } else {
-                        (0x0e, 2)
+
+        // For all possible opcodes, pick the one that best matches the operand's size
+        let (expression_is_valid, bytes): (bool, SmallVec<[u8; 3]>) = match &i.operand {
+            Some(o) => {
+                match self.evaluate(&*o) {
+                    Some(val) => {
+                        let mut result = None;
+                        for (opcode, operand_length) in possible_opcodes {
+                            if operand_length == 1 && val < 256 {
+                                result = Some((true, smallvec![opcode, val as u8]));
+                                break;
+                            } else if operand_length == 2 {
+                                let v = (val as u16).to_le_bytes();
+                                result = Some((true, smallvec![opcode, v[0], v[1]]));
+                                break;
+                            }
+                        }
+                        result.expect("Could not determine correct opcode")
+                    }
+                    None => {
+                        // find maximum operand length and use that opcode
+                        let (opcode, len) = possible_opcodes
+                            .iter()
+                            .max_by(|(_, len1), (_, len2)| len1.cmp(len2))
+                            .unwrap();
+                        match len {
+                            1 => (false, smallvec![*opcode, 0]),
+                            2 => (false, smallvec![*opcode, 0, 0]),
+                            _ => panic!("Unknown operand length"),
+                        }
                     }
                 }
-                (Mnemonic::Asl, false, None) => (0x0a, 0),
-                (Mnemonic::Brk, _, _) => (0x00, 0),
-                (Mnemonic::Inc, false, _) => (0xee, 2),
-                (Mnemonic::Lda, true, _) => (0xa9, 1),
-                (Mnemonic::Lda, false, _) => (0xad, 2),
-                (Mnemonic::Jmp, false, _) => (0x4c, 2),
-                (Mnemonic::Nop, _, _) => (0xea, 0),
-                (
-                    Mnemonic::Ora,
-                    false,
-                    Some(Token::IndirectAddressing((_, Some(Register::XIndirect)))),
-                ) => (0x01, 1),
-                (Mnemonic::Ora, false, Some(Token::Number(val))) => {
-                    if *val < 256 {
-                        (0x05, 1)
-                    } else {
-                        (0x0d, 2)
-                    }
-                }
-                (Mnemonic::Ora, true, _) => (0x09, 1),
-                (Mnemonic::Php, _, _) => (0x08, 0),
-                (Mnemonic::Rts, _, _) => (0x60, 0),
-                (Mnemonic::Sta, false, _) => (0x8d, 2),
-                _ => panic!("Unsupported mnemonic: {:?}", i.mnemonic),
-            };
-
-        let (expression_is_valid, operand_bytes): (bool, SmallVec<[u8; 2]>) =
-            if expected_operand_bytes != 0 {
-                self.evaluate_to_bytes(i.operand.as_ref().unwrap(), expected_operand_bytes)
-            } else {
-                (true, smallvec![])
-            };
-
-        let mut bytes: SmallVec<[u8; 3]> = smallvec![opcode];
-        bytes.extend(operand_bytes);
+            }
+            None => (true, smallvec![possible_opcodes[0].0]),
+        };
 
         let segment = self.current_segment_mut();
         let pc = pc.unwrap_or(segment.pc);
@@ -199,18 +206,29 @@ impl<'a> CodegenContext<'a> {
         expr: &Token,
         data_length: usize,
     ) -> Option<ProgramCounter> {
-        let (expression_is_valid, bytes) = self.evaluate_to_bytes(expr, data_length);
-
-        let segment = self.current_segment_mut();
+        let segment = self.current_segment();
         let pc = pc.unwrap_or(segment.pc);
-        segment.set(pc, &bytes);
 
-        if expression_is_valid {
-            // Done with this token
-            None
-        } else {
-            // Will try to emit later on this pc
-            Some(pc)
+        match self.evaluate(expr) {
+            Some(val) => {
+                let segment = self.current_segment_mut();
+                match data_length {
+                    1 => {
+                        segment.set(pc, &[val as u8]);
+                        None
+                    }
+                    2 => {
+                        segment.set(pc, &((val as u16).to_le_bytes()));
+                        None
+                    }
+                    4 => {
+                        segment.set(pc, &((val as u32).to_le_bytes()));
+                        None
+                    }
+                    _ => panic!(),
+                }
+            }
+            None => Some(pc),
         }
     }
 }
@@ -294,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all_instructions() {
+    fn test_all_non_branch_instructions() {
         let check = |code: &str, data: &[u8]| {
             let ctx = test_codegen(dbg!(code)).unwrap();
             assert_eq!(ctx.current_segment().data, data);
@@ -309,11 +327,12 @@ mod tests {
         check("ora $1234", &[0x0d, 0x34, 0x12]);
         check("asl $1234", &[0x0e, 0x34, 0x12]);
         check("nop", &[0xea]);
+        check("ora ($10),y", &[0x11, 0x10]);
     }
 
     fn test_codegen<'a, S: Display + Into<String>>(code: S) -> AsmResult<CodegenContext<'a>> {
         let code = code.into();
-        let (ast, errors) = parse(&code.clone());
+        let (ast, errors) = parse(&code);
         if !errors.is_empty() {
             println!("source:\n{}\n\nerrors:", code);
             println!("{:?}", errors);
