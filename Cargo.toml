@@ -1,4 +1,5 @@
 [workspace]
 members = [
-    "mos-asm"
+    "mos-asm",
+    "mos-asm-core"
 ]

@@ -5,29 +5,42 @@ use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 
+#[derive(Copy, Clone)]
+pub struct ProgramCounter(u16);
+
+impl ProgramCounter {
+    pub fn new(pc: u16) -> Self {
+        Self(pc)
+    }
+
+    pub fn to_le_bytes(&self) -> [u8; 2] {
+        self.0.to_le_bytes()
+    }
+}
+
 pub struct CodegenOptions {
-    pc: usize,
+    pub pc: ProgramCounter,
 }
 
 pub struct Segment {
-    data: Vec<u8>,
-    start_pc: usize,
-    pc: usize,
+    pub data: Vec<u8>,
+    pub start_pc: ProgramCounter,
+    pc: ProgramCounter,
 }
 
 impl Segment {
-    fn set(&mut self, pc: usize, bytes: &[u8]) -> usize {
+    fn set(&mut self, pc: ProgramCounter, bytes: &[u8]) -> ProgramCounter {
         self.pc = pc;
 
         let length = bytes.len();
-        let target = self.pc as usize - self.start_pc as usize;
+        let target = (self.pc.0 - self.start_pc.0) as usize;
         if self.data.len() < target + length {
             self.data.resize(target + length, 0);
         }
         for (offset, byte) in bytes.iter().enumerate() {
             self.data[target + offset] = *byte;
         }
-        self.pc += length;
+        self.pc.0 += length as u16;
         self.pc
     }
 }
@@ -35,7 +48,7 @@ impl Segment {
 pub struct CodegenContext<'a> {
     segments: HashMap<&'a str, Segment>,
     current_segment: &'a str,
-    labels: HashMap<Identifier, usize>,
+    labels: HashMap<Identifier, ProgramCounter>,
 }
 
 impl<'a> CodegenContext<'a> {
@@ -71,7 +84,7 @@ impl<'a> CodegenContext<'a> {
         self.segments.get_mut(self.current_segment).unwrap()
     }
 
-    fn register_label(&mut self, pc: Option<usize>, label: &Identifier) {
+    fn register_label(&mut self, pc: Option<ProgramCounter>, label: &Identifier) {
         let segment = self.current_segment_mut();
         let pc = pc.unwrap_or(segment.pc);
         self.labels.insert(label.clone(), pc);
@@ -94,7 +107,7 @@ impl<'a> CodegenContext<'a> {
                     _ => None,
                 }
             }
-            Token::Identifier(label_name) => self.labels.get(label_name).copied(),
+            Token::Identifier(label_name) => self.labels.get(label_name).map(|pc| pc.0 as usize),
             _ => panic!("Unsupported token: {:?}", expr),
         }
     }
@@ -109,9 +122,14 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn emit_instruction(&mut self, pc: Option<usize>, i: &Instruction) -> Option<usize> {
+    fn emit_instruction(
+        &mut self,
+        pc: Option<ProgramCounter>,
+        i: &Instruction,
+    ) -> Option<ProgramCounter> {
         let (opcode, expected_operand_bytes): (u8, usize) = match (&i.mnemonic, &*i.addressing_mode)
         {
+            (Mnemonic::Inc, Token::AddressingMode(AddressingMode::Other)) => (0xee, 2),
             (Mnemonic::Lda, Token::AddressingMode(AddressingMode::Immediate)) => (0xa9, 1),
             (Mnemonic::Jmp, Token::AddressingMode(AddressingMode::Other)) => (0x4c, 2),
             (Mnemonic::Nop, _) => (0xea, 0),
@@ -141,7 +159,12 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn emit_data(&mut self, pc: Option<usize>, expr: &Token, data_length: usize) -> Option<usize> {
+    fn emit_data(
+        &mut self,
+        pc: Option<ProgramCounter>,
+        expr: &Token,
+        data_length: usize,
+    ) -> Option<ProgramCounter> {
         let (expression_is_valid, bytes) = self.evaluate_to_bytes(expr, data_length);
 
         let segment = self.current_segment_mut();
@@ -161,7 +184,7 @@ impl<'a> CodegenContext<'a> {
 pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext<'a>> {
     let mut ctx = CodegenContext::new(options);
 
-    let mut to_process: Vec<(Option<usize>, Token)> = ast
+    let mut to_process: Vec<(Option<ProgramCounter>, Token)> = ast
         .into_iter()
         .map(|token| (None, token))
         .collect::<Vec<_>>();
