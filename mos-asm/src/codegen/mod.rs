@@ -2,8 +2,7 @@
 
 use crate::errors::AsmResult;
 use crate::parser::*;
-use smallvec::smallvec;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 
 pub struct CodegenOptions {
@@ -76,35 +75,62 @@ impl<'a> CodegenContext<'a> {
         self.labels.insert(label, self.current_segment().pc);
     }
 
-    fn evaluate(&self, expr: &Token) -> (bool, SmallVec<[u8; 2]>) {
+    fn evaluate(&self, expr: &Token) -> Option<usize> {
         match expr {
-            Token::Number(n) => (true, smallvec![*n as u8]),
-            _ => (false, smallvec![]),
+            Token::Number(n) => Some(*n),
+            Token::BinaryAdd(lhs, rhs)
+            | Token::BinarySub(lhs, rhs)
+            | Token::BinaryMul(lhs, rhs)
+            | Token::BinaryDiv(lhs, rhs) => {
+                let lhs = self.evaluate(lhs);
+                let rhs = self.evaluate(rhs);
+                match (expr, lhs, rhs) {
+                    (Token::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Some(lhs + rhs),
+                    (Token::BinarySub(_, _), Some(lhs), Some(rhs)) => Some(lhs - rhs),
+                    (Token::BinaryMul(_, _), Some(lhs), Some(rhs)) => Some(lhs * rhs),
+                    (Token::BinaryDiv(_, _), Some(lhs), Some(rhs)) => Some(lhs / rhs),
+                    _ => None,
+                }
+            }
+            _ => panic!(),
+        }
+    }
+
+    fn evaluate_to_bytes(&self, expr: &Token, expected_bytes: usize) -> (bool, SmallVec<[u8; 2]>) {
+        match (self.evaluate(expr), expected_bytes) {
+            (Some(result), 1) => (true, smallvec![result as u8]),
+            (Some(result), 2) => (true, SmallVec::from((result as u16).to_le_bytes())),
+            (None, 1) => (false, smallvec![0]),
+            (None, 2) => (false, smallvec![0, 0]),
+            _ => panic!(),
         }
     }
 
     fn emit_instruction(&mut self, pc: Option<u16>, i: &Instruction) -> Option<u16> {
-        let opcode: u8 = match &i.mnemonic {
+        let (opcode, expected_operand_bytes): (u8, usize) = match &i.mnemonic {
             Mnemonic::Lda => match *i.addressing_mode {
-                Token::AddressingMode(AddressingMode::Immediate) => 0xa9,
+                Token::AddressingMode(AddressingMode::Immediate) => (0xa9, 1),
                 _ => panic!(),
             },
             _ => panic!(),
         };
 
-        let (expression_is_valid, operand) = match &i.operand {
-            Some(o) => self.evaluate(o),
-            None => (true, smallvec![]),
-        };
+        let (expression_is_valid, operand_bytes): (bool, SmallVec<[u8; 2]>) =
+            if expected_operand_bytes != 0 {
+                self.evaluate_to_bytes(i.operand.as_ref().unwrap(), expected_operand_bytes)
+            } else {
+                (true, smallvec![])
+            };
 
         let mut bytes: SmallVec<[u8; 3]> = smallvec![opcode];
-        bytes.extend(operand);
+        bytes.extend(operand_bytes);
 
         let segment = self.current_segment_mut();
         let pc = pc.unwrap_or(segment.pc);
         segment.set(pc, &bytes);
 
         if expression_is_valid {
+            // Done with this token
             None
         } else {
             // Will try to emit later on this pc
@@ -142,8 +168,8 @@ mod tests {
 
     #[test]
     fn most_basic_codegen() -> AsmResult<()> {
-        let ctx = test_codegen("lda #123")?;
-        assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
+        let ctx = test_codegen("lda #100 * 2")?;
+        assert_eq!(ctx.current_segment().data, vec![0xa9, 200]);
         Ok(())
     }
 
