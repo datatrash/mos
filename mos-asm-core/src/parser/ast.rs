@@ -41,24 +41,33 @@ impl<'a> From<&LocatedSpan<'a>> for Location {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Register {
-    X, // e.g. ora ($10,x)
-    Y, // e.g. ora ($10),y
-}
-
-#[derive(Debug)]
-pub enum AddressingMode {
-    Immediate,
-    Other,
+    X,
+    Y,
 }
 
 #[derive(Debug)]
 pub struct Instruction {
     pub location: Location,
     pub mnemonic: Mnemonic,
-    pub addressing_mode: Box<Token>,
     pub operand: Option<Box<Token>>,
+}
+
+#[derive(Debug)]
+pub enum AddressingMode {
+    AbsoluteOrZP,
+    Immediate,
+    Implied,
+    Indirect,
+    OuterIndirect,
+}
+
+#[derive(Debug)]
+pub struct Operand {
+    pub expr: Box<Token>,
+    pub addressing_mode: AddressingMode,
+    pub suffix: Option<Box<Token>>,
 }
 
 #[derive(Debug)]
@@ -68,8 +77,8 @@ pub enum Token {
     Mnemonic(Mnemonic),
     Number(usize),
     Instruction(Instruction),
-    IndirectAddressing((Box<Token>, Option<Register>)),
-    AddressingMode(AddressingMode),
+    Operand(Operand),
+    RegisterSuffix(Register),
     Ws((Vec<Comment>, Box<Token>, Vec<Comment>)),
     ExprParens(Box<Token>),
     BinaryAdd(Box<Token>, Box<Token>),
@@ -103,23 +112,38 @@ impl Display for Token {
                 write!(f, "{}:", id.0)
             }
             Token::Instruction(i) => match &i.operand {
-                Some(o) => write!(f, "\t\t{} {}{}", i.mnemonic, i.addressing_mode, o),
+                Some(o) => {
+                    write!(f, "\t\t{}{}", i.mnemonic, o)
+                }
                 None => write!(f, "\t\t{}", i.mnemonic),
             },
-            Token::AddressingMode(am) => match am {
-                AddressingMode::Immediate => write!(f, "#"),
-                _ => Ok(()),
+            Token::Operand(o) => {
+                let suffix = match &o.suffix {
+                    Some(s) => format!("{}", s),
+                    None => "".to_string(),
+                };
+
+                match &o.addressing_mode {
+                    AddressingMode::Immediate => write!(f, " #{}", o.expr),
+                    AddressingMode::Implied => write!(f, ""),
+                    AddressingMode::AbsoluteOrZP => {
+                        write!(f, " {}{}", o.expr, suffix)
+                    }
+                    AddressingMode::OuterIndirect => {
+                        write!(f, " ({}){}", o.expr, suffix)
+                    }
+                    AddressingMode::Indirect => {
+                        write!(f, " ({}{})", o.expr, suffix)
+                    }
+                }
+            }
+            Token::RegisterSuffix(reg) => match reg {
+                Register::X => write!(f, ", x"),
+                Register::Y => write!(f, ", y"),
             },
             Token::Identifier(id) => {
                 write!(f, "{}", id.0)
             }
-            Token::IndirectAddressing((id, reg)) => match reg {
-                Some(r) => {
-                    let r = format!("{:?}", r).to_lowercase();
-                    write!(f, "({}), {}", id, r)
-                }
-                None => write!(f, "({})", id),
-            },
             Token::Ws((l, inner, r)) => {
                 for w in l {
                     let _ = write!(f, "{}", w);

@@ -5,7 +5,7 @@ use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct ProgramCounter(u16);
 
 impl ProgramCounter {
@@ -108,8 +108,25 @@ impl<'a> CodegenContext<'a> {
                 }
             }
             Token::Identifier(label_name) => self.labels.get(label_name).map(|pc| pc.0 as usize),
-            Token::IndirectAddressing((inner, _)) => self.evaluate(inner),
             _ => panic!("Unsupported token: {:?}", expr),
+        }
+    }
+
+    fn evaluate_operand<'b>(
+        &self,
+        operand: &'b Option<Box<Token>>,
+    ) -> (&'b AddressingMode, Option<usize>, Option<Register>) {
+        match operand.as_deref() {
+            Some(Token::Operand(operand)) => {
+                let register_suffix = operand.suffix.as_deref().map(|s| match s {
+                    Token::RegisterSuffix(r) => *r,
+                    _ => panic!(),
+                });
+
+                let val = self.evaluate(&*operand.expr);
+                (&operand.addressing_mode, val, register_suffix)
+            }
+            _ => (&AddressingMode::Implied, None, None),
         }
     }
 
@@ -120,42 +137,33 @@ impl<'a> CodegenContext<'a> {
     ) -> Option<ProgramCounter> {
         dbg!(i);
 
-        let imm = matches!(
-            &*i.addressing_mode,
-            Token::AddressingMode(AddressingMode::Immediate)
-        );
-        let possible_opcodes: Vec<(u8, usize)> = match (&i.mnemonic, imm, &i.operand.as_deref()) {
-            (Mnemonic::Asl, false, Some(_)) => {
-                vec![(0x06, 1), (0x0e, 2)]
-            }
-            (Mnemonic::Asl, false, None) => vec![(0x0a, 0)],
-            (Mnemonic::Brk, _, _) => vec![(0x00, 0)],
-            (Mnemonic::Inc, false, _) => vec![(0xee, 2)],
-            (Mnemonic::Lda, true, _) => vec![(0xa9, 1)],
-            (Mnemonic::Lda, false, _) => vec![(0xad, 2)],
-            (Mnemonic::Jmp, false, _) => vec![(0x4c, 2)],
-            (Mnemonic::Nop, _, _) => vec![(0xea, 0)],
-            (Mnemonic::Ora, false, Some(Token::IndirectAddressing((_, Some(reg))))) => match reg {
-                Register::X => vec![(0x01, 1)],
-                Register::Y => vec![(0x11, 1)],
-            },
-            (Mnemonic::Ora, false, _) => {
-                vec![(0x05, 1), (0x0d, 2)]
-            }
-            /*(Mnemonic::Ora, false, Some(Token::IndirectAddressing((_, Some(Register::X))))) => {
-                vec![(0x15, 1), (0x1d, 2)]
-            }*/
-            (Mnemonic::Ora, true, _) => vec![(0x09, 1)],
-            (Mnemonic::Php, _, _) => vec![(0x08, 0)],
-            (Mnemonic::Rts, _, _) => vec![(0x60, 0)],
-            (Mnemonic::Sta, false, _) => vec![(0x8d, 2)],
-            _ => panic!("Unsupported mnemonic: {:?}", i.mnemonic),
+        type MM = Mnemonic;
+        type AM = AddressingMode;
+        let (am, val, suffix) = self.evaluate_operand(&i.operand);
+        let possible_opcodes: Vec<(u8, usize)> = match (&i.mnemonic, am, suffix) {
+            (MM::Asl, AM::AbsoluteOrZP, None) => vec![(0x06, 1), (0x0e, 2)],
+            (MM::Asl, AM::AbsoluteOrZP, Some(Register::X)) => vec![(0x16, 1), (0x1e, 2)],
+            (MM::Asl, AM::Implied, None) => vec![(0x0a, 0)],
+            (MM::Brk, AM::Implied, None) => vec![(0x00, 0)],
+            (MM::Clc, AM::Implied, None) => vec![(0x18, 0)],
+            (MM::Jmp, AM::AbsoluteOrZP, None) => vec![(0x4c, 2)],
+            (MM::Lda, AM::Immediate, None) => vec![(0xa9, 1)],
+            (MM::Lda, AM::AbsoluteOrZP, None) => vec![(0xad, 2)],
+            (MM::Nop, AM::Implied, None) => vec![(0xea, 0)],
+            (MM::Ora, AM::Indirect, Some(Register::X)) => vec![(0x01, 1)],
+            (MM::Ora, AM::OuterIndirect, Some(Register::Y)) => vec![(0x11, 1)],
+            (MM::Ora, AM::AbsoluteOrZP, None) => vec![(0x05, 1), (0x0d, 2)],
+            (MM::Ora, AM::AbsoluteOrZP, Some(Register::X)) => vec![(0x15, 1), (0x1d, 2)],
+            (MM::Ora, AM::AbsoluteOrZP, Some(Register::Y)) => vec![(0x19, 2)],
+            (MM::Ora, AM::Immediate, None) => vec![(0x09, 1)],
+            (MM::Php, AM::Implied, None) => vec![(0x08, 1)],
+            _ => panic!("Invalid instruction"),
         };
 
         // For all possible opcodes, pick the one that best matches the operand's size
         let (expression_is_valid, bytes): (bool, SmallVec<[u8; 3]>) = match &i.operand {
-            Some(o) => {
-                match self.evaluate(&*o) {
+            Some(_) => {
+                match val {
                     Some(val) => {
                         let mut result = None;
                         for (opcode, operand_length) in possible_opcodes {
@@ -228,7 +236,24 @@ impl<'a> CodegenContext<'a> {
                     _ => panic!(),
                 }
             }
-            None => Some(pc),
+            None => {
+                let segment = self.current_segment_mut();
+                match data_length {
+                    1 => {
+                        segment.set(pc, &[0_u8]);
+                        Some(pc)
+                    }
+                    2 => {
+                        segment.set(pc, &(0_u16.to_le_bytes()));
+                        Some(pc)
+                    }
+                    4 => {
+                        segment.set(pc, &(0_u32.to_le_bytes()));
+                        Some(pc)
+                    }
+                    _ => panic!(),
+                }
+            }
         }
     }
 }
@@ -328,6 +353,12 @@ mod tests {
         check("asl $1234", &[0x0e, 0x34, 0x12]);
         check("nop", &[0xea]);
         check("ora ($10),y", &[0x11, 0x10]);
+        check("ora $10,x", &[0x15, 0x10]);
+        check("asl $10,x", &[0x16, 0x10]);
+        check("clc", &[0x18]);
+        check("ora $1234,y", &[0x19, 0x34, 0x12]);
+        check("ora $1234,x", &[0x1d, 0x34, 0x12]);
+        check("asl $1234,x", &[0x1e, 0x34, 0x12]);
     }
 
     fn test_codegen<'a, S: Display + Into<String>>(code: S) -> AsmResult<CodegenContext<'a>> {

@@ -116,83 +116,82 @@ fn identifier(input: LocatedSpan) -> IResult<Token> {
     })(input)
 }
 
-fn addressing_mode<'a, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Token>
-where
-    F: FnMut(LocatedSpan<'a>) -> IResult<Token>,
-{
-    let inner_with_parens = preceded(char('('), expect(inner, "expected expression after `(`"));
+fn register_suffix<'a>(
+    input: LocatedSpan<'a>,
+    reg: &'a str,
+    map_to: Register,
+) -> IResult<'a, Token> {
+    preceded(
+        char(','),
+        ws(map(tag_no_case(reg), |_| Token::RegisterSuffix(map_to))),
+    )(input)
+}
 
-    let am = tuple((
-        inner_with_parens,
-        opt(expect(
-            alt((
-                map(
-                    tuple((
-                        char(','),
-                        multispace0,
-                        char('x'),
-                        multispace0,
-                        tag_no_case(")"),
-                    )),
-                    |_| Some(Register::X),
-                ),
-                map(
-                    tuple((
-                        char(')'),
-                        multispace0,
-                        char(','),
-                        multispace0,
-                        tag_no_case("y"),
-                    )),
-                    |_| Some(Register::Y),
-                ),
-                map(
-                    tuple((char(')'), multispace0, char(','), multispace0, alpha1)),
-                    |(_, _, _, _, i)| {
-                        let err = AsmError::Parser {
-                            location: Location::from(&i),
-                            message: format!("invalid register: {}", i),
-                        };
-                        i.extra.report_error(err);
-                        None
-                    },
-                ),
-            )),
-            "expected register X or Y",
+fn register_x_suffix(input: LocatedSpan) -> IResult<Token> {
+    register_suffix(input, "x", Register::X)
+}
+
+fn register_y_suffix(input: LocatedSpan) -> IResult<Token> {
+    register_suffix(input, "y", Register::Y)
+}
+
+fn operand(input: LocatedSpan) -> IResult<Token> {
+    let am_imm = map(preceded(char('#'), expression), |expr| {
+        Token::Operand(Operand {
+            expr: Box::new(expr),
+            addressing_mode: AddressingMode::Immediate,
+            suffix: None,
+        })
+    });
+
+    let optional_suffix = || opt(alt((register_x_suffix, register_y_suffix)));
+
+    let am_abs = map(tuple((expression, optional_suffix())), |(expr, suffix)| {
+        Token::Operand(Operand {
+            expr: Box::new(expr),
+            addressing_mode: AddressingMode::AbsoluteOrZP,
+            suffix: suffix.map(Box::new),
+        })
+    });
+
+    let am_ind = map(
+        tuple((
+            delimited(char('('), expression, char(')')),
+            optional_suffix(),
         )),
-    ));
+        |(expr, suffix)| {
+            Token::Operand(Operand {
+                expr: Box::new(expr),
+                addressing_mode: AddressingMode::OuterIndirect,
+                suffix: suffix.map(Box::new),
+            })
+        },
+    );
 
-    map(am, |(inner, register)| {
-        Token::IndirectAddressing((
-            Box::new(inner.unwrap_or(Token::Error)),
-            register.flatten().flatten(),
-        ))
-    })
+    let am_outer_ind = map(
+        delimited(char('('), tuple((expression, optional_suffix())), char(')')),
+        |(expr, suffix)| {
+            Token::Operand(Operand {
+                expr: Box::new(expr),
+                addressing_mode: AddressingMode::Indirect,
+                suffix: suffix.map(Box::new),
+            })
+        },
+    );
+
+    alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
 }
 
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     let location = Location::from(&input);
 
-    let instruction = tuple((
-        mnemonic,
-        opt(ws(map(char('#'), |_| {
-            Token::AddressingMode(AddressingMode::Immediate)
-        }))),
-        expect(
-            opt(alt((ws(expression), ws(addressing_mode(ws(expression)))))),
-            "expected single expression after opcode",
-        ),
-    ));
+    let instruction = tuple((mnemonic, opt(ws(operand))));
 
-    map(instruction, move |(mnemonic, addressing_mode, operand)| {
-        let addressing_mode =
-            Box::new(addressing_mode.unwrap_or(Token::AddressingMode(AddressingMode::Other)));
-        let operand = operand.flatten().map(Box::new);
+    map(instruction, move |(mnemonic, operand)| {
         let instruction = Instruction {
             location,
             mnemonic,
-            addressing_mode,
-            operand,
+            operand: operand.map(Box::new),
         };
         Token::Instruction(instruction)
     })(input)
@@ -345,16 +344,20 @@ mod test {
 
     #[test]
     fn parse_expression() {
-        let expr = parse("lda  1   +   [  $ff  * 12367 ] / foo  ");
-        let e = expr.0.get(0).unwrap();
-        assert_eq!(format!("{}", e), "\t\tLDA 1 + [255 * 12367] / foo");
+        check(
+            "lda  1   +   [  $ff  * 12367 ] / foo  ",
+            "LDA 1 + [255 * 12367] / foo",
+        );
     }
 
     #[test]
-    fn parse_immediate() {
-        let expr = parse("lda #123");
-        let e = expr.0.get(0).unwrap();
-        assert_eq!(format!("{}", e), "\t\tLDA #123");
+    fn parse_addressing_modes() {
+        check("lda #123", "LDA #123");
+        check("lda 12345", "LDA 12345");
+        check("lda 12345, x", "LDA 12345, x");
+        check("lda 12345, y", "LDA 12345, y");
+        check("lda (123), x", "LDA (123), x");
+        check("lda (123, x)", "LDA (123, x)");
     }
 
     #[test]
@@ -365,5 +368,11 @@ mod test {
         assert_eq!(format!("{}", e.next().unwrap()), ".word foo");
         assert_eq!(format!("{}", e.next().unwrap()), ".dword 12345678");
         assert_eq!(format!("{}", e.next().unwrap()), ".word 1 + 2");
+    }
+
+    fn check(src: &str, expected: &str) {
+        let expr = dbg!(parse(src));
+        let e = expr.0.get(0).unwrap();
+        assert_eq!(format!("{}", e), format!("\t\t{}", expected));
     }
 }
