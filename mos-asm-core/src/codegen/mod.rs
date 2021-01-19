@@ -258,8 +258,50 @@ impl<'a> CodegenContext<'a> {
     }
 }
 
+fn strip_ws_from_token(token: Token) -> Option<Token> {
+    let sob = |token: Option<Box<Token>>| {
+        token
+            .map(|t| {
+                let stripped = strip_ws_from_token(*t);
+                stripped.map(Box::new)
+            })
+            .flatten()
+    };
+
+    let sb = |token: Box<Token>| {
+        let stripped = strip_ws_from_token(*token).unwrap();
+        Box::new(stripped)
+    };
+
+    match token {
+        Token::Instruction(i) => Some(Token::Instruction(Instruction {
+            operand: sob(i.operand),
+            ..i
+        })),
+        Token::Operand(o) => Some(Token::Operand(Operand {
+            expr: sb(o.expr),
+            suffix: sob(o.suffix),
+            ..o
+        })),
+        Token::Data(token, size) => Some(Token::Data(sob(token), size)),
+        Token::BinaryAdd(lhs, rhs) => Some(Token::BinaryAdd(sb(lhs), sb(rhs))),
+        Token::BinarySub(lhs, rhs) => Some(Token::BinarySub(sb(lhs), sb(rhs))),
+        Token::BinaryMul(lhs, rhs) => Some(Token::BinaryMul(sb(lhs), sb(rhs))),
+        Token::BinaryDiv(lhs, rhs) => Some(Token::BinaryDiv(sb(lhs), sb(rhs))),
+        Token::ExprParens(token) => Some(Token::ExprParens(sb(token))),
+        Token::Ws((_, token, _)) => Some(*token),
+        _ => Some(token),
+    }
+}
+
+fn strip_ws(ast: Vec<Token>) -> Vec<Token> {
+    ast.into_iter().filter_map(strip_ws_from_token).collect()
+}
+
 pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext<'a>> {
     let mut ctx = CodegenContext::new(options);
+
+    let ast = strip_ws(ast);
 
     let mut to_process: Vec<(Option<ProgramCounter>, Token)> = ast
         .into_iter()
@@ -296,6 +338,13 @@ mod tests {
     #[test]
     fn basic() -> AsmResult<()> {
         let ctx = test_codegen("lda #123")?;
+        assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
+        Ok(())
+    }
+
+    #[test]
+    fn basic_with_comments() -> AsmResult<()> {
+        let ctx = test_codegen("lda /*hello*/ #123")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
         Ok(())
     }
