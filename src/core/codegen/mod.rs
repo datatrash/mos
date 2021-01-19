@@ -277,7 +277,7 @@ impl<'a> CodegenContext<'a> {
                         result.expect("Could not determine correct opcode")
                     }
                     None => {
-                        // find maximum operand length and use that opcode
+                        // Couldn't evaluate yet, so find maximum operand length and use that opcode
                         let (opcode, len) = possible_opcodes
                             .iter()
                             .max_by(|(_, len1), (_, len2)| len1.cmp(len2))
@@ -424,6 +424,13 @@ mod tests {
     fn can_access_forward_declared_labels() -> MosResult<()> {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn accessing_unknown_labels_will_default_to_absolute_addressing() -> MosResult<()> {
+        let ctx = test_codegen("lda my_label\nmy_label: nop")?;
+        assert_eq!(ctx.current_segment().data, vec![0xad, 0x03, 0xc0, 0xea]);
         Ok(())
     }
 
