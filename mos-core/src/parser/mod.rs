@@ -1,22 +1,22 @@
 use std::cell::RefCell;
 
-use crate::parser::mnemonic::mnemonic;
+use nom::{branch::alt, character::complete::multispace0};
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{
     alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
 };
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest};
-use nom::{branch::alt, character::complete::multispace0};
-
 use nom::multi::many0;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 
-mod ast;
-mod mnemonic;
-
-use crate::errors::AsmError;
 pub use ast::*;
 pub use mnemonic::*;
+
+use crate::errors::AsmError;
+use crate::parser::mnemonic::mnemonic;
+
+mod ast;
+mod mnemonic;
 
 fn expect<'a, F, E, T>(
     mut parser: F,
@@ -247,20 +247,19 @@ fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
 }
 
 fn number(input: LocatedSpan) -> IResult<Token> {
-    map(
-        alt((
-            preceded(
-                char('$'),
-                map_opt(expect(hex_digit1, "expected hexadecimal value"), |input| {
-                    input.map(|i| usize::from_str_radix(i.fragment(), 16).ok())
-                }),
-            ),
-            map_opt(digit1, |input: LocatedSpan| {
-                Some(usize::from_str_radix(input.fragment(), 10).ok())
+    alt((
+        preceded(
+            char('$'),
+            map_opt(expect(hex_digit1, "expected hexadecimal value"), |input| {
+                let res = input.map(|i| usize::from_str_radix(i.fragment(), 16).ok());
+                res.map(|val| Token::Number(val.unwrap(), NumberType::Hex))
             }),
-        )),
-        |val| Token::Number(val.unwrap()),
-    )(input)
+        ),
+        map_opt(digit1, |input: LocatedSpan| {
+            let res = Some(usize::from_str_radix(input.fragment(), 10).ok());
+            res.map(|val| Token::Number(val.unwrap(), NumberType::Dec))
+        }),
+    ))(input)
 }
 
 fn expression_parens(input: LocatedSpan) -> IResult<Token> {
@@ -346,7 +345,7 @@ mod test {
     fn parse_expression() {
         check(
             "lda  1   +   [  $ff  * 12367 ] / foo  ",
-            "LDA 1 + [255 * 12367] / foo",
+            "LDA 1 + [$ff * 12367] / foo",
         );
     }
 
@@ -373,6 +372,6 @@ mod test {
     fn check(src: &str, expected: &str) {
         let expr = dbg!(parse(src));
         let e = expr.0.get(0).unwrap();
-        assert_eq!(format!("{}", e), format!("\t\t{}", expected));
+        assert_eq!(format!("{}", e), expected.to_string());
     }
 }

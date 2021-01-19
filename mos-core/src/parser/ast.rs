@@ -71,11 +71,17 @@ pub struct Operand {
 }
 
 #[derive(Debug)]
+pub enum NumberType {
+    Hex,
+    Dec
+}
+
+#[derive(Debug)]
 pub enum Token {
     Identifier(Identifier),
     Label(Identifier),
     Mnemonic(Mnemonic),
-    Number(usize),
+    Number(usize, NumberType),
     Instruction(Instruction),
     Operand(Operand),
     RegisterSuffix(Register),
@@ -145,9 +151,9 @@ impl Display for Token {
             }
             Token::Instruction(i) => match &i.operand {
                 Some(o) => {
-                    write!(f, "\t\t{}{}", i.mnemonic, o)
+                    write!(f, "{}{}", i.mnemonic, o)
                 }
-                None => write!(f, "\t\t{}", i.mnemonic),
+                None => write!(f, "{}", i.mnemonic),
             },
             Token::Operand(o) => {
                 let suffix = match &o.suffix {
@@ -182,12 +188,15 @@ impl Display for Token {
                 }
                 let _ = write!(f, "{}", inner);
                 for w in r {
-                    let _ = write!(f, "\t\t{}", w);
+                    let _ = write!(f, "{}", w);
                 }
                 Ok(())
             }
-            Token::Number(num) => {
-                write!(f, "{}", num)
+            Token::Number(val, ty) => {
+                match ty {
+                    NumberType::Hex => write!(f, "${:x}", val),
+                    NumberType::Dec => write!(f, "{}", val),
+                }
             }
             Token::ExprParens(inner) => {
                 write!(f, "[{}]", inner)

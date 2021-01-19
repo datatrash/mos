@@ -92,7 +92,7 @@ impl<'a> CodegenContext<'a> {
 
     fn evaluate(&self, expr: &Token) -> Option<usize> {
         match expr {
-            Token::Number(n) => Some(*n),
+            Token::Number(n, _) => Some(*n),
             Token::BinaryAdd(lhs, rhs)
             | Token::BinarySub(lhs, rhs)
             | Token::BinaryMul(lhs, rhs)
