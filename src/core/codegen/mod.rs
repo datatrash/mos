@@ -156,8 +156,16 @@ impl<'a> CodegenContext<'a> {
             (MM::Asl, AM::AbsoluteOrZP, None) => v![(0x06, 1), (0x0e, 2)],
             (MM::Asl, AM::AbsoluteOrZP, Some(Register::X)) => v![(0x16, 1), (0x1e, 2)],
             (MM::Asl, AM::Implied, None) => v![(0x0a, 0)],
+            (MM::Bcc, AM::AbsoluteOrZP, None) => v![(0x90, 1)],
+            (MM::Bcs, AM::AbsoluteOrZP, None) => v![(0xb0, 1)],
             (MM::Bit, AM::AbsoluteOrZP, None) => v![(0x24, 1), (0x2c, 2)],
+            (MM::Bmi, AM::AbsoluteOrZP, None) => v![(0x30, 1)],
+            (MM::Bne, AM::AbsoluteOrZP, None) => v![(0xd0, 1)],
+            (MM::Beq, AM::AbsoluteOrZP, None) => v![(0xf0, 1)],
             (MM::Brk, AM::Implied, None) => v![(0x00, 0)],
+            (MM::Bpl, AM::AbsoluteOrZP, None) => v![(0x10, 1)],
+            (MM::Bvc, AM::AbsoluteOrZP, None) => v![(0x50, 1)],
+            (MM::Bvs, AM::AbsoluteOrZP, None) => v![(0x70, 1)],
             (MM::Clc, AM::Implied, None) => v![(0x18, 0)],
             (MM::Cld, AM::Implied, None) => v![(0xd8, 0)],
             (MM::Cli, AM::Implied, None) => v![(0x58, 0)],
@@ -439,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all_non_branch_instructions() {
+    fn test_all_instructions() {
         let check = |code: &str, data: &[u8]| {
             let ctx = test_codegen(code).unwrap();
             assert_eq!(ctx.current_segment().data, data);
@@ -453,6 +461,7 @@ mod tests {
         check("asl", &[0x0a]);
         check("ora $1234", &[0x0d, 0x34, 0x12]);
         check("asl $1234", &[0x0e, 0x34, 0x12]);
+        check("bpl $10", &[0x10, 0x10]);
         check("ora ($10),y", &[0x11, 0x10]);
         check("ora $10,x", &[0x15, 0x10]);
         check("asl $10,x", &[0x16, 0x10]);
@@ -471,6 +480,7 @@ mod tests {
         check("bit $1234", &[0x2c, 0x34, 0x12]);
         check("and $1234", &[0x2d, 0x34, 0x12]);
         check("rol $1234", &[0x2e, 0x34, 0x12]);
+        check("bmi $10", &[0x30, 0x10]);
         check("and ($10),y", &[0x31, 0x10]);
         check("and $10,x", &[0x35, 0x10]);
         check("rol $10,x", &[0x36, 0x10]);
@@ -488,6 +498,7 @@ mod tests {
         check("jmp $1234", &[0x4c, 0x34, 0x12]);
         check("eor $1234", &[0x4d, 0x34, 0x12]);
         check("lsr $1234", &[0x4e, 0x34, 0x12]);
+        check("bvc $10", &[0x50, 0x10]);
         check("eor ($10),y", &[0x51, 0x10]);
         check("eor $10,x", &[0x55, 0x10]);
         check("lsr $10,x", &[0x56, 0x10]);
@@ -504,6 +515,7 @@ mod tests {
         check("jmp ($1234)", &[0x6c, 0x34, 0x12]);
         check("adc $1234", &[0x6d, 0x34, 0x12]);
         check("ror $1234", &[0x6e, 0x34, 0x12]);
+        check("bvs $10", &[0x70, 0x10]);
         check("adc ($10),y", &[0x71, 0x10]);
         check("adc $10,x", &[0x75, 0x10]);
         check("ror $10,x", &[0x76, 0x10]);
@@ -520,6 +532,7 @@ mod tests {
         check("sty $1234", &[0x8c, 0x34, 0x12]);
         check("sta $1234", &[0x8d, 0x34, 0x12]);
         check("stx $1234", &[0x8e, 0x34, 0x12]);
+        check("bcc $10", &[0x90, 0x10]);
         check("sta ($10),y", &[0x91, 0x10]);
         check("sty $10,x", &[0x94, 0x10]);
         check("sta $10,x", &[0x95, 0x10]);
@@ -540,6 +553,7 @@ mod tests {
         check("ldy $1234", &[0xac, 0x34, 0x12]);
         check("lda $1234", &[0xad, 0x34, 0x12]);
         check("ldx $1234", &[0xae, 0x34, 0x12]);
+        check("bcs $10", &[0xb0, 0x10]);
         check("lda ($10),y", &[0xb1, 0x10]);
         check("ldy $10,x", &[0xb4, 0x10]);
         check("lda $10,x", &[0xb5, 0x10]);
@@ -561,6 +575,7 @@ mod tests {
         check("cpy $1234", &[0xcc, 0x34, 0x12]);
         check("cmp $1234", &[0xcd, 0x34, 0x12]);
         check("dec $1234", &[0xce, 0x34, 0x12]);
+        check("bne $10", &[0xd0, 0x10]);
         check("cmp ($10),y", &[0xd1, 0x10]);
         check("cmp $10,x", &[0xd5, 0x10]);
         check("dec $10,x", &[0xd6, 0x10]);
@@ -579,6 +594,7 @@ mod tests {
         check("cpx $1234", &[0xec, 0x34, 0x12]);
         check("sbc $1234", &[0xed, 0x34, 0x12]);
         check("inc $1234", &[0xee, 0x34, 0x12]);
+        check("beq $10", &[0xf0, 0x10]);
         check("sbc ($10),y", &[0xf1, 0x10]);
         check("sbc $10,x", &[0xf5, 0x10]);
         check("inc $10,x", &[0xf6, 0x10]);
