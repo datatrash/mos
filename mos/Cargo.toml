@@ -1,5 +1,5 @@
 [package]
-name = "mos-asm"
+name = "mos"
 version = "0.1.0"
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
 edition = "2018"
@@ -12,4 +12,4 @@ fs-err = "2"
 git-version = "0.3"
 log = "0.4"
 loggerv = "0.7"
-mos-asm-core = { path = "../mos-asm-core" }
+mos-core = { path = "../mos-core" }

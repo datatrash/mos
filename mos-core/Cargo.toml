@@ -1,5 +1,5 @@
 [package]
-name = "mos-asm-core"
+name = "mos-core"
 version = "0.1.0"
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
 edition = "2018"

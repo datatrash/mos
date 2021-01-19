@@ -220,7 +220,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ee1c47aaa256ecabcaea351eae4a9b01ef39ed810004e298d2511ed284b1525"
 
 [[package]]
-name = "mos-asm"
+name = "mos"
 version = "0.1.0"
 dependencies = [
  "ansi_term",
@@ -230,11 +230,11 @@ dependencies = [
  "git-version",
  "log",
  "loggerv",
- "mos-asm-core",
+ "mos-core",
 ]
 
 [[package]]
-name = "mos-asm-core"
+name = "mos-core"
 version = "0.1.0"
 dependencies = [
  "log",
