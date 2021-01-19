@@ -80,7 +80,6 @@ pub enum NumberType {
 pub enum Token {
     Identifier(Identifier),
     Label(Identifier),
-    Mnemonic(Mnemonic),
     Number(usize, NumberType),
     Instruction(Instruction),
     Operand(Operand),

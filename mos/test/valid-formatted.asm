@@ -1,5 +1,5 @@
     lda data
-    sta $d020
+    sta $d020, x
     rts
 
 data:

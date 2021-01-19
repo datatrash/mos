@@ -1,5 +1,5 @@
   lDa data
-            STa             $d020
+            STa             $d020 ,  x
         rtS
 
 

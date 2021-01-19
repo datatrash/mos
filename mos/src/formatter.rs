@@ -86,8 +86,27 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 " ".to_string()
             };
             format!("{}{}{}{}{}", lhs, lhs_spacing, inner, rhs_spacing, rhs)
+        },
+        Token::Identifier(id) => id.0.clone(),
+        Token::Label(id) => format!("{}:", id.0),
+        Token::RegisterSuffix(reg) => match reg {
+            Register::X => ", x".to_string(),
+            Register::Y => ", y".to_string(),
+        },
+        Token::ExprParens(inner) => format!("[{}]", format_token(inner, opts)),
+        Token::BinaryAdd(lhs, rhs) => {
+            format!("{} + {}", lhs, rhs)
         }
-        _ => format!("{}", token)
+        Token::BinarySub(lhs, rhs) => {
+            format!("{} - {}", lhs, rhs)
+        }
+        Token::BinaryMul(lhs, rhs) => {
+            format!("{} * {}", lhs, rhs)
+        }
+        Token::BinaryDiv(lhs, rhs) => {
+            format!("{} / {}", lhs, rhs)
+        },
+        Token::Error => panic!("Formatting should not happen on ASTs containing errors")
     }
 }
 
