@@ -230,14 +230,6 @@ dependencies = [
  "git-version",
  "log",
  "loggerv",
- "mos-core",
-]
-
-[[package]]
-name = "mos-core"
-version = "0.1.0"
-dependencies = [
- "log",
  "nom",
  "nom_locate",
  "smallvec",

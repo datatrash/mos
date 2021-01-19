@@ -1,5 +1,5 @@
-use crate::errors::AsmError;
-use crate::parser::mnemonic::Mnemonic;
+use crate::core::errors::AsmError;
+use crate::core::parser::mnemonic::Mnemonic;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 

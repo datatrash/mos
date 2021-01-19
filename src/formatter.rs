@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use mos_core::parser::*;
+use crate::core::parser::*;
 
 enum Casing {
     Uppercase,

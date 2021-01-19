@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::errors::AsmResult;
+use crate::core::errors::AsmResult;
 use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;

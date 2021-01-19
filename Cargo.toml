@@ -1,5 +1,21 @@
-[workspace]
-members = [
-    "mos",
-    "mos-core"
-]
+[package]
+name = "mos"
+version = "0.1.0"
+authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
+edition = "2018"
+repository = "https://github.com/RoyJacobs/mosdev/tree/master/mos"
+license = "MIT"
+keywords = ["retro", "6502", "assembler"]
+
+[dependencies]
+ansi_term = "0.12"
+anyhow = "1"
+clap = "3.0.0-beta.2"
+fs-err = "2"
+git-version = "0.3"
+log = "0.4"
+loggerv = "0.7"
+nom = "6"
+nom_locate = "3"
+smallvec = "1"
+thiserror = "1"

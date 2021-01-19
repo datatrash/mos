@@ -12,8 +12,8 @@ use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 pub use ast::*;
 pub use mnemonic::*;
 
-use crate::errors::AsmError;
-use crate::parser::mnemonic::mnemonic;
+use crate::core::errors::AsmError;
+use crate::core::parser::mnemonic::mnemonic;
 
 mod ast;
 mod mnemonic;

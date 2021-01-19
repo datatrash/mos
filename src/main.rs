@@ -5,10 +5,11 @@ use clap::{App, AppSettings, Arg};
 use fs_err as fs;
 use log::error;
 
-use mos_core::codegen::{codegen, CodegenOptions, ProgramCounter};
-use mos_core::errors::AsmError;
-use mos_core::parser;
+use crate::core::codegen::{codegen, CodegenOptions, ProgramCounter};
+use crate::core::errors::AsmError;
+use crate::core::parser;
 
+mod core;
 mod formatter;
 
 fn get_app() -> App<'static> {
