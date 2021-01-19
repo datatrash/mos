@@ -89,6 +89,38 @@ pub enum Token {
     Error,
 }
 
+impl Token {
+    pub fn strip_whitespace(self) -> Self {
+        let sob = |token: Option<Box<Token>>| {
+            token.map(|t| Box::new(t.strip_whitespace()))
+        };
+
+        let sb = |token: Box<Token>| {
+            Box::new(token.strip_whitespace())
+        };
+
+        match self {
+            Token::Instruction(i) => Token::Instruction(Instruction {
+                operand: sob(i.operand),
+                ..i
+            }),
+            Token::Operand(o) => Token::Operand(Operand {
+                expr: sb(o.expr),
+                suffix: sob(o.suffix),
+                ..o
+            }),
+            Token::Data(token, size) => Token::Data(sob(token), size),
+            Token::BinaryAdd(lhs, rhs) => Token::BinaryAdd(sb(lhs), sb(rhs)),
+            Token::BinarySub(lhs, rhs) => Token::BinarySub(sb(lhs), sb(rhs)),
+            Token::BinaryMul(lhs, rhs) => Token::BinaryMul(sb(lhs), sb(rhs)),
+            Token::BinaryDiv(lhs, rhs) => Token::BinaryDiv(sb(lhs), sb(rhs)),
+            Token::ExprParens(token) => Token::ExprParens(sb(token)),
+            Token::Ws((_, token, _)) => *token,
+            _ => self,
+        }
+    }
+}
+
 impl Display for Mnemonic {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let m = format!("{:?}", self).to_uppercase();

@@ -2,9 +2,9 @@ use anyhow::Result;
 use clap::{App, AppSettings, Arg};
 use fs_err as fs;
 use log::error;
-use mos_asm_core::codegen::{codegen, CodegenOptions, ProgramCounter};
-use mos_asm_core::errors::AsmError;
-use mos_asm_core::parser;
+use mos_core::codegen::{codegen, CodegenOptions, ProgramCounter};
+use mos_core::errors::AsmError;
+use mos_core::parser;
 use std::io::{Read, Write};
 
 fn main() -> Result<()> {
