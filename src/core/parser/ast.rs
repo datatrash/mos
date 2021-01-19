@@ -1,5 +1,5 @@
-use crate::core::errors::AsmError;
 use crate::core::parser::mnemonic::Mnemonic;
+use crate::errors::MosError;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 
@@ -8,11 +8,11 @@ pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
 #[derive(Clone, Debug)]
 pub struct State<'a> {
-    pub errors: &'a RefCell<Vec<AsmError>>,
+    pub errors: &'a RefCell<Vec<MosError>>,
 }
 
 impl<'a> State<'a> {
-    pub fn report_error(&self, error: AsmError) {
+    pub fn report_error(&self, error: MosError) {
         self.errors.borrow_mut().push(error);
     }
 }
@@ -73,7 +73,7 @@ pub struct Operand {
 #[derive(Debug)]
 pub enum NumberType {
     Hex,
-    Dec
+    Dec,
 }
 
 #[derive(Debug)]
@@ -96,13 +96,9 @@ pub enum Token {
 
 impl Token {
     pub fn strip_whitespace(self) -> Self {
-        let sob = |token: Option<Box<Token>>| {
-            token.map(|t| Box::new(t.strip_whitespace()))
-        };
+        let sob = |token: Option<Box<Token>>| token.map(|t| Box::new(t.strip_whitespace()));
 
-        let sb = |token: Box<Token>| {
-            Box::new(token.strip_whitespace())
-        };
+        let sb = |token: Box<Token>| Box::new(token.strip_whitespace());
 
         match self {
             Token::Instruction(i) => Token::Instruction(Instruction {
@@ -191,12 +187,10 @@ impl Display for Token {
                 }
                 Ok(())
             }
-            Token::Number(val, ty) => {
-                match ty {
-                    NumberType::Hex => write!(f, "${:x}", val),
-                    NumberType::Dec => write!(f, "{}", val),
-                }
-            }
+            Token::Number(val, ty) => match ty {
+                NumberType::Hex => write!(f, "${:x}", val),
+                NumberType::Dec => write!(f, "{}", val),
+            },
             Token::ExprParens(inner) => {
                 write!(f, "[{}]", inner)
             }

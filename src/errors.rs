@@ -1,10 +1,10 @@
 use crate::parser::Location;
 
-pub type AsmResult<T> = Result<T, AsmError>;
+pub type MosResult<T> = Result<T, MosError>;
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum AsmError {
+pub enum MosError {
     #[error("parser error")]
     Parser { location: Location, message: String },
     #[error("unknown error")]

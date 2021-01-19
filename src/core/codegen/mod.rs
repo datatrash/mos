@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::core::errors::AsmResult;
+use crate::errors::MosResult;
 use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
@@ -157,6 +157,8 @@ impl<'a> CodegenContext<'a> {
             (MM::Ora, AM::AbsoluteOrZP, Some(Register::Y)) => vec![(0x19, 2)],
             (MM::Ora, AM::Immediate, None) => vec![(0x09, 1)],
             (MM::Php, AM::Implied, None) => vec![(0x08, 1)],
+            (MM::Rts, AM::Implied, None) => vec![(0x60, 1)],
+            (MM::Sta, AM::AbsoluteOrZP, None) => vec![(0x8d, 2)],
             _ => panic!("Invalid instruction"),
         };
 
@@ -258,7 +260,7 @@ impl<'a> CodegenContext<'a> {
     }
 }
 
-pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> AsmResult<CodegenContext<'a>> {
+pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<CodegenContext<'a>> {
     let mut ctx = CodegenContext::new(options);
 
     let ast = ast
@@ -299,21 +301,21 @@ mod tests {
     use std::fmt::Display;
 
     #[test]
-    fn basic() -> AsmResult<()> {
+    fn basic() -> MosResult<()> {
         let ctx = test_codegen("lda #123")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
         Ok(())
     }
 
     #[test]
-    fn basic_with_comments() -> AsmResult<()> {
+    fn basic_with_comments() -> MosResult<()> {
         let ctx = test_codegen("lda /*hello*/ #123")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
         Ok(())
     }
 
     #[test]
-    fn expressions() -> AsmResult<()> {
+    fn expressions() -> MosResult<()> {
         let ctx = test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2")?;
         assert_eq!(
             ctx.current_segment().data,
@@ -323,21 +325,21 @@ mod tests {
     }
 
     #[test]
-    fn can_access_forward_declared_labels() -> AsmResult<()> {
+    fn can_access_forward_declared_labels() -> MosResult<()> {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
         Ok(())
     }
 
     #[test]
-    fn can_store_data() -> AsmResult<()> {
+    fn can_store_data() -> MosResult<()> {
         let ctx = test_codegen(".byte 123\n.word 64738")?;
         assert_eq!(ctx.current_segment().data, vec![123, 0xe2, 0xfc]);
         Ok(())
     }
 
     #[test]
-    fn can_perform_operations_on_labels() -> AsmResult<()> {
+    fn can_perform_operations_on_labels() -> MosResult<()> {
         // Create two labels, 'foo' and 'bar', separated by three NOPs.
         // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 NOPs).
         let ctx = test_codegen("foo: .word bar - foo\nnop\nnop\nnop\nbar: nop")?;
@@ -373,7 +375,7 @@ mod tests {
         check("asl $1234,x", &[0x1e, 0x34, 0x12]);
     }
 
-    fn test_codegen<'a, S: Display + Into<String>>(code: S) -> AsmResult<CodegenContext<'a>> {
+    fn test_codegen<'a, S: Display + Into<String>>(code: S) -> MosResult<CodegenContext<'a>> {
         let code = code.into();
         let (ast, errors) = parse(&code);
         if !errors.is_empty() {

@@ -1,16 +1,12 @@
-use std::io::{Read, Write};
-
 use anyhow::Result;
 use clap::{App, AppSettings, Arg};
-use fs_err as fs;
-use log::error;
 
-use crate::core::codegen::{codegen, CodegenOptions, ProgramCounter};
-use crate::core::errors::AsmError;
+use crate::commands::*;
 use crate::core::parser;
 
+mod commands;
 mod core;
-mod formatter;
+mod errors;
 
 fn get_app() -> App<'static> {
     App::new("mos")
@@ -28,24 +24,8 @@ fn get_app() -> App<'static> {
                 .long("no-color")
                 .about("Disables colorized output"),
         )
-        .subcommand(App::new("build")
-            .about("Build")
-            .arg(
-                Arg::new("input")
-                    .about("Sets the input file to use")
-                    .required(true)
-                    .multiple(true)
-            )
-        )
-        .subcommand(App::new("format")
-            .about("Source code formatter")
-            .arg(
-                Arg::new("input")
-                    .about("Sets the input file(s) to use")
-                    .required(true)
-                    .multiple(true)
-            )
-        )
+        .subcommand(build_app())
+        .subcommand(format_app())
 }
 
 fn main() -> Result<()> {
@@ -61,40 +41,11 @@ fn main() -> Result<()> {
         .init()
         .unwrap();
 
-    let input = args.value_of("INPUT").unwrap();
-    let mut file = fs::File::open(input)?;
-    let mut source = String::new();
-    file.read_to_string(&mut source)?;
-
-    let (ast, errors) = parser::parse(source.as_str());
-    if !errors.is_empty() {
-        for error in errors {
-            match error {
-                AsmError::Parser { location, message } => {
-                    error!(
-                        "{}:{}:{}: error: {}",
-                        input, location.line, location.column, message
-                    );
-                }
-                AsmError::Unknown => error!("Unknown error"),
-            }
-        }
-        std::process::exit(1)
+    match args.subcommand() {
+        Some(("build", args)) => build_command(args),
+        Some(("format", args)) => format_command(args),
+        _ => panic!("Unknown subcommand"),
     }
-
-    let generated_code = codegen(
-        ast,
-        CodegenOptions {
-            pc: ProgramCounter::new(0xc000),
-        },
-    )?;
-    let segment = generated_code.segment("Default").unwrap();
-
-    let mut out = fs::File::create("target/out.prg")?;
-    out.write_all(&segment.start_pc.to_le_bytes())?;
-    out.write_all(&segment.data)?;
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -108,9 +59,12 @@ mod tests {
 
         match args.subcommand() {
             Some(("build", args)) => {
-                assert_eq!(args.values_of("input").unwrap().collect::<Vec<_>>(), ["test.asm"]);
-            },
-            _ => panic!()
+                assert_eq!(
+                    args.values_of("input").unwrap().collect::<Vec<_>>(),
+                    ["test.asm"]
+                );
+            }
+            _ => panic!(),
         }
     }
 
@@ -121,9 +75,12 @@ mod tests {
 
         match args.subcommand() {
             Some(("format", args)) => {
-                assert_eq!(args.values_of("input").unwrap().collect::<Vec<_>>(), ["test.asm"]);
-            },
-            _ => panic!()
+                assert_eq!(
+                    args.values_of("input").unwrap().collect::<Vec<_>>(),
+                    ["test.asm"]
+                );
+            }
+            _ => panic!(),
         }
     }
 }

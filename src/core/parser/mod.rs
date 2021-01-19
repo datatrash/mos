@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 
-use nom::{branch::alt, character::complete::multispace0};
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{
     alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
@@ -8,12 +7,13 @@ use nom::character::complete::{
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest};
 use nom::multi::many0;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
+use nom::{branch::alt, character::complete::multispace0};
 
 pub use ast::*;
 pub use mnemonic::*;
 
-use crate::core::errors::AsmError;
 use crate::core::parser::mnemonic::mnemonic;
+use crate::errors::MosError;
 
 mod ast;
 mod mnemonic;
@@ -31,7 +31,7 @@ where
         match parser(input) {
             Ok((remaining, out)) => Ok((remaining, Some(out))),
             Err(nom::Err::Error(_)) | Err(nom::Err::Failure(_)) => {
-                let err = AsmError::Parser {
+                let err = MosError::Parser {
                     location: Location::from(&i),
                     message: error_msg.to_string(),
                 };
@@ -201,7 +201,7 @@ fn error(input: LocatedSpan) -> IResult<Token> {
     map(
         take_till1(|c| c == ')' || c == '\n' || c == '\r'),
         |span: LocatedSpan| {
-            let err = AsmError::Parser {
+            let err = MosError::Parser {
                 location: Location::from(&span),
                 message: format!("unexpected `{}`", span.fragment()),
             };
@@ -330,7 +330,7 @@ pub fn expression(input: LocatedSpan) -> IResult<Token> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse(source: &str) -> (Vec<Token>, Vec<AsmError>) {
+pub fn parse(source: &str) -> (Vec<Token>, Vec<MosError>) {
     let errors = RefCell::new(Vec::new());
     let input = LocatedSpan::new_extra(source, State { errors: &errors });
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
