@@ -148,7 +148,7 @@ jobs:
           staging="mos-${{ env.RELEASE_VERSION }}-${{ matrix.target }}"
           mkdir -p "$staging"
 
-          cp {CHANGELOG.md} "$staging/"
+          cp CHANGELOG.md "$staging/"
 
           if [ "${{ matrix.os }}" = "windows-2019" ]; then
             cp "${{ env.TARGET_DIR }}/release/mos.exe" "$staging/"
