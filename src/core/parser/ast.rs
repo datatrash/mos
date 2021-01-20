@@ -27,6 +27,12 @@ pub enum Comment {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier(pub String);
 
+impl Display for Identifier {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location {
     pub path: String,

@@ -5,6 +5,18 @@ use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 
+pub type CodegenResult<T> = Result<T, CodegenError>;
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum CodegenError {
+    #[error("unknown identifier: {0}")]
+    UnknownIdentifier(Identifier),
+    #[error("branch too far")]
+    BranchTooFar,
+    #[error("unknown code generation error")]
+    Unknown,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct ProgramCounter(u16);
 
@@ -90,24 +102,30 @@ impl<'a> CodegenContext<'a> {
         self.labels.insert(label.clone(), pc);
     }
 
-    fn evaluate(&self, expr: &Token) -> Option<usize> {
+    fn evaluate(&self, expr: &Token, error_on_failure: bool) -> CodegenResult<Option<usize>> {
         match expr {
-            Token::Number(n, _) => Some(*n),
+            Token::Number(n, _) => Ok(Some(*n)),
             Token::BinaryAdd(lhs, rhs)
             | Token::BinarySub(lhs, rhs)
             | Token::BinaryMul(lhs, rhs)
             | Token::BinaryDiv(lhs, rhs) => {
-                let lhs = self.evaluate(lhs);
-                let rhs = self.evaluate(rhs);
+                let lhs = self.evaluate(lhs, error_on_failure)?;
+                let rhs = self.evaluate(rhs, error_on_failure)?;
                 match (expr, lhs, rhs) {
-                    (Token::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Some(lhs + rhs),
-                    (Token::BinarySub(_, _), Some(lhs), Some(rhs)) => Some(lhs - rhs),
-                    (Token::BinaryMul(_, _), Some(lhs), Some(rhs)) => Some(lhs * rhs),
-                    (Token::BinaryDiv(_, _), Some(lhs), Some(rhs)) => Some(lhs / rhs),
-                    _ => None,
+                    (Token::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs + rhs)),
+                    (Token::BinarySub(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs - rhs)),
+                    (Token::BinaryMul(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs * rhs)),
+                    (Token::BinaryDiv(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs / rhs)),
+                    _ => Ok(None),
                 }
             }
-            Token::Identifier(label_name) => self.labels.get(label_name).map(|pc| pc.0 as usize),
+            Token::Identifier(label_name) => {
+                match (self.labels.get(label_name), error_on_failure) {
+                    (Some(pc), _) => Ok(Some(pc.0 as usize)),
+                    (None, false) => Ok(None),
+                    (None, true) => Err(CodegenError::UnknownIdentifier(label_name.clone())),
+                }
+            }
             _ => panic!("Unsupported token: {:?}", expr),
         }
     }
@@ -116,7 +134,8 @@ impl<'a> CodegenContext<'a> {
         &self,
         pc: ProgramCounter,
         i: &'b Instruction,
-    ) -> MosResult<(&'b AddressingMode, Option<usize>, Option<Register>)> {
+        error_on_failure: bool,
+    ) -> CodegenResult<(&'b AddressingMode, Option<usize>, Option<Register>)> {
         match i.operand.as_deref() {
             Some(Token::Operand(operand)) => {
                 let register_suffix = operand.suffix.as_deref().map(|s| match s {
@@ -124,7 +143,8 @@ impl<'a> CodegenContext<'a> {
                     _ => panic!(),
                 });
 
-                self.evaluate(&*operand.expr)
+                let evaluated = self.evaluate(&*operand.expr, error_on_failure)?;
+                evaluated
                     .map(|val| match i.mnemonic {
                         Mnemonic::Bcc
                         | Mnemonic::Bcs
@@ -144,10 +164,7 @@ impl<'a> CodegenContext<'a> {
                                 let val = offset as usize;
                                 Ok((&operand.addressing_mode, Some(val), register_suffix))
                             } else {
-                                Err(MosError::Codegen {
-                                    location: i.location.clone(),
-                                    message: "Branch is too far".to_string(),
-                                })
+                                Err(CodegenError::BranchTooFar)
                             }
                         }
                         _ => Ok((&operand.addressing_mode, Some(val), register_suffix)),
@@ -162,14 +179,15 @@ impl<'a> CodegenContext<'a> {
         &mut self,
         pc: Option<ProgramCounter>,
         i: &Instruction,
-    ) -> MosResult<Option<ProgramCounter>> {
+        error_on_failure: bool,
+    ) -> CodegenResult<Option<ProgramCounter>> {
         let pc = pc.unwrap_or(self.current_segment().pc);
 
         type MM = Mnemonic;
         type AM = AddressingMode;
         use smallvec::smallvec as v;
 
-        let (am, val, suffix) = self.evaluate_operand(pc, i)?;
+        let (am, val, suffix) = self.evaluate_operand(pc, i, error_on_failure)?;
         let possible_opcodes: SmallVec<[(u8, usize); 2]> = match (&i.mnemonic, am, suffix) {
             (MM::Adc, AM::Immediate, None) => v![(0x69, 1)],
             (MM::Adc, AM::Indirect, Some(Register::X)) => v![(0x61, 1)],
@@ -340,11 +358,13 @@ impl<'a> CodegenContext<'a> {
         pc: Option<ProgramCounter>,
         expr: &Token,
         data_length: usize,
-    ) -> Option<ProgramCounter> {
+        error_on_failure: bool,
+    ) -> CodegenResult<Option<ProgramCounter>> {
         let segment = self.current_segment();
         let pc = pc.unwrap_or(segment.pc);
 
-        match self.evaluate(expr) {
+        let evaluated = self.evaluate(expr, error_on_failure)?;
+        let result = match evaluated {
             Some(val) => {
                 let segment = self.current_segment_mut();
                 match data_length {
@@ -381,6 +401,27 @@ impl<'a> CodegenContext<'a> {
                     _ => panic!(),
                 }
             }
+        };
+
+        Ok(result)
+    }
+
+    fn emit_token(
+        &mut self,
+        pc: Option<ProgramCounter>,
+        token: &Token,
+        error_on_failure: bool,
+    ) -> CodegenResult<Option<ProgramCounter>> {
+        match token {
+            Token::Label(id) => {
+                self.register_label(pc, id);
+                Ok(None)
+            }
+            Token::Instruction(i) => self.emit_instruction(pc, i, error_on_failure),
+            Token::Data(Some(expr), data_length) => {
+                self.emit_data(pc, expr, *data_length, error_on_failure)
+            }
+            _ => Ok(None),
         }
     }
 }
@@ -399,18 +440,23 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
         .collect::<Vec<_>>();
 
     // Apply passes
+    let mut error_on_failure = false;
     while !to_process.is_empty() {
         let to_process_len = to_process.len();
         let mut next_to_process = vec![];
         for (pc, token) in to_process {
-            let process_again_at_pc = match &token {
-                Token::Label(id) => {
-                    ctx.register_label(pc, id);
-                    None
+            let process_again_at_pc = match ctx.emit_token(pc, &token, error_on_failure) {
+                Ok(pc) => pc,
+                Err(error) => {
+                    let location = match token {
+                        Token::Instruction(i) => i.location,
+                        _ => panic!("Unknown location"),
+                    };
+                    return Err(MosError::Codegen {
+                        location,
+                        message: format!("{}", error),
+                    });
                 }
-                Token::Instruction(i) => ctx.emit_instruction(pc, i)?,
-                Token::Data(Some(expr), data_length) => ctx.emit_data(pc, expr, *data_length),
-                _ => None,
             };
 
             if let Some(pc) = process_again_at_pc {
@@ -420,8 +466,8 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
 
         // If we haven't processed any tokens then the tokens that are left could not be resolved.
         if next_to_process.len() == to_process_len {
-            let (_pc, token) = next_to_process.pop().unwrap();
-            return Err(guess_error_from_token(token));
+            // Emit an error on the next resolve failure
+            error_on_failure = true;
         }
         to_process = next_to_process;
     }
@@ -546,7 +592,7 @@ mod tests {
                     line: 141,
                     column: 1
                 },
-                message: "Branch is too far".to_string()
+                message: "branch too far".to_string()
             })
         );
         Ok(())
