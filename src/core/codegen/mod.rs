@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::errors::MosResult;
+use crate::errors::{MosError, MosResult};
 use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
@@ -114,19 +114,47 @@ impl<'a> CodegenContext<'a> {
 
     fn evaluate_operand<'b>(
         &self,
-        operand: &'b Option<Box<Token>>,
-    ) -> (&'b AddressingMode, Option<usize>, Option<Register>) {
-        match operand.as_deref() {
+        pc: ProgramCounter,
+        i: &'b Instruction,
+    ) -> MosResult<(&'b AddressingMode, Option<usize>, Option<Register>)> {
+        match i.operand.as_deref() {
             Some(Token::Operand(operand)) => {
                 let register_suffix = operand.suffix.as_deref().map(|s| match s {
                     Token::RegisterSuffix(r) => *r,
                     _ => panic!(),
                 });
 
-                let val = self.evaluate(&*operand.expr);
-                (&operand.addressing_mode, val, register_suffix)
+                self.evaluate(&*operand.expr)
+                    .map(|val| match i.mnemonic {
+                        Mnemonic::Bcc
+                        | Mnemonic::Bcs
+                        | Mnemonic::Beq
+                        | Mnemonic::Bmi
+                        | Mnemonic::Bne
+                        | Mnemonic::Bpl
+                        | Mnemonic::Bvc
+                        | Mnemonic::Bvs => {
+                            let target_pc = val as i64;
+                            let cur_pc = (pc.0 + 2) as i64;
+                            let mut offset = target_pc - cur_pc;
+                            if offset >= -128 && offset <= 127 {
+                                if offset < 0 {
+                                    offset += 256;
+                                }
+                                let val = offset as usize;
+                                Ok((&operand.addressing_mode, Some(val), register_suffix))
+                            } else {
+                                Err(MosError::Codegen {
+                                    location: i.location,
+                                    message: "Branch is too far".to_string(),
+                                })
+                            }
+                        }
+                        _ => Ok((&operand.addressing_mode, Some(val), register_suffix)),
+                    })
+                    .unwrap_or_else(|| Ok((&operand.addressing_mode, None, register_suffix)))
             }
-            _ => (&AddressingMode::Implied, None, None),
+            _ => Ok((&AddressingMode::Implied, None, None)),
         }
     }
 
@@ -134,12 +162,14 @@ impl<'a> CodegenContext<'a> {
         &mut self,
         pc: Option<ProgramCounter>,
         i: &Instruction,
-    ) -> Option<ProgramCounter> {
+    ) -> MosResult<Option<ProgramCounter>> {
+        let pc = pc.unwrap_or(self.current_segment().pc);
+
         type MM = Mnemonic;
         type AM = AddressingMode;
         use smallvec::smallvec as v;
 
-        let (am, val, suffix) = self.evaluate_operand(&i.operand);
+        let (am, val, suffix) = self.evaluate_operand(pc, i)?;
         let possible_opcodes: SmallVec<[(u8, usize); 2]> = match (&i.mnemonic, am, suffix) {
             (MM::Adc, AM::Immediate, None) => v![(0x69, 1)],
             (MM::Adc, AM::Indirect, Some(Register::X)) => v![(0x61, 1)],
@@ -274,7 +304,7 @@ impl<'a> CodegenContext<'a> {
                                 break;
                             }
                         }
-                        result.expect("Could not determine correct opcode")
+                        result.unwrap_or_else(|| panic!("Could not determine correct opcode, no matching opcodes for operand value: {}", val))
                     }
                     None => {
                         // Couldn't evaluate yet, so find maximum operand length and use that opcode
@@ -294,15 +324,14 @@ impl<'a> CodegenContext<'a> {
         };
 
         let segment = self.current_segment_mut();
-        let pc = pc.unwrap_or(segment.pc);
         segment.set(pc, &bytes);
 
         if expression_is_valid {
             // Done with this token
-            None
+            Ok(None)
         } else {
             // Will try to emit later on this pc
-            Some(pc)
+            Ok(Some(pc))
         }
     }
 
@@ -371,20 +400,24 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
 
     // Apply passes
     while !to_process.is_empty() {
-        to_process = to_process
-            .into_iter()
-            .filter_map(|(pc, token)| match &token {
+        let mut next_to_process = vec![];
+        for (pc, token) in to_process {
+            let process_again_at_pc = match &token {
                 Token::Label(id) => {
                     ctx.register_label(pc, id);
                     None
                 }
-                Token::Instruction(i) => ctx.emit_instruction(pc, i).map(|pc| (Some(pc), token)),
-                Token::Data(Some(expr), data_length) => ctx
-                    .emit_data(pc, expr, *data_length)
-                    .map(|pc| (Some(pc), token)),
+                Token::Instruction(i) => ctx.emit_instruction(pc, i)?,
+                Token::Data(Some(expr), data_length) => ctx.emit_data(pc, expr, *data_length),
                 _ => None,
-            })
-            .collect::<Vec<_>>();
+            };
+
+            if let Some(pc) = process_again_at_pc {
+                next_to_process.push((Some(pc), token));
+            }
+        }
+
+        to_process = next_to_process;
     }
 
     Ok(ctx)
@@ -454,161 +487,198 @@ mod tests {
     }
 
     #[test]
-    fn test_all_instructions() {
-        let check = |code: &str, data: &[u8]| {
-            let ctx = test_codegen(code).unwrap();
-            assert_eq!(ctx.current_segment().data, data);
-        };
-        check("brk", &[0x00]);
-        check("ora ($10,x)", &[0x01, 0x10]);
-        check("ora $10", &[0x05, 0x10]);
-        check("asl $10", &[0x06, 0x10]);
-        check("php", &[0x08]);
-        check("ora #$10", &[0x09, 0x10]);
-        check("asl", &[0x0a]);
-        check("ora $1234", &[0x0d, 0x34, 0x12]);
-        check("asl $1234", &[0x0e, 0x34, 0x12]);
-        check("bpl $10", &[0x10, 0x10]);
-        check("ora ($10),y", &[0x11, 0x10]);
-        check("ora $10,x", &[0x15, 0x10]);
-        check("asl $10,x", &[0x16, 0x10]);
-        check("clc", &[0x18]);
-        check("ora $1234,y", &[0x19, 0x34, 0x12]);
-        check("ora $1234,x", &[0x1d, 0x34, 0x12]);
-        check("asl $1234,x", &[0x1e, 0x34, 0x12]);
-        check("jsr $1234", &[0x20, 0x34, 0x12]);
-        check("and ($10,x)", &[0x21, 0x10]);
-        check("bit $10", &[0x24, 0x10]);
-        check("and $10", &[0x25, 0x10]);
-        check("rol $10", &[0x26, 0x10]);
-        check("plp", &[0x28]);
-        check("and #$10", &[0x29, 0x10]);
-        check("rol", &[0x2a]);
-        check("bit $1234", &[0x2c, 0x34, 0x12]);
-        check("and $1234", &[0x2d, 0x34, 0x12]);
-        check("rol $1234", &[0x2e, 0x34, 0x12]);
-        check("bmi $10", &[0x30, 0x10]);
-        check("and ($10),y", &[0x31, 0x10]);
-        check("and $10,x", &[0x35, 0x10]);
-        check("rol $10,x", &[0x36, 0x10]);
-        check("sec", &[0x38]);
-        check("and $1234,y", &[0x39, 0x34, 0x12]);
-        check("and $1234,x", &[0x3d, 0x34, 0x12]);
-        check("rol $1234,x", &[0x3e, 0x34, 0x12]);
-        check("rti", &[0x40]);
-        check("eor ($10,x)", &[0x41, 0x10]);
-        check("eor $10", &[0x45, 0x10]);
-        check("lsr $10", &[0x46, 0x10]);
-        check("pha", &[0x48]);
-        check("eor #$10", &[0x49, 0x10]);
-        check("lsr", &[0x4a]);
-        check("jmp $1234", &[0x4c, 0x34, 0x12]);
-        check("eor $1234", &[0x4d, 0x34, 0x12]);
-        check("lsr $1234", &[0x4e, 0x34, 0x12]);
-        check("bvc $10", &[0x50, 0x10]);
-        check("eor ($10),y", &[0x51, 0x10]);
-        check("eor $10,x", &[0x55, 0x10]);
-        check("lsr $10,x", &[0x56, 0x10]);
-        check("cli", &[0x58]);
-        check("eor $1234,y", &[0x59, 0x34, 0x12]);
-        check("eor $1234,x", &[0x5d, 0x34, 0x12]);
-        check("lsr $1234,x", &[0x5e, 0x34, 0x12]);
-        check("adc ($10,x)", &[0x61, 0x10]);
-        check("adc $10", &[0x65, 0x10]);
-        check("ror $10", &[0x66, 0x10]);
-        check("pla", &[0x68]);
-        check("adc #$10", &[0x69, 0x10]);
-        check("ror", &[0x6a]);
-        check("jmp ($1234)", &[0x6c, 0x34, 0x12]);
-        check("adc $1234", &[0x6d, 0x34, 0x12]);
-        check("ror $1234", &[0x6e, 0x34, 0x12]);
-        check("bvs $10", &[0x70, 0x10]);
-        check("adc ($10),y", &[0x71, 0x10]);
-        check("adc $10,x", &[0x75, 0x10]);
-        check("ror $10,x", &[0x76, 0x10]);
-        check("sei", &[0x78]);
-        check("adc $1234,y", &[0x79, 0x34, 0x12]);
-        check("adc $1234,x", &[0x7d, 0x34, 0x12]);
-        check("ror $1234,x", &[0x7e, 0x34, 0x12]);
-        check("sta ($10,x)", &[0x81, 0x10]);
-        check("sty $10", &[0x84, 0x10]);
-        check("sta $10", &[0x85, 0x10]);
-        check("stx $10", &[0x86, 0x10]);
-        check("dey", &[0x88]);
-        check("txa", &[0x8a]);
-        check("sty $1234", &[0x8c, 0x34, 0x12]);
-        check("sta $1234", &[0x8d, 0x34, 0x12]);
-        check("stx $1234", &[0x8e, 0x34, 0x12]);
-        check("bcc $10", &[0x90, 0x10]);
-        check("sta ($10),y", &[0x91, 0x10]);
-        check("sty $10,x", &[0x94, 0x10]);
-        check("sta $10,x", &[0x95, 0x10]);
-        check("stx $10,y", &[0x96, 0x10]);
-        check("tya", &[0x98]);
-        check("sta $1234,y", &[0x99, 0x34, 0x12]);
-        check("txs", &[0x9a]);
-        check("sta $1234,x", &[0x9d, 0x34, 0x12]);
-        check("ldy #$10", &[0xa0, 0x10]);
-        check("lda ($10,x)", &[0xa1, 0x10]);
-        check("ldx #$10", &[0xa2, 0x10]);
-        check("ldy $10", &[0xa4, 0x10]);
-        check("lda $10", &[0xa5, 0x10]);
-        check("ldx $10", &[0xa6, 0x10]);
-        check("tay", &[0xa8]);
-        check("lda #$10", &[0xa9, 0x10]);
-        check("tax", &[0xaa]);
-        check("ldy $1234", &[0xac, 0x34, 0x12]);
-        check("lda $1234", &[0xad, 0x34, 0x12]);
-        check("ldx $1234", &[0xae, 0x34, 0x12]);
-        check("bcs $10", &[0xb0, 0x10]);
-        check("lda ($10),y", &[0xb1, 0x10]);
-        check("ldy $10,x", &[0xb4, 0x10]);
-        check("lda $10,x", &[0xb5, 0x10]);
-        check("ldx $10,y", &[0xb6, 0x10]);
-        check("clv", &[0xb8]);
-        check("lda $1234,y", &[0xb9, 0x34, 0x12]);
-        check("tsx", &[0xba]);
-        check("ldy $1234,x", &[0xbc, 0x34, 0x12]);
-        check("lda $1234,x", &[0xbd, 0x34, 0x12]);
-        check("ldx $1234,y", &[0xbe, 0x34, 0x12]);
-        check("cpy #$10", &[0xc0, 0x10]);
-        check("cmp ($10,x)", &[0xc1, 0x10]);
-        check("cpy $10", &[0xc4, 0x10]);
-        check("cmp $10", &[0xc5, 0x10]);
-        check("dec $10", &[0xc6, 0x10]);
-        check("iny", &[0xc8]);
-        check("cmp #$10", &[0xc9, 0x10]);
-        check("dex", &[0xca]);
-        check("cpy $1234", &[0xcc, 0x34, 0x12]);
-        check("cmp $1234", &[0xcd, 0x34, 0x12]);
-        check("dec $1234", &[0xce, 0x34, 0x12]);
-        check("bne $10", &[0xd0, 0x10]);
-        check("cmp ($10),y", &[0xd1, 0x10]);
-        check("cmp $10,x", &[0xd5, 0x10]);
-        check("dec $10,x", &[0xd6, 0x10]);
-        check("cld", &[0xd8]);
-        check("cmp $1234,y", &[0xd9, 0x34, 0x12]);
-        check("cmp $1234,x", &[0xdd, 0x34, 0x12]);
-        check("dec $1234,x", &[0xde, 0x34, 0x12]);
-        check("cpx #$10", &[0xe0, 0x10]);
-        check("sbc ($10,x)", &[0xe1, 0x10]);
-        check("cpx $10", &[0xe4, 0x10]);
-        check("sbc $10", &[0xe5, 0x10]);
-        check("inc $10", &[0xe6, 0x10]);
-        check("inx", &[0xe8]);
-        check("sbc #$10", &[0xe9, 0x10]);
-        check("nop", &[0xea]);
-        check("cpx $1234", &[0xec, 0x34, 0x12]);
-        check("sbc $1234", &[0xed, 0x34, 0x12]);
-        check("inc $1234", &[0xee, 0x34, 0x12]);
-        check("beq $10", &[0xf0, 0x10]);
-        check("sbc ($10),y", &[0xf1, 0x10]);
-        check("sbc $10,x", &[0xf5, 0x10]);
-        check("inc $10,x", &[0xf6, 0x10]);
-        check("sed", &[0xf8]);
-        check("sbc $1234,y", &[0xf9, 0x34, 0x12]);
-        check("sbc $1234,x", &[0xfd, 0x34, 0x12]);
-        check("inc $1234,x", &[0xfe, 0x34, 0x12]);
+    fn can_perform_branch_calculations() -> MosResult<()> {
+        let ctx = test_codegen("foo: nop\nbne foo")?;
+        assert_eq!(ctx.current_segment().data, vec![0xea, 0xd0, 0xfd]);
+        let ctx = test_codegen("bne foo\nfoo: nop")?;
+        assert_eq!(ctx.current_segment().data, vec![0xd0, 0x00, 0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn cannot_perform_too_far_branch_calculations() -> MosResult<()> {
+        let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
+        let (ast, _) = parse(&format!("foo: {}bne foo", many_nops));
+        let result = codegen(
+            ast,
+            CodegenOptions {
+                pc: ProgramCounter::new(0xc000),
+            },
+        );
+        assert_eq!(
+            result.err(),
+            Some(MosError::Codegen {
+                location: Location {
+                    line: 141,
+                    column: 1
+                },
+                message: "Branch is too far".to_string()
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_all_non_branch_instructions() {
+        code_eq("brk", &[0x00]);
+        code_eq("ora ($10,x)", &[0x01, 0x10]);
+        code_eq("ora $10", &[0x05, 0x10]);
+        code_eq("asl $10", &[0x06, 0x10]);
+        code_eq("php", &[0x08]);
+        code_eq("ora #$10", &[0x09, 0x10]);
+        code_eq("asl", &[0x0a]);
+        code_eq("ora $1234", &[0x0d, 0x34, 0x12]);
+        code_eq("asl $1234", &[0x0e, 0x34, 0x12]);
+        code_eq("ora ($10),y", &[0x11, 0x10]);
+        code_eq("ora $10,x", &[0x15, 0x10]);
+        code_eq("asl $10,x", &[0x16, 0x10]);
+        code_eq("clc", &[0x18]);
+        code_eq("ora $1234,y", &[0x19, 0x34, 0x12]);
+        code_eq("ora $1234,x", &[0x1d, 0x34, 0x12]);
+        code_eq("asl $1234,x", &[0x1e, 0x34, 0x12]);
+        code_eq("jsr $1234", &[0x20, 0x34, 0x12]);
+        code_eq("and ($10,x)", &[0x21, 0x10]);
+        code_eq("bit $10", &[0x24, 0x10]);
+        code_eq("and $10", &[0x25, 0x10]);
+        code_eq("rol $10", &[0x26, 0x10]);
+        code_eq("plp", &[0x28]);
+        code_eq("and #$10", &[0x29, 0x10]);
+        code_eq("rol", &[0x2a]);
+        code_eq("bit $1234", &[0x2c, 0x34, 0x12]);
+        code_eq("and $1234", &[0x2d, 0x34, 0x12]);
+        code_eq("rol $1234", &[0x2e, 0x34, 0x12]);
+        code_eq("and ($10),y", &[0x31, 0x10]);
+        code_eq("and $10,x", &[0x35, 0x10]);
+        code_eq("rol $10,x", &[0x36, 0x10]);
+        code_eq("sec", &[0x38]);
+        code_eq("and $1234,y", &[0x39, 0x34, 0x12]);
+        code_eq("and $1234,x", &[0x3d, 0x34, 0x12]);
+        code_eq("rol $1234,x", &[0x3e, 0x34, 0x12]);
+        code_eq("rti", &[0x40]);
+        code_eq("eor ($10,x)", &[0x41, 0x10]);
+        code_eq("eor $10", &[0x45, 0x10]);
+        code_eq("lsr $10", &[0x46, 0x10]);
+        code_eq("pha", &[0x48]);
+        code_eq("eor #$10", &[0x49, 0x10]);
+        code_eq("lsr", &[0x4a]);
+        code_eq("jmp $1234", &[0x4c, 0x34, 0x12]);
+        code_eq("eor $1234", &[0x4d, 0x34, 0x12]);
+        code_eq("lsr $1234", &[0x4e, 0x34, 0x12]);
+        code_eq("eor ($10),y", &[0x51, 0x10]);
+        code_eq("eor $10,x", &[0x55, 0x10]);
+        code_eq("lsr $10,x", &[0x56, 0x10]);
+        code_eq("cli", &[0x58]);
+        code_eq("eor $1234,y", &[0x59, 0x34, 0x12]);
+        code_eq("eor $1234,x", &[0x5d, 0x34, 0x12]);
+        code_eq("lsr $1234,x", &[0x5e, 0x34, 0x12]);
+        code_eq("adc ($10,x)", &[0x61, 0x10]);
+        code_eq("adc $10", &[0x65, 0x10]);
+        code_eq("ror $10", &[0x66, 0x10]);
+        code_eq("pla", &[0x68]);
+        code_eq("adc #$10", &[0x69, 0x10]);
+        code_eq("ror", &[0x6a]);
+        code_eq("jmp ($1234)", &[0x6c, 0x34, 0x12]);
+        code_eq("adc $1234", &[0x6d, 0x34, 0x12]);
+        code_eq("ror $1234", &[0x6e, 0x34, 0x12]);
+        code_eq("adc ($10),y", &[0x71, 0x10]);
+        code_eq("adc $10,x", &[0x75, 0x10]);
+        code_eq("ror $10,x", &[0x76, 0x10]);
+        code_eq("sei", &[0x78]);
+        code_eq("adc $1234,y", &[0x79, 0x34, 0x12]);
+        code_eq("adc $1234,x", &[0x7d, 0x34, 0x12]);
+        code_eq("ror $1234,x", &[0x7e, 0x34, 0x12]);
+        code_eq("sta ($10,x)", &[0x81, 0x10]);
+        code_eq("sty $10", &[0x84, 0x10]);
+        code_eq("sta $10", &[0x85, 0x10]);
+        code_eq("stx $10", &[0x86, 0x10]);
+        code_eq("dey", &[0x88]);
+        code_eq("txa", &[0x8a]);
+        code_eq("sty $1234", &[0x8c, 0x34, 0x12]);
+        code_eq("sta $1234", &[0x8d, 0x34, 0x12]);
+        code_eq("stx $1234", &[0x8e, 0x34, 0x12]);
+        code_eq("sta ($10),y", &[0x91, 0x10]);
+        code_eq("sty $10,x", &[0x94, 0x10]);
+        code_eq("sta $10,x", &[0x95, 0x10]);
+        code_eq("stx $10,y", &[0x96, 0x10]);
+        code_eq("tya", &[0x98]);
+        code_eq("sta $1234,y", &[0x99, 0x34, 0x12]);
+        code_eq("txs", &[0x9a]);
+        code_eq("sta $1234,x", &[0x9d, 0x34, 0x12]);
+        code_eq("ldy #$10", &[0xa0, 0x10]);
+        code_eq("lda ($10,x)", &[0xa1, 0x10]);
+        code_eq("ldx #$10", &[0xa2, 0x10]);
+        code_eq("ldy $10", &[0xa4, 0x10]);
+        code_eq("lda $10", &[0xa5, 0x10]);
+        code_eq("ldx $10", &[0xa6, 0x10]);
+        code_eq("tay", &[0xa8]);
+        code_eq("lda #$10", &[0xa9, 0x10]);
+        code_eq("tax", &[0xaa]);
+        code_eq("ldy $1234", &[0xac, 0x34, 0x12]);
+        code_eq("lda $1234", &[0xad, 0x34, 0x12]);
+        code_eq("ldx $1234", &[0xae, 0x34, 0x12]);
+        code_eq("lda ($10),y", &[0xb1, 0x10]);
+        code_eq("ldy $10,x", &[0xb4, 0x10]);
+        code_eq("lda $10,x", &[0xb5, 0x10]);
+        code_eq("ldx $10,y", &[0xb6, 0x10]);
+        code_eq("clv", &[0xb8]);
+        code_eq("lda $1234,y", &[0xb9, 0x34, 0x12]);
+        code_eq("tsx", &[0xba]);
+        code_eq("ldy $1234,x", &[0xbc, 0x34, 0x12]);
+        code_eq("lda $1234,x", &[0xbd, 0x34, 0x12]);
+        code_eq("ldx $1234,y", &[0xbe, 0x34, 0x12]);
+        code_eq("cpy #$10", &[0xc0, 0x10]);
+        code_eq("cmp ($10,x)", &[0xc1, 0x10]);
+        code_eq("cpy $10", &[0xc4, 0x10]);
+        code_eq("cmp $10", &[0xc5, 0x10]);
+        code_eq("dec $10", &[0xc6, 0x10]);
+        code_eq("iny", &[0xc8]);
+        code_eq("cmp #$10", &[0xc9, 0x10]);
+        code_eq("dex", &[0xca]);
+        code_eq("cpy $1234", &[0xcc, 0x34, 0x12]);
+        code_eq("cmp $1234", &[0xcd, 0x34, 0x12]);
+        code_eq("dec $1234", &[0xce, 0x34, 0x12]);
+        code_eq("cmp ($10),y", &[0xd1, 0x10]);
+        code_eq("cmp $10,x", &[0xd5, 0x10]);
+        code_eq("dec $10,x", &[0xd6, 0x10]);
+        code_eq("cld", &[0xd8]);
+        code_eq("cmp $1234,y", &[0xd9, 0x34, 0x12]);
+        code_eq("cmp $1234,x", &[0xdd, 0x34, 0x12]);
+        code_eq("dec $1234,x", &[0xde, 0x34, 0x12]);
+        code_eq("cpx #$10", &[0xe0, 0x10]);
+        code_eq("sbc ($10,x)", &[0xe1, 0x10]);
+        code_eq("cpx $10", &[0xe4, 0x10]);
+        code_eq("sbc $10", &[0xe5, 0x10]);
+        code_eq("inc $10", &[0xe6, 0x10]);
+        code_eq("inx", &[0xe8]);
+        code_eq("sbc #$10", &[0xe9, 0x10]);
+        code_eq("nop", &[0xea]);
+        code_eq("cpx $1234", &[0xec, 0x34, 0x12]);
+        code_eq("sbc $1234", &[0xed, 0x34, 0x12]);
+        code_eq("inc $1234", &[0xee, 0x34, 0x12]);
+        code_eq("sbc ($10),y", &[0xf1, 0x10]);
+        code_eq("sbc $10,x", &[0xf5, 0x10]);
+        code_eq("inc $10,x", &[0xf6, 0x10]);
+        code_eq("sed", &[0xf8]);
+        code_eq("sbc $1234,y", &[0xf9, 0x34, 0x12]);
+        code_eq("sbc $1234,x", &[0xfd, 0x34, 0x12]);
+        code_eq("inc $1234,x", &[0xfe, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn test_all_branch_instructions() {
+        code_eq("bpl foo\nfoo: nop", &[0x10, 0x00, 0xea]);
+        code_eq("bmi foo\nfoo: nop", &[0x30, 0x00, 0xea]);
+        code_eq("bvc foo\nfoo: nop", &[0x50, 0x00, 0xea]);
+        code_eq("bvs foo\nfoo: nop", &[0x70, 0x00, 0xea]);
+        code_eq("bcc foo\nfoo: nop", &[0x90, 0x00, 0xea]);
+        code_eq("bcs foo\nfoo: nop", &[0xb0, 0x00, 0xea]);
+        code_eq("bne foo\nfoo: nop", &[0xd0, 0x00, 0xea]);
+        code_eq("beq foo\nfoo: nop", &[0xf0, 0x00, 0xea]);
+    }
+
+    fn code_eq(code: &str, data: &[u8]) {
+        let ctx = test_codegen(code).unwrap();
+        assert_eq!(ctx.current_segment().data, data);
     }
 
     fn test_codegen<'a, S: Display + Into<String>>(code: S) -> MosResult<CodegenContext<'a>> {

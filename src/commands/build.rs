@@ -50,6 +50,12 @@ pub fn build_command(args: &ArgMatches) -> Result<()> {
                             input_name, location.line, location.column, message
                         );
                     }
+                    MosError::Codegen { location, message } => {
+                        error!(
+                            "{}:{}:{}: error: {}",
+                            input_name, location.line, location.column, message
+                        );
+                    }
                     MosError::Unknown => error!("Unknown error"),
                 }
             }

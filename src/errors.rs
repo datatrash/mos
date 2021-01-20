@@ -7,6 +7,8 @@ pub type MosResult<T> = Result<T, MosError>;
 pub enum MosError {
     #[error("parser error")]
     Parser { location: Location, message: String },
+    #[error("codegen error")]
+    Codegen { location: Location, message: String },
     #[error("unknown error")]
     Unknown,
 }
