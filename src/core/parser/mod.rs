@@ -88,9 +88,9 @@ fn whitespace_or_comment<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Vec<Com
     )
 }
 
-fn ws<'a, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<LocatedToken>
+fn ws<'a, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<Token>>
 where
-    F: FnMut(LocatedSpan<'a>) -> IResult<LocatedToken>,
+    F: FnMut(LocatedSpan<'a>) -> IResult<Located<Token>>,
 {
     map(
         tuple((whitespace_or_comment(), inner, whitespace_or_comment())),
@@ -98,13 +98,13 @@ where
             if l.is_empty() && r.is_empty() {
                 i
             } else {
-                LocatedToken::from(Location::unknown(), Token::Ws((l, Box::new(i), r)))
+                Located::from(Location::unknown(), Token::Ws((l, Box::new(i), r)))
             }
         },
     )
 }
 
-fn identifier(input: LocatedSpan) -> IResult<LocatedToken> {
+fn identifier(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     let id = recognize(pair(
@@ -113,7 +113,7 @@ fn identifier(input: LocatedSpan) -> IResult<LocatedToken> {
     ));
 
     map(id, move |span: LocatedSpan| {
-        LocatedToken::from(
+        Located::from(
             location.clone(),
             Token::Identifier(Identifier(span.fragment().to_string())),
         )
@@ -124,31 +124,31 @@ fn register_suffix<'a>(
     input: LocatedSpan<'a>,
     reg: &'a str,
     map_to: Register,
-) -> IResult<'a, LocatedToken> {
+) -> IResult<'a, Located<Token>> {
     let location = Location::from(&input);
 
     preceded(
         char(','),
         ws(map(tag_no_case(reg), move |_| {
-            LocatedToken::from(location.clone(), Token::RegisterSuffix(map_to))
+            Located::from(location.clone(), Token::RegisterSuffix(map_to))
         })),
     )(input)
 }
 
-fn register_x_suffix(input: LocatedSpan) -> IResult<LocatedToken> {
+fn register_x_suffix(input: LocatedSpan) -> IResult<Located<Token>> {
     register_suffix(input, "x", Register::X)
 }
 
-fn register_y_suffix(input: LocatedSpan) -> IResult<LocatedToken> {
+fn register_y_suffix(input: LocatedSpan) -> IResult<Located<Token>> {
     register_suffix(input, "y", Register::Y)
 }
 
-fn operand(input: LocatedSpan) -> IResult<LocatedToken> {
+fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     let loc_imm = location.clone();
     let am_imm = map(preceded(char('#'), expression), move |expr| {
-        LocatedToken::from(
+        Located::from(
             loc_imm.clone(),
             Token::Operand(Operand {
                 expr: Box::new(expr),
@@ -164,7 +164,7 @@ fn operand(input: LocatedSpan) -> IResult<LocatedToken> {
     let am_abs = map(
         tuple((expression, optional_suffix())),
         move |(expr, suffix)| {
-            LocatedToken::from(
+            Located::from(
                 loc_abs.clone(),
                 Token::Operand(Operand {
                     expr: Box::new(expr),
@@ -182,7 +182,7 @@ fn operand(input: LocatedSpan) -> IResult<LocatedToken> {
             optional_suffix(),
         )),
         move |(expr, suffix)| {
-            LocatedToken::from(
+            Located::from(
                 loc_ind.clone(),
                 Token::Operand(Operand {
                     expr: Box::new(expr),
@@ -197,7 +197,7 @@ fn operand(input: LocatedSpan) -> IResult<LocatedToken> {
     let am_outer_ind = map(
         delimited(char('('), tuple((expression, optional_suffix())), char(')')),
         move |(expr, suffix)| {
-            LocatedToken::from(
+            Located::from(
                 loc_outer_ind.clone(),
                 Token::Operand(Operand {
                     expr: Box::new(expr),
@@ -211,7 +211,7 @@ fn operand(input: LocatedSpan) -> IResult<LocatedToken> {
     alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
 }
 
-fn instruction(input: LocatedSpan) -> IResult<LocatedToken> {
+fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     let instruction = tuple((mnemonic, opt(ws(operand))));
@@ -221,11 +221,11 @@ fn instruction(input: LocatedSpan) -> IResult<LocatedToken> {
             mnemonic,
             operand: operand.map(Box::new),
         };
-        LocatedToken::from(location.clone(), Token::Instruction(instruction))
+        Located::from(location.clone(), Token::Instruction(instruction))
     })(input)
 }
 
-fn error(input: LocatedSpan) -> IResult<LocatedToken> {
+fn error(input: LocatedSpan) -> IResult<Located<Token>> {
     map(
         take_till1(|c| c == ')' || c == '\n' || c == '\r'),
         |span: LocatedSpan| {
@@ -234,24 +234,24 @@ fn error(input: LocatedSpan) -> IResult<LocatedToken> {
                 message: format!("unexpected `{}`", span.fragment()),
             };
             span.extra.report_error(err);
-            LocatedToken::from(Location::from(&span), Token::Error)
+            Located::from(Location::from(&span), Token::Error)
         },
     )(input)
 }
 
-fn label(input: LocatedSpan) -> IResult<LocatedToken> {
+fn label(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map(
         tuple((identifier, expect(char(':'), "labels should end with ':'"))),
-        move |(id, _)| match id.token {
-            Token::Identifier(id) => LocatedToken::from(location.clone(), Token::Label(id)),
+        move |(id, _)| match id.data {
+            Token::Identifier(id) => Located::from(location.clone(), Token::Label(id)),
             _ => panic!(),
         },
     )(input)
 }
 
-fn data(input: LocatedSpan) -> IResult<LocatedToken> {
+fn data(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map(
@@ -263,15 +263,15 @@ fn data(input: LocatedSpan) -> IResult<LocatedToken> {
             )),
             expect(expression, "expected expression"),
         )),
-        move |(sz, exp)| LocatedToken::from(location.clone(), Token::Data(exp.map(Box::new), sz)),
+        move |(sz, exp)| Located::from(location.clone(), Token::Data(exp.map(Box::new), sz)),
     )(input)
 }
 
-fn statement(input: LocatedSpan) -> IResult<LocatedToken> {
+fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((instruction, label, data, error))(input)
 }
 
-fn source_file(input: LocatedSpan) -> IResult<Vec<LocatedToken>> {
+fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
     terminated(
         many0(map(
             pair(ws(statement), many0(tuple((opt(char('\r')), char('\n'))))),
@@ -281,7 +281,7 @@ fn source_file(input: LocatedSpan) -> IResult<Vec<LocatedToken>> {
     )(input)
 }
 
-fn number(input: LocatedSpan) -> IResult<LocatedToken> {
+fn number(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     let hex_location = location.clone();
@@ -294,7 +294,7 @@ fn number(input: LocatedSpan) -> IResult<LocatedToken> {
                 move |input| {
                     let res = input.map(|i| usize::from_str_radix(i.fragment(), 16).ok());
                     res.map(|val| {
-                        LocatedToken::from(
+                        Located::from(
                             hex_location.clone(),
                             Token::Number(val.unwrap(), NumberType::Hex),
                         )
@@ -305,7 +305,7 @@ fn number(input: LocatedSpan) -> IResult<LocatedToken> {
         map_opt(digit1, move |input: LocatedSpan| {
             let res = Some(usize::from_str_radix(input.fragment(), 10).ok());
             res.map(|val| {
-                LocatedToken::from(
+                Located::from(
                     dec_location.clone(),
                     Token::Number(val.unwrap(), NumberType::Dec),
                 )
@@ -314,7 +314,7 @@ fn number(input: LocatedSpan) -> IResult<LocatedToken> {
     ))(input)
 }
 
-fn expression_parens(input: LocatedSpan) -> IResult<LocatedToken> {
+fn expression_parens(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     delimited(
@@ -322,7 +322,7 @@ fn expression_parens(input: LocatedSpan) -> IResult<LocatedToken> {
         delimited(
             tag("["),
             map(expression, move |e| {
-                LocatedToken::from(location.clone(), Token::ExprParens(Box::new(e)))
+                Located::from(location.clone(), Token::ExprParens(Box::new(e)))
             }),
             tag("]"),
         ),
@@ -330,7 +330,7 @@ fn expression_parens(input: LocatedSpan) -> IResult<LocatedToken> {
     )(input)
 }
 
-fn expression_factor(input: LocatedSpan) -> IResult<LocatedToken> {
+fn expression_factor(input: LocatedSpan) -> IResult<Located<Token>> {
     ws(alt((number, identifier, expression_parens)))(input)
 }
 
@@ -342,26 +342,26 @@ enum Operation {
 }
 
 fn fold_expressions(
-    initial: LocatedToken,
-    remainder: Vec<(Operation, LocatedToken)>,
-) -> LocatedToken {
+    initial: Located<Token>,
+    remainder: Vec<(Operation, Located<Token>)>,
+) -> Located<Token> {
     remainder.into_iter().fold(initial, |acc, pair| {
         let (oper, expr) = pair;
 
         match oper {
-            Operation::Add => LocatedToken::from(
+            Operation::Add => Located::from(
                 acc.location.clone(),
                 Token::BinaryAdd(Box::new(acc), Box::new(expr)),
             ),
-            Operation::Sub => LocatedToken::from(
+            Operation::Sub => Located::from(
                 acc.location.clone(),
                 Token::BinarySub(Box::new(acc), Box::new(expr)),
             ),
-            Operation::Mul => LocatedToken::from(
+            Operation::Mul => Located::from(
                 acc.location.clone(),
                 Token::BinaryMul(Box::new(acc), Box::new(expr)),
             ),
-            Operation::Div => LocatedToken::from(
+            Operation::Div => Located::from(
                 acc.location.clone(),
                 Token::BinaryDiv(Box::new(acc), Box::new(expr)),
             ),
@@ -369,7 +369,7 @@ fn fold_expressions(
     })
 }
 
-fn expression_term(input: LocatedSpan) -> IResult<LocatedToken> {
+fn expression_term(input: LocatedSpan) -> IResult<Located<Token>> {
     let (input, initial) = expression_factor(input)?;
     let (input, remainder) = many0(alt((
         |input| {
@@ -385,7 +385,7 @@ fn expression_term(input: LocatedSpan) -> IResult<LocatedToken> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn expression(input: LocatedSpan) -> IResult<LocatedToken> {
+pub fn expression(input: LocatedSpan) -> IResult<Located<Token>> {
     let (input, initial) = expression_term(input)?;
     let (input, remainder) = many0(alt((
         |input| {
@@ -401,7 +401,7 @@ pub fn expression(input: LocatedSpan) -> IResult<LocatedToken> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse(filename: &str, source: &str) -> (Vec<LocatedToken>, Vec<MosError>) {
+pub fn parse(filename: &str, source: &str) -> (Vec<Located<Token>>, Vec<MosError>) {
     let errors = RefCell::new(Vec::new());
     let input = LocatedSpan::new_extra(
         source,
@@ -443,15 +443,15 @@ mod test {
             ".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2",
         );
         let mut e = expr.0.iter();
-        assert_eq!(format!("{}", e.next().unwrap().token), ".byte 123");
-        assert_eq!(format!("{}", e.next().unwrap().token), ".word foo");
-        assert_eq!(format!("{}", e.next().unwrap().token), ".dword 12345678");
-        assert_eq!(format!("{}", e.next().unwrap().token), ".word 1 + 2");
+        assert_eq!(format!("{}", e.next().unwrap().data), ".byte 123");
+        assert_eq!(format!("{}", e.next().unwrap().data), ".word foo");
+        assert_eq!(format!("{}", e.next().unwrap().data), ".dword 12345678");
+        assert_eq!(format!("{}", e.next().unwrap().data), ".word 1 + 2");
     }
 
     fn check(src: &str, expected: &str) {
         let expr = dbg!(parse("test.asm", src));
         let e = expr.0.get(0).unwrap();
-        assert_eq!(format!("{}", e.token), expected.to_string());
+        assert_eq!(format!("{}", e.data), expected.to_string());
     }
 }

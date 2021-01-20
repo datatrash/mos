@@ -102,8 +102,12 @@ impl<'a> CodegenContext<'a> {
         self.labels.insert(label.clone(), pc);
     }
 
-    fn evaluate(&self, lt: &LocatedToken, error_on_failure: bool) -> CodegenResult<Option<usize>> {
-        match &lt.token {
+    fn evaluate(
+        &self,
+        lt: &Located<Token>,
+        error_on_failure: bool,
+    ) -> CodegenResult<Option<usize>> {
+        match &lt.data {
             Token::Number(n, _) => Ok(Some(*n)),
             Token::BinaryAdd(lhs, rhs)
             | Token::BinarySub(lhs, rhs)
@@ -111,7 +115,7 @@ impl<'a> CodegenContext<'a> {
             | Token::BinaryDiv(lhs, rhs) => {
                 let lhs = self.evaluate(lhs, error_on_failure)?;
                 let rhs = self.evaluate(rhs, error_on_failure)?;
-                match (&lt.token, lhs, rhs) {
+                match (&lt.data, lhs, rhs) {
                     (Token::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs + rhs)),
                     (Token::BinarySub(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs - rhs)),
                     (Token::BinaryMul(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs * rhs)),
@@ -129,7 +133,7 @@ impl<'a> CodegenContext<'a> {
                     )),
                 }
             }
-            _ => panic!("Unsupported token: {:?}", lt.token),
+            _ => panic!("Unsupported token: {:?}", lt.data),
         }
     }
 
@@ -140,13 +144,13 @@ impl<'a> CodegenContext<'a> {
         error_on_failure: bool,
     ) -> CodegenResult<(&'b AddressingMode, Option<usize>, Option<Register>)> {
         match i.operand.as_deref() {
-            Some(LocatedToken {
-                token: Token::Operand(operand),
+            Some(Located {
+                data: Token::Operand(operand),
                 ..
             }) => {
                 let register_suffix = operand.suffix.as_deref().map(|s| match s {
-                    LocatedToken {
-                        token: Token::RegisterSuffix(r),
+                    Located {
+                        data: Token::RegisterSuffix(r),
                         ..
                     } => *r,
                     _ => panic!(),
@@ -365,7 +369,7 @@ impl<'a> CodegenContext<'a> {
     fn emit_data(
         &mut self,
         pc: Option<ProgramCounter>,
-        lt: &LocatedToken,
+        lt: &Located<Token>,
         data_length: usize,
         error_on_failure: bool,
     ) -> CodegenResult<Option<ProgramCounter>> {
@@ -436,7 +440,7 @@ impl<'a> CodegenContext<'a> {
 }
 
 pub fn codegen<'a>(
-    ast: Vec<LocatedToken>,
+    ast: Vec<Located<Token>>,
     options: CodegenOptions,
 ) -> MosResult<CodegenContext<'a>> {
     let mut ctx = CodegenContext::new(options);
@@ -446,7 +450,7 @@ pub fn codegen<'a>(
         .map(|t| t.strip_whitespace())
         .collect::<Vec<_>>();
 
-    let mut to_process: Vec<(Option<ProgramCounter>, LocatedToken)> = ast
+    let mut to_process: Vec<(Option<ProgramCounter>, Located<Token>)> = ast
         .into_iter()
         .map(|token| (None, token))
         .collect::<Vec<_>>();
@@ -457,7 +461,7 @@ pub fn codegen<'a>(
         let to_process_len = to_process.len();
         let mut next_to_process = vec![];
         for (pc, lt) in to_process {
-            let token = &lt.token;
+            let token = &lt.data;
             let process_again_at_pc = match ctx.emit_token(pc, token, error_on_failure) {
                 Ok(pc) => pc,
                 Err(error) => {

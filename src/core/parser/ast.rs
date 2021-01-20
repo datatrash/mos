@@ -70,7 +70,7 @@ pub enum Register {
 #[derive(Debug)]
 pub struct Instruction {
     pub mnemonic: Mnemonic,
-    pub operand: Option<Box<LocatedToken>>,
+    pub operand: Option<Box<Located<Token>>>,
 }
 
 #[derive(Debug)]
@@ -84,9 +84,9 @@ pub enum AddressingMode {
 
 #[derive(Debug)]
 pub struct Operand {
-    pub expr: Box<LocatedToken>,
+    pub expr: Box<Located<Token>>,
     pub addressing_mode: AddressingMode,
-    pub suffix: Option<Box<LocatedToken>>,
+    pub suffix: Option<Box<Located<Token>>>,
 }
 
 #[derive(Debug)]
@@ -103,78 +103,66 @@ pub enum Token {
     Instruction(Instruction),
     Operand(Operand),
     RegisterSuffix(Register),
-    Ws((Vec<Comment>, Box<LocatedToken>, Vec<Comment>)),
-    ExprParens(Box<LocatedToken>),
-    BinaryAdd(Box<LocatedToken>, Box<LocatedToken>),
-    BinarySub(Box<LocatedToken>, Box<LocatedToken>),
-    BinaryMul(Box<LocatedToken>, Box<LocatedToken>),
-    BinaryDiv(Box<LocatedToken>, Box<LocatedToken>),
-    Data(Option<Box<LocatedToken>>, usize),
+    Ws((Vec<Comment>, Box<Located<Token>>, Vec<Comment>)),
+    ExprParens(Box<Located<Token>>),
+    BinaryAdd(Box<Located<Token>>, Box<Located<Token>>),
+    BinarySub(Box<Located<Token>>, Box<Located<Token>>),
+    BinaryMul(Box<Located<Token>>, Box<Located<Token>>),
+    BinaryDiv(Box<Located<Token>>, Box<Located<Token>>),
+    Data(Option<Box<Located<Token>>>, usize),
     Error,
 }
 
 #[derive(Debug)]
-pub struct LocatedToken {
+pub struct Located<T: CanStripWhitespace> {
     pub location: Location,
-    pub token: Token,
+    pub data: T,
 }
 
-impl LocatedToken {
-    pub fn from<L: Into<Location>>(location: L, token: Token) -> Self {
+pub trait CanStripWhitespace {
+    fn strip_whitespace(self) -> Self;
+}
+
+impl<T: CanStripWhitespace> Located<T> {
+    pub fn from<L: Into<Location>>(location: L, data: T) -> Self {
         Self {
             location: location.into(),
-            token,
+            data,
+        }
+    }
+
+    pub fn strip_whitespace(self) -> Self {
+        Self {
+            data: self.data.strip_whitespace(),
+            ..self
         }
     }
 }
 
-impl LocatedToken {
-    pub fn strip_whitespace(self) -> Self {
-        let sob = |token: Option<Box<LocatedToken>>| token.map(|t| Box::new(t.strip_whitespace()));
+impl CanStripWhitespace for Token {
+    fn strip_whitespace(self) -> Self {
+        let sob =
+            |token: Option<Box<Located<Token>>>| token.map(|t| Box::new(t.strip_whitespace()));
 
-        let sb = |token: Box<LocatedToken>| Box::new(token.strip_whitespace());
+        let sb = |token: Box<Located<Token>>| Box::new(token.strip_whitespace());
 
-        match self.token {
-            Token::Instruction(i) => LocatedToken {
-                token: Token::Instruction(Instruction {
-                    operand: sob(i.operand),
-                    ..i
-                }),
-                ..self
-            },
-            Token::Operand(o) => LocatedToken {
-                token: Token::Operand(Operand {
-                    expr: sb(o.expr),
-                    suffix: sob(o.suffix),
-                    ..o
-                }),
-                ..self
-            },
-            Token::Data(token, size) => LocatedToken {
-                token: Token::Data(sob(token), size),
-                ..self
-            },
-            Token::BinaryAdd(lhs, rhs) => LocatedToken {
-                token: Token::BinaryAdd(sb(lhs), sb(rhs)),
-                ..self
-            },
-            Token::BinarySub(lhs, rhs) => LocatedToken {
-                token: Token::BinarySub(sb(lhs), sb(rhs)),
-                ..self
-            },
-            Token::BinaryMul(lhs, rhs) => LocatedToken {
-                token: Token::BinaryMul(sb(lhs), sb(rhs)),
-                ..self
-            },
-            Token::BinaryDiv(lhs, rhs) => LocatedToken {
-                token: Token::BinaryDiv(sb(lhs), sb(rhs)),
-                ..self
-            },
-            Token::ExprParens(token) => LocatedToken {
-                token: Token::ExprParens(sb(token)),
-                ..self
-            },
-            Token::Ws((_, token, _)) => *token,
+        match self {
+            Token::Instruction(i) => Token::Instruction(Instruction {
+                operand: sob(i.operand),
+                ..i
+            }),
+            Token::Operand(o) => Token::Operand(Operand {
+                expr: sb(o.expr),
+                suffix: sob(o.suffix),
+                ..o
+            }),
+            Token::Data(token, size) => Token::Data(sob(token), size),
+            Token::BinaryAdd(lhs, rhs) => Token::BinaryAdd(sb(lhs), sb(rhs)),
+            Token::BinarySub(lhs, rhs) => Token::BinarySub(sb(lhs), sb(rhs)),
+            Token::BinaryMul(lhs, rhs) => Token::BinaryMul(sb(lhs), sb(rhs)),
+            Token::BinaryDiv(lhs, rhs) => Token::BinaryDiv(sb(lhs), sb(rhs)),
+            Token::ExprParens(token) => Token::ExprParens(sb(token)),
+            Token::Ws((_, token, _)) => token.data,
             _ => self,
         }
     }
@@ -204,27 +192,27 @@ impl Display for Token {
             }
             Token::Instruction(i) => match &i.operand {
                 Some(o) => {
-                    write!(f, "{}{}", i.mnemonic, o.token)
+                    write!(f, "{}{}", i.mnemonic, o.data)
                 }
                 None => write!(f, "{}", i.mnemonic),
             },
             Token::Operand(o) => {
                 let suffix = match &o.suffix {
-                    Some(s) => format!("{}", s.token),
+                    Some(s) => format!("{}", s.data),
                     None => "".to_string(),
                 };
 
                 match &o.addressing_mode {
-                    AddressingMode::Immediate => write!(f, " #{}", o.expr.token),
+                    AddressingMode::Immediate => write!(f, " #{}", o.expr.data),
                     AddressingMode::Implied => write!(f, ""),
                     AddressingMode::AbsoluteOrZP => {
-                        write!(f, " {}{}", o.expr.token, suffix)
+                        write!(f, " {}{}", o.expr.data, suffix)
                     }
                     AddressingMode::OuterIndirect => {
-                        write!(f, " ({}){}", o.expr.token, suffix)
+                        write!(f, " ({}){}", o.expr.data, suffix)
                     }
                     AddressingMode::Indirect => {
-                        write!(f, " ({}{})", o.expr.token, suffix)
+                        write!(f, " ({}{})", o.expr.data, suffix)
                     }
                 }
             }
@@ -239,7 +227,7 @@ impl Display for Token {
                 for w in l {
                     let _ = write!(f, "{}", w);
                 }
-                let _ = write!(f, "{}", inner.token);
+                let _ = write!(f, "{}", inner.data);
                 for w in r {
                     let _ = write!(f, "{}", w);
                 }
@@ -250,19 +238,19 @@ impl Display for Token {
                 NumberType::Dec => write!(f, "{}", val),
             },
             Token::ExprParens(inner) => {
-                write!(f, "[{}]", inner.token)
+                write!(f, "[{}]", inner.data)
             }
             Token::BinaryAdd(lhs, rhs) => {
-                write!(f, "{} + {}", lhs.token, rhs.token)
+                write!(f, "{} + {}", lhs.data, rhs.data)
             }
             Token::BinarySub(lhs, rhs) => {
-                write!(f, "{} - {}", lhs.token, rhs.token)
+                write!(f, "{} - {}", lhs.data, rhs.data)
             }
             Token::BinaryMul(lhs, rhs) => {
-                write!(f, "{} * {}", lhs.token, rhs.token)
+                write!(f, "{} * {}", lhs.data, rhs.data)
             }
             Token::BinaryDiv(lhs, rhs) => {
-                write!(f, "{} / {}", lhs.token, rhs.token)
+                write!(f, "{} / {}", lhs.data, rhs.data)
             }
             Token::Data(tok, sz) => {
                 let label = match sz {
@@ -272,7 +260,7 @@ impl Display for Token {
                     _ => panic!(),
                 };
                 match tok {
-                    Some(t) => write!(f, "{} {}", label, t.token),
+                    Some(t) => write!(f, "{} {}", label, t.data),
                     None => write!(f, "{}", label),
                 }
             }

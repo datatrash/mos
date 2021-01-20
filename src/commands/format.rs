@@ -46,7 +46,7 @@ fn format_token(token: &Token, opts: &Options) -> String {
     match token {
         Token::Instruction(i) => {
             let mnem = opts.mnemonics.casing.format(&i.mnemonic.to_string());
-            let operand = i.operand.as_ref().map(|o| format_token(&o.token, opts));
+            let operand = i.operand.as_ref().map(|o| format_token(&o.data, opts));
 
             match operand {
                 Some(operand) => format!("{} {}", mnem, operand),
@@ -54,11 +54,11 @@ fn format_token(token: &Token, opts: &Options) -> String {
             }
         }
         Token::Operand(o) => {
-            let expr = format_token(&o.expr.token, opts);
+            let expr = format_token(&o.expr.data, opts);
             let suffix = o
                 .suffix
                 .as_ref()
-                .map(|o| format_token(&o.token, opts))
+                .map(|o| format_token(&o.data, opts))
                 .unwrap_or_else(|| "".to_string());
 
             match &o.addressing_mode {
@@ -76,7 +76,7 @@ fn format_token(token: &Token, opts: &Options) -> String {
         Token::Data(expr, size) => {
             let expr = expr
                 .as_ref()
-                .map(|t| format_token(&t.token, opts))
+                .map(|t| format_token(&t.data, opts))
                 .unwrap_or_else(|| "".to_string());
             match size {
                 1 => format!(".byte {}", expr),
@@ -91,7 +91,7 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 .map(|l| format!("{}", l))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let inner = format_token(&inner.token, opts);
+            let inner = format_token(&inner.data, opts);
             let rhs = rhs
                 .iter()
                 .map(|l| format!("{}", l))
@@ -115,29 +115,29 @@ fn format_token(token: &Token, opts: &Options) -> String {
             Register::X => ", x".to_string(),
             Register::Y => ", y".to_string(),
         },
-        Token::ExprParens(inner) => format!("[{}]", format_token(&inner.token, opts)),
+        Token::ExprParens(inner) => format!("[{}]", format_token(&inner.data, opts)),
         Token::BinaryAdd(lhs, rhs) => {
-            format!("{} + {}", lhs.token, rhs.token)
+            format!("{} + {}", lhs.data, rhs.data)
         }
         Token::BinarySub(lhs, rhs) => {
-            format!("{} - {}", lhs.token, rhs.token)
+            format!("{} - {}", lhs.data, rhs.data)
         }
         Token::BinaryMul(lhs, rhs) => {
-            format!("{} * {}", lhs.token, rhs.token)
+            format!("{} * {}", lhs.data, rhs.data)
         }
         Token::BinaryDiv(lhs, rhs) => {
-            format!("{} / {}", lhs.token, rhs.token)
+            format!("{} / {}", lhs.data, rhs.data)
         }
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
     }
 }
 
-fn format(ast: &[LocatedToken], opts: &Options) -> String {
+fn format(ast: &[Located<Token>], opts: &Options) -> String {
     let mut str = "".to_string();
 
     let mut prev_token: Option<&Token> = None;
     for lt in ast {
-        let token = &lt.token;
+        let token = &lt.data;
         if let Some(pt) = prev_token {
             let require_newline = match (pt, token) {
                 (Token::Instruction(_), Token::Instruction(_)) => false,
