@@ -9,8 +9,8 @@ pub type CodegenResult<T> = Result<T, CodegenError>;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum CodegenError {
-    #[error("unknown identifier: {0}")]
-    UnknownIdentifier(Identifier),
+    #[error("unknown identifier: {1}")]
+    UnknownIdentifier(Location, Identifier),
     #[error("branch too far")]
     BranchTooFar,
     #[error("unknown code generation error")]
@@ -119,11 +119,14 @@ impl<'a> CodegenContext<'a> {
                     _ => Ok(None),
                 }
             }
-            Token::Identifier(label_name) => {
+            Token::Identifier(location, label_name) => {
                 match (self.labels.get(label_name), error_on_failure) {
                     (Some(pc), _) => Ok(Some(pc.0 as usize)),
                     (None, false) => Ok(None),
-                    (None, true) => Err(CodegenError::UnknownIdentifier(label_name.clone())),
+                    (None, true) => Err(CodegenError::UnknownIdentifier(
+                        location.clone(),
+                        label_name.clone(),
+                    )),
                 }
             }
             _ => panic!("Unsupported token: {:?}", expr),
@@ -413,12 +416,12 @@ impl<'a> CodegenContext<'a> {
         error_on_failure: bool,
     ) -> CodegenResult<Option<ProgramCounter>> {
         match token {
-            Token::Label(id) => {
+            Token::Label(_, id) => {
                 self.register_label(pc, id);
                 Ok(None)
             }
-            Token::Instruction(i) => self.emit_instruction(pc, i, error_on_failure),
-            Token::Data(Some(expr), data_length) => {
+            Token::Instruction(_, i) => self.emit_instruction(pc, i, error_on_failure),
+            Token::Data(_, Some(expr), data_length) => {
                 self.emit_data(pc, expr, *data_length, error_on_failure)
             }
             _ => Ok(None),
@@ -448,9 +451,14 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
             let process_again_at_pc = match ctx.emit_token(pc, &token, error_on_failure) {
                 Ok(pc) => pc,
                 Err(error) => {
-                    let location = match token {
-                        Token::Instruction(i) => i.location,
-                        _ => panic!("Unknown location"),
+                    let location = match &error {
+                        CodegenError::UnknownIdentifier(location, _) => location.clone(),
+                        _ => match token {
+                            Token::Instruction(location, _) => location,
+                            Token::Label(location, _) => location,
+                            Token::Data(location, _, _) => location,
+                            _ => panic!("Could not determine error location"),
+                        },
                     };
                     return Err(MosError::Codegen {
                         location,
@@ -473,33 +481,6 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
     }
 
     Ok(ctx)
-}
-
-/// If we cannot process a token, we can guess why
-fn guess_error_from_token(token: Token) -> MosError {
-    let error = match token {
-        Token::Instruction(i) => match i.operand {
-            Some(o) => match *o {
-                Token::Operand(o) => match *o.expr {
-                    // It was an instruction with a identifier as an operand, which we couldn't evaluate.
-                    // This must mean the identifier is unknown.
-                    Token::Identifier(id) => Some(MosError::Codegen {
-                        location: i.location,
-                        message: format!("unknown identifier: {}", id.0),
-                    }),
-                    _ => None,
-                },
-                _ => None,
-            },
-            _ => None,
-        },
-        _ => None,
-    };
-
-    match error {
-        Some(error) => error,
-        None => MosError::Unknown,
-    }
 }
 
 #[cfg(test)]

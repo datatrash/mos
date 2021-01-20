@@ -44,7 +44,7 @@ impl Default for Options {
 
 fn format_token(token: &Token, opts: &Options) -> String {
     match token {
-        Token::Instruction(i) => {
+        Token::Instruction(_, i) => {
             let mnem = opts.mnemonics.casing.format(&i.mnemonic.to_string());
             let operand = i.operand.as_ref().map(|o| format_token(&o, opts));
 
@@ -73,7 +73,7 @@ fn format_token(token: &Token, opts: &Options) -> String {
             NumberType::Hex => format!("${:x}", val),
             NumberType::Dec => format!("{}", val),
         },
-        Token::Data(expr, size) => {
+        Token::Data(_, expr, size) => {
             let expr = expr
                 .as_ref()
                 .map(|t| format_token(t, opts))
@@ -109,8 +109,8 @@ fn format_token(token: &Token, opts: &Options) -> String {
             };
             format!("{}{}{}{}{}", lhs, lhs_spacing, inner, rhs_spacing, rhs)
         }
-        Token::Identifier(id) => id.0.clone(),
-        Token::Label(id) => format!("{}:", id.0),
+        Token::Identifier(_, id) => id.0.clone(),
+        Token::Label(_, id) => format!("{}:", id.0),
         Token::RegisterSuffix(reg) => match reg {
             Register::X => ", x".to_string(),
             Register::Y => ", y".to_string(),
@@ -139,9 +139,9 @@ fn format(ast: &[Token], opts: &Options) -> String {
     for token in ast {
         if let Some(pt) = prev_token {
             let require_newline = match (pt, token) {
-                (Token::Instruction(_), Token::Instruction(_)) => false,
-                (Token::Label(_), Token::Instruction(_)) => false,
-                (Token::Instruction(_), _) => true,
+                (Token::Instruction(_, _), Token::Instruction(_, _)) => false,
+                (Token::Label(_, _), Token::Instruction(_, _)) => false,
+                (Token::Instruction(_, _), _) => true,
                 _ => false,
             };
 
@@ -153,7 +153,7 @@ fn format(ast: &[Token], opts: &Options) -> String {
         let t = format_token(token, opts);
 
         let indent = match token {
-            Token::Instruction(_) | Token::Data(_, _) => 4,
+            Token::Instruction(_, _) | Token::Data(_, _, _) => 4,
             _ => 0,
         };
 

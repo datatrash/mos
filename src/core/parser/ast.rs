@@ -58,7 +58,6 @@ pub enum Register {
 
 #[derive(Debug)]
 pub struct Instruction {
-    pub location: Location,
     pub mnemonic: Mnemonic,
     pub operand: Option<Box<Token>>,
 }
@@ -87,10 +86,10 @@ pub enum NumberType {
 
 #[derive(Debug)]
 pub enum Token {
-    Identifier(Identifier),
-    Label(Identifier),
+    Identifier(Location, Identifier),
+    Label(Location, Identifier),
     Number(usize, NumberType),
-    Instruction(Instruction),
+    Instruction(Location, Instruction),
     Operand(Operand),
     RegisterSuffix(Register),
     Ws((Vec<Comment>, Box<Token>, Vec<Comment>)),
@@ -99,7 +98,7 @@ pub enum Token {
     BinarySub(Box<Token>, Box<Token>),
     BinaryMul(Box<Token>, Box<Token>),
     BinaryDiv(Box<Token>, Box<Token>),
-    Data(Option<Box<Token>>, usize),
+    Data(Location, Option<Box<Token>>, usize),
     Error,
 }
 
@@ -110,16 +109,19 @@ impl Token {
         let sb = |token: Box<Token>| Box::new(token.strip_whitespace());
 
         match self {
-            Token::Instruction(i) => Token::Instruction(Instruction {
-                operand: sob(i.operand),
-                ..i
-            }),
+            Token::Instruction(location, i) => Token::Instruction(
+                location,
+                Instruction {
+                    operand: sob(i.operand),
+                    ..i
+                },
+            ),
             Token::Operand(o) => Token::Operand(Operand {
                 expr: sb(o.expr),
                 suffix: sob(o.suffix),
                 ..o
             }),
-            Token::Data(token, size) => Token::Data(sob(token), size),
+            Token::Data(location, token, size) => Token::Data(location, sob(token), size),
             Token::BinaryAdd(lhs, rhs) => Token::BinaryAdd(sb(lhs), sb(rhs)),
             Token::BinarySub(lhs, rhs) => Token::BinarySub(sb(lhs), sb(rhs)),
             Token::BinaryMul(lhs, rhs) => Token::BinaryMul(sb(lhs), sb(rhs)),
@@ -150,10 +152,10 @@ impl Display for Comment {
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Token::Label(id) => {
+            Token::Label(_, id) => {
                 write!(f, "{}:", id.0)
             }
-            Token::Instruction(i) => match &i.operand {
+            Token::Instruction(_, i) => match &i.operand {
                 Some(o) => {
                     write!(f, "{}{}", i.mnemonic, o)
                 }
@@ -183,7 +185,7 @@ impl Display for Token {
                 Register::X => write!(f, ", x"),
                 Register::Y => write!(f, ", y"),
             },
-            Token::Identifier(id) => {
+            Token::Identifier(_, id) => {
                 write!(f, "{}", id.0)
             }
             Token::Ws((l, inner, r)) => {
@@ -215,7 +217,7 @@ impl Display for Token {
             Token::BinaryDiv(lhs, rhs) => {
                 write!(f, "{} / {}", lhs, rhs)
             }
-            Token::Data(tok, sz) => {
+            Token::Data(_, tok, sz) => {
                 let label = match sz {
                     1 => ".byte",
                     2 => ".word",

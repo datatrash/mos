@@ -104,13 +104,15 @@ where
 }
 
 fn identifier(input: LocatedSpan) -> IResult<Token> {
+    let location = Location::from(&input);
+
     let id = recognize(pair(
         alt((alpha1, tag("_"))),
         many0(alt((alphanumeric1, tag("_")))),
     ));
 
-    map(id, |span: LocatedSpan| {
-        Token::Identifier(Identifier(span.fragment().to_string()))
+    map(id, move |span: LocatedSpan| {
+        Token::Identifier(location.clone(), Identifier(span.fragment().to_string()))
     })(input)
 }
 
@@ -187,11 +189,10 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
 
     map(instruction, move |(mnemonic, operand)| {
         let instruction = Instruction {
-            location: location.clone(),
             mnemonic,
             operand: operand.map(Box::new),
         };
-        Token::Instruction(instruction)
+        Token::Instruction(location.clone(), instruction)
     })(input)
 }
 
@@ -210,16 +211,20 @@ fn error(input: LocatedSpan) -> IResult<Token> {
 }
 
 fn label(input: LocatedSpan) -> IResult<Token> {
+    let location = Location::from(&input);
+
     map(
         tuple((identifier, expect(char(':'), "labels should end with ':'"))),
-        |(id, _)| match id {
-            Token::Identifier(id) => Token::Label(id),
+        move |(id, _)| match id {
+            Token::Identifier(_, id) => Token::Label(location.clone(), id),
             _ => panic!(),
         },
     )(input)
 }
 
 fn data(input: LocatedSpan) -> IResult<Token> {
+    let location = Location::from(&input);
+
     map(
         tuple((
             alt((
@@ -229,7 +234,7 @@ fn data(input: LocatedSpan) -> IResult<Token> {
             )),
             expect(expression, "expected expression"),
         )),
-        |(sz, exp)| Token::Data(exp.map(Box::new), sz),
+        move |(sz, exp)| Token::Data(location.clone(), exp.map(Box::new), sz),
     )(input)
 }
 
