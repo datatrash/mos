@@ -400,6 +400,7 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
 
     // Apply passes
     while !to_process.is_empty() {
+        let to_process_len = to_process.len();
         let mut next_to_process = vec![];
         for (pc, token) in to_process {
             let process_again_at_pc = match &token {
@@ -417,10 +418,42 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
             }
         }
 
+        // If we haven't processed any tokens then the tokens that are left could not be resolved.
+        if next_to_process.len() == to_process_len {
+            let (_pc, token) = next_to_process.pop().unwrap();
+            return Err(guess_error_from_token(token));
+        }
         to_process = next_to_process;
     }
 
     Ok(ctx)
+}
+
+/// If we cannot process a token, we can guess why
+fn guess_error_from_token(token: Token) -> MosError {
+    let error = match token {
+        Token::Instruction(i) => match i.operand {
+            Some(o) => match *o {
+                Token::Operand(o) => match *o.expr {
+                    // It was an instruction with a identifier as an operand, which we couldn't evaluate.
+                    // This must mean the identifier is unknown.
+                    Token::Identifier(id) => Some(MosError::Codegen {
+                        location: i.location,
+                        message: format!("unknown identifier: {}", id.0),
+                    }),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    };
+
+    match error {
+        Some(error) => error,
+        None => MosError::Unknown,
+    }
 }
 
 #[cfg(test)]
