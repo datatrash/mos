@@ -84,7 +84,7 @@ pub enum AddressingMode {
 
 #[derive(Debug)]
 pub struct Operand {
-    pub expr: Box<Located<Token>>,
+    pub expr: Box<Located<Expression>>,
     pub addressing_mode: AddressingMode,
     pub suffix: Option<Box<Located<Token>>>,
 }
@@ -96,34 +96,42 @@ pub enum NumberType {
 }
 
 #[derive(Debug)]
-pub enum Token {
+pub enum Expression {
     Identifier(Identifier),
-    Label(Identifier),
     Number(usize, NumberType),
+    ExprParens(Box<Located<Expression>>),
+    BinaryAdd(Box<Located<Expression>>, Box<Located<Expression>>),
+    BinarySub(Box<Located<Expression>>, Box<Located<Expression>>),
+    BinaryMul(Box<Located<Expression>>, Box<Located<Expression>>),
+    BinaryDiv(Box<Located<Expression>>, Box<Located<Expression>>),
+    Ws(Vec<Comment>, Box<Located<Expression>>, Vec<Comment>),
+}
+
+#[derive(Debug)]
+pub enum Token {
+    Label(Identifier),
     Instruction(Instruction),
     Operand(Operand),
     RegisterSuffix(Register),
-    Ws((Vec<Comment>, Box<Located<Token>>, Vec<Comment>)),
-    ExprParens(Box<Located<Token>>),
-    BinaryAdd(Box<Located<Token>>, Box<Located<Token>>),
-    BinarySub(Box<Located<Token>>, Box<Located<Token>>),
-    BinaryMul(Box<Located<Token>>, Box<Located<Token>>),
-    BinaryDiv(Box<Located<Token>>, Box<Located<Token>>),
-    Data(Option<Box<Located<Token>>>, usize),
+    Ws(Vec<Comment>, Box<Located<Token>>, Vec<Comment>),
+    Data(Option<Box<Located<Expression>>>, usize),
     Error,
 }
 
 #[derive(Debug)]
-pub struct Located<T: CanStripWhitespace> {
+pub struct Located<T: CanWrapWhitespace> {
     pub location: Location,
     pub data: T,
 }
 
-pub trait CanStripWhitespace {
+pub trait CanWrapWhitespace {
     fn strip_whitespace(self) -> Self;
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<Self>>, rhs: Vec<Comment>) -> Self
+    where
+        Self: Sized;
 }
 
-impl<T: CanStripWhitespace> Located<T> {
+impl<T: CanWrapWhitespace> Located<T> {
     pub fn from<L: Into<Location>>(location: L, data: T) -> Self {
         Self {
             location: location.into(),
@@ -139,13 +147,17 @@ impl<T: CanStripWhitespace> Located<T> {
     }
 }
 
-impl CanStripWhitespace for Token {
+fn sob<T: CanWrapWhitespace>(token: Option<Box<Located<T>>>) -> Option<Box<Located<T>>> {
+    token.map(|t| Box::new(t.strip_whitespace()))
+}
+
+#[allow(clippy::boxed_local)]
+fn sb<T: CanWrapWhitespace>(t: Box<Located<T>>) -> Box<Located<T>> {
+    Box::new(t.strip_whitespace())
+}
+
+impl CanWrapWhitespace for Token {
     fn strip_whitespace(self) -> Self {
-        let sob =
-            |token: Option<Box<Located<Token>>>| token.map(|t| Box::new(t.strip_whitespace()));
-
-        let sb = |token: Box<Located<Token>>| Box::new(token.strip_whitespace());
-
         match self {
             Token::Instruction(i) => Token::Instruction(Instruction {
                 operand: sob(i.operand),
@@ -156,15 +168,32 @@ impl CanStripWhitespace for Token {
                 suffix: sob(o.suffix),
                 ..o
             }),
-            Token::Data(token, size) => Token::Data(sob(token), size),
-            Token::BinaryAdd(lhs, rhs) => Token::BinaryAdd(sb(lhs), sb(rhs)),
-            Token::BinarySub(lhs, rhs) => Token::BinarySub(sb(lhs), sb(rhs)),
-            Token::BinaryMul(lhs, rhs) => Token::BinaryMul(sb(lhs), sb(rhs)),
-            Token::BinaryDiv(lhs, rhs) => Token::BinaryDiv(sb(lhs), sb(rhs)),
-            Token::ExprParens(token) => Token::ExprParens(sb(token)),
-            Token::Ws((_, token, _)) => token.data,
+            Token::Data(inner, size) => Token::Data(sob(inner), size),
+            Token::Ws(_, inner, _) => inner.data,
             _ => self,
         }
+    }
+
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<Self>>, rhs: Vec<Comment>) -> Self {
+        Token::Ws(lhs, inner, rhs)
+    }
+}
+
+impl CanWrapWhitespace for Expression {
+    fn strip_whitespace(self) -> Self {
+        match self {
+            Expression::BinaryAdd(lhs, rhs) => Expression::BinaryAdd(sb(lhs), sb(rhs)),
+            Expression::BinarySub(lhs, rhs) => Expression::BinarySub(sb(lhs), sb(rhs)),
+            Expression::BinaryMul(lhs, rhs) => Expression::BinaryMul(sb(lhs), sb(rhs)),
+            Expression::BinaryDiv(lhs, rhs) => Expression::BinaryDiv(sb(lhs), sb(rhs)),
+            Expression::ExprParens(inner) => Expression::ExprParens(sb(inner)),
+            Expression::Ws(_, inner, _) => inner.data,
+            _ => self,
+        }
+    }
+
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<Self>>, rhs: Vec<Comment>) -> Self {
+        Expression::Ws(lhs, inner, rhs)
     }
 }
 
@@ -180,6 +209,36 @@ impl Display for Comment {
         match self {
             Comment::CStyle(str) => write!(f, "{}", str),
             Comment::CppStyle(str) => write!(f, "{}", str),
+        }
+    }
+}
+
+impl Display for Expression {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            Expression::Identifier(id) => {
+                write!(f, "{}", id.0)
+            }
+            Expression::Number(val, ty) => match ty {
+                NumberType::Hex => write!(f, "${:x}", val),
+                NumberType::Dec => write!(f, "{}", val),
+            },
+            Expression::ExprParens(inner) => {
+                write!(f, "[{}]", inner.data)
+            }
+            Expression::BinaryAdd(lhs, rhs) => {
+                write!(f, "{} + {}", lhs.data, rhs.data)
+            }
+            Expression::BinarySub(lhs, rhs) => {
+                write!(f, "{} - {}", lhs.data, rhs.data)
+            }
+            Expression::BinaryMul(lhs, rhs) => {
+                write!(f, "{} * {}", lhs.data, rhs.data)
+            }
+            Expression::BinaryDiv(lhs, rhs) => {
+                write!(f, "{} / {}", lhs.data, rhs.data)
+            }
+            Expression::Ws(l, inner, r) => format_ws(f, l, inner, r),
         }
     }
 }
@@ -220,38 +279,7 @@ impl Display for Token {
                 Register::X => write!(f, ", x"),
                 Register::Y => write!(f, ", y"),
             },
-            Token::Identifier(id) => {
-                write!(f, "{}", id.0)
-            }
-            Token::Ws((l, inner, r)) => {
-                for w in l {
-                    let _ = write!(f, "{}", w);
-                }
-                let _ = write!(f, "{}", inner.data);
-                for w in r {
-                    let _ = write!(f, "{}", w);
-                }
-                Ok(())
-            }
-            Token::Number(val, ty) => match ty {
-                NumberType::Hex => write!(f, "${:x}", val),
-                NumberType::Dec => write!(f, "{}", val),
-            },
-            Token::ExprParens(inner) => {
-                write!(f, "[{}]", inner.data)
-            }
-            Token::BinaryAdd(lhs, rhs) => {
-                write!(f, "{} + {}", lhs.data, rhs.data)
-            }
-            Token::BinarySub(lhs, rhs) => {
-                write!(f, "{} - {}", lhs.data, rhs.data)
-            }
-            Token::BinaryMul(lhs, rhs) => {
-                write!(f, "{} * {}", lhs.data, rhs.data)
-            }
-            Token::BinaryDiv(lhs, rhs) => {
-                write!(f, "{} / {}", lhs.data, rhs.data)
-            }
+            Token::Ws(l, inner, r) => format_ws(f, l, inner, r),
             Token::Data(tok, sz) => {
                 let label = match sz {
                     1 => ".byte",
@@ -264,7 +292,23 @@ impl Display for Token {
                     None => write!(f, "{}", label),
                 }
             }
-            _ => Ok(()),
+            Token::Error => write!(f, "Error"),
         }
     }
+}
+
+fn format_ws<T: CanWrapWhitespace + Display>(
+    f: &mut Formatter,
+    l: &[Comment],
+    inner: &Located<T>,
+    r: &[Comment],
+) -> std::fmt::Result {
+    for w in l {
+        let _ = write!(f, "{}", w);
+    }
+    let _ = write!(f, "{}", inner.data);
+    for w in r {
+        let _ = write!(f, "{}", w);
+    }
+    Ok(())
 }

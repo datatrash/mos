@@ -42,6 +42,32 @@ impl Default for Options {
     }
 }
 
+fn format_expression(token: &Expression, opts: &Options) -> String {
+    match token {
+        Expression::Number(val, ty) => match ty {
+            NumberType::Hex => format!("${:x}", val),
+            NumberType::Dec => format!("{}", val),
+        },
+        Expression::Identifier(id) => id.0.clone(),
+        Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
+        Expression::BinaryAdd(lhs, rhs) => {
+            format!("{} + {}", lhs.data, rhs.data)
+        }
+        Expression::BinarySub(lhs, rhs) => {
+            format!("{} - {}", lhs.data, rhs.data)
+        }
+        Expression::BinaryMul(lhs, rhs) => {
+            format!("{} * {}", lhs.data, rhs.data)
+        }
+        Expression::BinaryDiv(lhs, rhs) => {
+            format!("{} / {}", lhs.data, rhs.data)
+        }
+        Expression::Ws(lhs, inner, rhs) => {
+            format_ws(lhs, format_expression(&inner.data, opts), rhs, opts)
+        }
+    }
+}
+
 fn format_token(token: &Token, opts: &Options) -> String {
     match token {
         Token::Instruction(i) => {
@@ -54,7 +80,7 @@ fn format_token(token: &Token, opts: &Options) -> String {
             }
         }
         Token::Operand(o) => {
-            let expr = format_token(&o.expr.data, opts);
+            let expr = format_expression(&o.expr.data, opts);
             let suffix = o
                 .suffix
                 .as_ref()
@@ -69,14 +95,10 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 AddressingMode::OuterIndirect => format!("({}){}", expr, suffix),
             }
         }
-        Token::Number(val, ty) => match ty {
-            NumberType::Hex => format!("${:x}", val),
-            NumberType::Dec => format!("{}", val),
-        },
         Token::Data(expr, size) => {
             let expr = expr
                 .as_ref()
-                .map(|t| format_token(&t.data, opts))
+                .map(|t| format_expression(&t.data, opts))
                 .unwrap_or_else(|| "".to_string());
             match size {
                 1 => format!(".byte {}", expr),
@@ -85,51 +107,38 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 _ => panic!(),
             }
         }
-        Token::Ws((lhs, inner, rhs)) => {
-            let lhs = lhs
-                .iter()
-                .map(|l| format!("{}", l))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let inner = format_token(&inner.data, opts);
-            let rhs = rhs
-                .iter()
-                .map(|l| format!("{}", l))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let lhs_spacing = if lhs.is_empty() {
-                "".to_string()
-            } else {
-                " ".to_string()
-            };
-            let rhs_spacing = if rhs.is_empty() {
-                "".to_string()
-            } else {
-                " ".to_string()
-            };
-            format!("{}{}{}{}{}", lhs, lhs_spacing, inner, rhs_spacing, rhs)
-        }
-        Token::Identifier(id) => id.0.clone(),
+        Token::Ws(lhs, inner, rhs) => format_ws(lhs, format_token(&inner.data, opts), rhs, opts),
         Token::Label(id) => format!("{}:", id.0),
         Token::RegisterSuffix(reg) => match reg {
             Register::X => ", x".to_string(),
             Register::Y => ", y".to_string(),
         },
-        Token::ExprParens(inner) => format!("[{}]", format_token(&inner.data, opts)),
-        Token::BinaryAdd(lhs, rhs) => {
-            format!("{} + {}", lhs.data, rhs.data)
-        }
-        Token::BinarySub(lhs, rhs) => {
-            format!("{} - {}", lhs.data, rhs.data)
-        }
-        Token::BinaryMul(lhs, rhs) => {
-            format!("{} * {}", lhs.data, rhs.data)
-        }
-        Token::BinaryDiv(lhs, rhs) => {
-            format!("{} / {}", lhs.data, rhs.data)
-        }
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
     }
+}
+
+fn format_ws(lhs: &[Comment], inner: String, rhs: &[Comment], _opts: &Options) -> String {
+    let lhs = lhs
+        .iter()
+        .map(|l| format!("{}", l))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let rhs = rhs
+        .iter()
+        .map(|l| format!("{}", l))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lhs_spacing = if lhs.is_empty() {
+        "".to_string()
+    } else {
+        " ".to_string()
+    };
+    let rhs_spacing = if rhs.is_empty() {
+        "".to_string()
+    } else {
+        " ".to_string()
+    };
+    format!("{}{}{}{}{}", lhs, lhs_spacing, inner, rhs_spacing, rhs)
 }
 
 fn format(ast: &[Located<Token>], opts: &Options) -> String {

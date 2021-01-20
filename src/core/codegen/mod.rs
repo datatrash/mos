@@ -104,26 +104,26 @@ impl<'a> CodegenContext<'a> {
 
     fn evaluate(
         &self,
-        lt: &Located<Token>,
+        lt: &Located<Expression>,
         error_on_failure: bool,
     ) -> CodegenResult<Option<usize>> {
         match &lt.data {
-            Token::Number(n, _) => Ok(Some(*n)),
-            Token::BinaryAdd(lhs, rhs)
-            | Token::BinarySub(lhs, rhs)
-            | Token::BinaryMul(lhs, rhs)
-            | Token::BinaryDiv(lhs, rhs) => {
+            Expression::Number(n, _) => Ok(Some(*n)),
+            Expression::BinaryAdd(lhs, rhs)
+            | Expression::BinarySub(lhs, rhs)
+            | Expression::BinaryMul(lhs, rhs)
+            | Expression::BinaryDiv(lhs, rhs) => {
                 let lhs = self.evaluate(lhs, error_on_failure)?;
                 let rhs = self.evaluate(rhs, error_on_failure)?;
                 match (&lt.data, lhs, rhs) {
-                    (Token::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs + rhs)),
-                    (Token::BinarySub(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs - rhs)),
-                    (Token::BinaryMul(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs * rhs)),
-                    (Token::BinaryDiv(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs / rhs)),
+                    (Expression::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs + rhs)),
+                    (Expression::BinarySub(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs - rhs)),
+                    (Expression::BinaryMul(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs * rhs)),
+                    (Expression::BinaryDiv(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs / rhs)),
                     _ => Ok(None),
                 }
             }
-            Token::Identifier(label_name) => {
+            Expression::Identifier(label_name) => {
                 match (self.labels.get(label_name), error_on_failure) {
                     (Some(pc), _) => Ok(Some(pc.0 as usize)),
                     (None, false) => Ok(None),
@@ -369,7 +369,7 @@ impl<'a> CodegenContext<'a> {
     fn emit_data(
         &mut self,
         pc: Option<ProgramCounter>,
-        lt: &Located<Token>,
+        lt: &Located<Expression>,
         data_length: usize,
         error_on_failure: bool,
     ) -> CodegenResult<Option<ProgramCounter>> {
