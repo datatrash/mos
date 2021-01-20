@@ -188,7 +188,7 @@ pub fn format_command(args: &ArgMatches) -> Result<()> {
 
     for input_name in input_names {
         let source = read_to_string(input_name)?;
-        let (ast, errors) = parse(&source);
+        let (ast, errors) = parse(input_name, &source);
         if errors.is_empty() {
             let formatted = format(&ast, &Options::default());
             let mut output_file = OpenOptions::new()
@@ -213,7 +213,7 @@ mod tests {
     fn format_valid_code() {
         let source = include_str!("../../test/valid-unformatted.asm");
         let expected = include_str!("../../test/valid-formatted.asm");
-        let (ast, errors) = parse(source);
+        let (ast, errors) = parse("test.asm", source);
         assert_eq!(errors.is_empty(), true);
         assert_eq!(format(&ast, &Options::default()), expected);
     }

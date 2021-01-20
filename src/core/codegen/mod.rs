@@ -145,7 +145,7 @@ impl<'a> CodegenContext<'a> {
                                 Ok((&operand.addressing_mode, Some(val), register_suffix))
                             } else {
                                 Err(MosError::Codegen {
-                                    location: i.location,
+                                    location: i.location.clone(),
                                     message: "Branch is too far".to_string(),
                                 })
                             }
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn cannot_perform_too_far_branch_calculations() -> MosResult<()> {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
-        let (ast, _) = parse(&format!("foo: {}bne foo", many_nops));
+        let (ast, _) = parse("test.asm", &format!("foo: {}bne foo", many_nops));
         let result = codegen(
             ast,
             CodegenOptions {
@@ -509,6 +509,7 @@ mod tests {
             result.err(),
             Some(MosError::Codegen {
                 location: Location {
+                    path: "test.asm".to_string(),
                     line: 141,
                     column: 1
                 },
@@ -683,7 +684,7 @@ mod tests {
 
     fn test_codegen<'a, S: Display + Into<String>>(code: S) -> MosResult<CodegenContext<'a>> {
         let code = code.into();
-        let (ast, errors) = parse(&code);
+        let (ast, errors) = parse("test.asm", &code);
         if !errors.is_empty() {
             println!("source:\n{}\n\nerrors:", code);
             println!("{:?}", errors);

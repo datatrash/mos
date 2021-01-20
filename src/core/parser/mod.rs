@@ -187,7 +187,7 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
 
     map(instruction, move |(mnemonic, operand)| {
         let instruction = Instruction {
-            location,
+            location: location.clone(),
             mnemonic,
             operand: operand.map(Box::new),
         };
@@ -331,9 +331,15 @@ pub fn expression(input: LocatedSpan) -> IResult<Token> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse(source: &str) -> (Vec<Token>, Vec<MosError>) {
+pub fn parse(filename: &str, source: &str) -> (Vec<Token>, Vec<MosError>) {
     let errors = RefCell::new(Vec::new());
-    let input = LocatedSpan::new_extra(source, State { errors: &errors });
+    let input = LocatedSpan::new_extra(
+        source,
+        State {
+            filename,
+            errors: &errors,
+        },
+    );
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
     (expr, errors.into_inner())
 }
@@ -362,7 +368,10 @@ mod test {
 
     #[test]
     fn parse_data() {
-        let expr = parse(".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2");
+        let expr = parse(
+            "test.asm",
+            ".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2",
+        );
         let mut e = expr.0.iter();
         assert_eq!(format!("{}", e.next().unwrap()), ".byte 123");
         assert_eq!(format!("{}", e.next().unwrap()), ".word foo");
@@ -371,7 +380,7 @@ mod test {
     }
 
     fn check(src: &str, expected: &str) {
-        let expr = dbg!(parse(src));
+        let expr = dbg!(parse("test.asm", src));
         let e = expr.0.get(0).unwrap();
         assert_eq!(format!("{}", e), expected.to_string());
     }

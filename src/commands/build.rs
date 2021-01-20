@@ -1,6 +1,5 @@
 use crate::core::codegen::{codegen, CodegenOptions, ProgramCounter};
 use crate::core::parser;
-use crate::errors::MosError;
 use anyhow::Result;
 use clap::{App, Arg, ArgMatches};
 use fs_err as fs;
@@ -40,38 +39,31 @@ pub fn build_command(args: &ArgMatches) -> Result<()> {
         let mut source = String::new();
         file.read_to_string(&mut source)?;
 
-        let (ast, errors) = parser::parse(source.as_str());
+        let (ast, errors) = parser::parse(input_name, source.as_str());
         if !errors.is_empty() {
             for error in errors {
-                match error {
-                    MosError::Parser { location, message } => {
-                        error!(
-                            "{}:{}:{}: error: {}",
-                            input_name, location.line, location.column, message
-                        );
-                    }
-                    MosError::Codegen { location, message } => {
-                        error!(
-                            "{}:{}:{}: error: {}",
-                            input_name, location.line, location.column, message
-                        );
-                    }
-                    MosError::Unknown => error!("Unknown error"),
-                }
+                error!("{}", error);
             }
             std::process::exit(1)
         }
 
-        let generated_code = codegen(
+        match codegen(
             ast,
             CodegenOptions {
                 pc: ProgramCounter::new(0xc000),
             },
-        )?;
-        let segment = generated_code.segment("Default").unwrap();
-        let mut out = fs::File::create(target_dir.join(output_path))?;
-        out.write_all(&segment.start_pc.to_le_bytes())?;
-        out.write_all(&segment.data)?;
+        ) {
+            Ok(generated_code) => {
+                let segment = generated_code.segment("Default").unwrap();
+                let mut out = fs::File::create(target_dir.join(output_path))?;
+                out.write_all(&segment.start_pc.to_le_bytes())?;
+                out.write_all(&segment.data)?;
+            }
+            Err(error) => {
+                error!("{}", error);
+                std::process::exit(1)
+            }
+        }
     }
 
     Ok(())

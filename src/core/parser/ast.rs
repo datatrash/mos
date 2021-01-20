@@ -8,6 +8,7 @@ pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
 #[derive(Clone, Debug)]
 pub struct State<'a> {
+    pub filename: &'a str,
     pub errors: &'a RefCell<Vec<MosError>>,
 }
 
@@ -26,8 +27,9 @@ pub enum Comment {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier(pub String);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Location {
+    pub path: String,
     pub line: u32,
     pub column: u32,
 }
@@ -35,6 +37,7 @@ pub struct Location {
 impl<'a> From<&LocatedSpan<'a>> for Location {
     fn from(span: &LocatedSpan) -> Self {
         Self {
+            path: span.extra.filename.to_string(),
             line: span.location_line(),
             column: span.get_column() as u32,
         }
