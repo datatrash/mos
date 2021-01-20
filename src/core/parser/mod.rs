@@ -12,6 +12,7 @@ pub use mnemonic::*;
 
 use crate::core::parser::mnemonic::mnemonic;
 use crate::errors::MosError;
+use std::rc::Rc;
 
 mod ast;
 mod mnemonic;
@@ -405,7 +406,7 @@ pub fn parse(filename: &str, source: &str) -> (Vec<LocatedToken>, Vec<MosError>)
     let input = LocatedSpan::new_extra(
         source,
         State {
-            filename,
+            filename: Rc::new(filename.to_string()),
             errors: &errors,
         },
     );

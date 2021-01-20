@@ -574,7 +574,7 @@ mod tests {
             result.err(),
             Some(MosError::Codegen {
                 location: Location {
-                    path: "test.asm".to_string(),
+                    path: std::rc::Rc::new("test.asm".to_string()),
                     line: 141,
                     column: 1
                 },

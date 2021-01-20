@@ -2,13 +2,14 @@ use crate::core::parser::mnemonic::Mnemonic;
 use crate::errors::MosError;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
 #[derive(Clone, Debug)]
 pub struct State<'a> {
-    pub filename: &'a str,
+    pub filename: Rc<String>,
     pub errors: &'a RefCell<Vec<MosError>>,
 }
 
@@ -35,7 +36,7 @@ impl Display for Identifier {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location {
-    pub path: String,
+    pub path: Rc<String>,
     pub line: u32,
     pub column: u32,
 }
@@ -43,7 +44,7 @@ pub struct Location {
 impl Location {
     pub fn unknown() -> Self {
         Self {
-            path: "unknown".to_string(),
+            path: Rc::new("unknown".to_string()),
             line: 0,
             column: 0,
         }
@@ -53,7 +54,7 @@ impl Location {
 impl<'a> From<&LocatedSpan<'a>> for Location {
     fn from(span: &LocatedSpan) -> Self {
         Self {
-            path: span.extra.filename.to_string(),
+            path: span.extra.filename.clone(),
             line: span.location_line(),
             column: span.get_column() as u32,
         }
