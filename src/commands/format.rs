@@ -44,9 +44,9 @@ impl Default for Options {
 
 fn format_token(token: &Token, opts: &Options) -> String {
     match token {
-        Token::Instruction(_, i) => {
+        Token::Instruction(i) => {
             let mnem = opts.mnemonics.casing.format(&i.mnemonic.to_string());
-            let operand = i.operand.as_ref().map(|o| format_token(&o, opts));
+            let operand = i.operand.as_ref().map(|o| format_token(&o.token, opts));
 
             match operand {
                 Some(operand) => format!("{} {}", mnem, operand),
@@ -54,11 +54,11 @@ fn format_token(token: &Token, opts: &Options) -> String {
             }
         }
         Token::Operand(o) => {
-            let expr = format_token(&*o.expr, opts);
+            let expr = format_token(&o.expr.token, opts);
             let suffix = o
                 .suffix
                 .as_ref()
-                .map(|o| format_token(&o, opts))
+                .map(|o| format_token(&o.token, opts))
                 .unwrap_or_else(|| "".to_string());
 
             match &o.addressing_mode {
@@ -73,10 +73,10 @@ fn format_token(token: &Token, opts: &Options) -> String {
             NumberType::Hex => format!("${:x}", val),
             NumberType::Dec => format!("{}", val),
         },
-        Token::Data(_, expr, size) => {
+        Token::Data(expr, size) => {
             let expr = expr
                 .as_ref()
-                .map(|t| format_token(t, opts))
+                .map(|t| format_token(&t.token, opts))
                 .unwrap_or_else(|| "".to_string());
             match size {
                 1 => format!(".byte {}", expr),
@@ -91,7 +91,7 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 .map(|l| format!("{}", l))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let inner = format_token(inner, opts);
+            let inner = format_token(&inner.token, opts);
             let rhs = rhs
                 .iter()
                 .map(|l| format!("{}", l))
@@ -109,39 +109,40 @@ fn format_token(token: &Token, opts: &Options) -> String {
             };
             format!("{}{}{}{}{}", lhs, lhs_spacing, inner, rhs_spacing, rhs)
         }
-        Token::Identifier(_, id) => id.0.clone(),
-        Token::Label(_, id) => format!("{}:", id.0),
+        Token::Identifier(id) => id.0.clone(),
+        Token::Label(id) => format!("{}:", id.0),
         Token::RegisterSuffix(reg) => match reg {
             Register::X => ", x".to_string(),
             Register::Y => ", y".to_string(),
         },
-        Token::ExprParens(inner) => format!("[{}]", format_token(inner, opts)),
+        Token::ExprParens(inner) => format!("[{}]", format_token(&inner.token, opts)),
         Token::BinaryAdd(lhs, rhs) => {
-            format!("{} + {}", lhs, rhs)
+            format!("{} + {}", lhs.token, rhs.token)
         }
         Token::BinarySub(lhs, rhs) => {
-            format!("{} - {}", lhs, rhs)
+            format!("{} - {}", lhs.token, rhs.token)
         }
         Token::BinaryMul(lhs, rhs) => {
-            format!("{} * {}", lhs, rhs)
+            format!("{} * {}", lhs.token, rhs.token)
         }
         Token::BinaryDiv(lhs, rhs) => {
-            format!("{} / {}", lhs, rhs)
+            format!("{} / {}", lhs.token, rhs.token)
         }
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
     }
 }
 
-fn format(ast: &[Token], opts: &Options) -> String {
+fn format(ast: &[LocatedToken], opts: &Options) -> String {
     let mut str = "".to_string();
 
     let mut prev_token: Option<&Token> = None;
-    for token in ast {
+    for lt in ast {
+        let token = &lt.token;
         if let Some(pt) = prev_token {
             let require_newline = match (pt, token) {
-                (Token::Instruction(_, _), Token::Instruction(_, _)) => false,
-                (Token::Label(_, _), Token::Instruction(_, _)) => false,
-                (Token::Instruction(_, _), _) => true,
+                (Token::Instruction(_), Token::Instruction(_)) => false,
+                (Token::Label(_), Token::Instruction(_)) => false,
+                (Token::Instruction(_), _) => true,
                 _ => false,
             };
 
@@ -153,7 +154,7 @@ fn format(ast: &[Token], opts: &Options) -> String {
         let t = format_token(token, opts);
 
         let indent = match token {
-            Token::Instruction(_, _) | Token::Data(_, _, _) => 4,
+            Token::Instruction(_) | Token::Data(_, _) => 4,
             _ => 0,
         };
 

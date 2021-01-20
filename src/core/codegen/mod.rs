@@ -102,8 +102,8 @@ impl<'a> CodegenContext<'a> {
         self.labels.insert(label.clone(), pc);
     }
 
-    fn evaluate(&self, expr: &Token, error_on_failure: bool) -> CodegenResult<Option<usize>> {
-        match expr {
+    fn evaluate(&self, lt: &LocatedToken, error_on_failure: bool) -> CodegenResult<Option<usize>> {
+        match &lt.token {
             Token::Number(n, _) => Ok(Some(*n)),
             Token::BinaryAdd(lhs, rhs)
             | Token::BinarySub(lhs, rhs)
@@ -111,7 +111,7 @@ impl<'a> CodegenContext<'a> {
             | Token::BinaryDiv(lhs, rhs) => {
                 let lhs = self.evaluate(lhs, error_on_failure)?;
                 let rhs = self.evaluate(rhs, error_on_failure)?;
-                match (expr, lhs, rhs) {
+                match (&lt.token, lhs, rhs) {
                     (Token::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs + rhs)),
                     (Token::BinarySub(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs - rhs)),
                     (Token::BinaryMul(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs * rhs)),
@@ -119,17 +119,17 @@ impl<'a> CodegenContext<'a> {
                     _ => Ok(None),
                 }
             }
-            Token::Identifier(location, label_name) => {
+            Token::Identifier(label_name) => {
                 match (self.labels.get(label_name), error_on_failure) {
                     (Some(pc), _) => Ok(Some(pc.0 as usize)),
                     (None, false) => Ok(None),
                     (None, true) => Err(CodegenError::UnknownIdentifier(
-                        location.clone(),
+                        lt.location.clone(),
                         label_name.clone(),
                     )),
                 }
             }
-            _ => panic!("Unsupported token: {:?}", expr),
+            _ => panic!("Unsupported token: {:?}", lt.token),
         }
     }
 
@@ -140,9 +140,15 @@ impl<'a> CodegenContext<'a> {
         error_on_failure: bool,
     ) -> CodegenResult<(&'b AddressingMode, Option<usize>, Option<Register>)> {
         match i.operand.as_deref() {
-            Some(Token::Operand(operand)) => {
+            Some(LocatedToken {
+                token: Token::Operand(operand),
+                ..
+            }) => {
                 let register_suffix = operand.suffix.as_deref().map(|s| match s {
-                    Token::RegisterSuffix(r) => *r,
+                    LocatedToken {
+                        token: Token::RegisterSuffix(r),
+                        ..
+                    } => *r,
                     _ => panic!(),
                 });
 
@@ -359,14 +365,14 @@ impl<'a> CodegenContext<'a> {
     fn emit_data(
         &mut self,
         pc: Option<ProgramCounter>,
-        expr: &Token,
+        lt: &LocatedToken,
         data_length: usize,
         error_on_failure: bool,
     ) -> CodegenResult<Option<ProgramCounter>> {
         let segment = self.current_segment();
         let pc = pc.unwrap_or(segment.pc);
 
-        let evaluated = self.evaluate(expr, error_on_failure)?;
+        let evaluated = self.evaluate(lt, error_on_failure)?;
         let result = match evaluated {
             Some(val) => {
                 let segment = self.current_segment_mut();
@@ -416,12 +422,12 @@ impl<'a> CodegenContext<'a> {
         error_on_failure: bool,
     ) -> CodegenResult<Option<ProgramCounter>> {
         match token {
-            Token::Label(_, id) => {
+            Token::Label(id) => {
                 self.register_label(pc, id);
                 Ok(None)
             }
-            Token::Instruction(_, i) => self.emit_instruction(pc, i, error_on_failure),
-            Token::Data(_, Some(expr), data_length) => {
+            Token::Instruction(i) => self.emit_instruction(pc, i, error_on_failure),
+            Token::Data(Some(expr), data_length) => {
                 self.emit_data(pc, expr, *data_length, error_on_failure)
             }
             _ => Ok(None),
@@ -429,7 +435,10 @@ impl<'a> CodegenContext<'a> {
     }
 }
 
-pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<CodegenContext<'a>> {
+pub fn codegen<'a>(
+    ast: Vec<LocatedToken>,
+    options: CodegenOptions,
+) -> MosResult<CodegenContext<'a>> {
     let mut ctx = CodegenContext::new(options);
 
     let ast = ast
@@ -437,7 +446,7 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
         .map(|t| t.strip_whitespace())
         .collect::<Vec<_>>();
 
-    let mut to_process: Vec<(Option<ProgramCounter>, Token)> = ast
+    let mut to_process: Vec<(Option<ProgramCounter>, LocatedToken)> = ast
         .into_iter()
         .map(|token| (None, token))
         .collect::<Vec<_>>();
@@ -447,18 +456,14 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
     while !to_process.is_empty() {
         let to_process_len = to_process.len();
         let mut next_to_process = vec![];
-        for (pc, token) in to_process {
-            let process_again_at_pc = match ctx.emit_token(pc, &token, error_on_failure) {
+        for (pc, lt) in to_process {
+            let token = &lt.token;
+            let process_again_at_pc = match ctx.emit_token(pc, token, error_on_failure) {
                 Ok(pc) => pc,
                 Err(error) => {
                     let location = match &error {
                         CodegenError::UnknownIdentifier(location, _) => location.clone(),
-                        _ => match token {
-                            Token::Instruction(location, _) => location,
-                            Token::Label(location, _) => location,
-                            Token::Data(location, _, _) => location,
-                            _ => panic!("Could not determine error location"),
-                        },
+                        _ => lt.location,
                     };
                     return Err(MosError::Codegen {
                         location,
@@ -468,7 +473,7 @@ pub fn codegen<'a>(ast: Vec<Token>, options: CodegenOptions) -> MosResult<Codege
             };
 
             if let Some(pc) = process_again_at_pc {
-                next_to_process.push((Some(pc), token));
+                next_to_process.push((Some(pc), lt));
             }
         }
 
