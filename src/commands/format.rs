@@ -5,6 +5,11 @@ use clap::{App, Arg, ArgMatches};
 use fs_err::{read_to_string, OpenOptions};
 use std::io::Write;
 
+#[cfg(windows)]
+const LINE_ENDING: &str = "\r\n";
+#[cfg(not(windows))]
+const LINE_ENDING: &str = "\n";
+
 enum Casing {
     Uppercase,
     Lowercase,
@@ -141,7 +146,7 @@ fn format(ast: &[Token], opts: &Options) -> String {
             };
 
             if require_newline {
-                str += "\n";
+                str += LINE_ENDING;
             }
         }
 
@@ -156,13 +161,15 @@ fn format(ast: &[Token], opts: &Options) -> String {
             str += " "
         }
         str += &t;
-        str += "\n";
+        str += LINE_ENDING;
 
         prev_token = Some(token);
     }
 
-    // Remove last newline
-    str.pop();
+    // Remove last line ending
+    for _ in 0..LINE_ENDING.len() {
+        str.pop();
+    }
 
     str
 }

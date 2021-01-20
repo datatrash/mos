@@ -1,9 +1,7 @@
 use std::cell::RefCell;
 
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
-use nom::character::complete::{
-    alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, newline, space1,
-};
+use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest};
 use nom::multi::many0;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
@@ -241,7 +239,10 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
     terminated(
-        many0(map(pair(ws(statement), many0(newline)), |(expr, _)| expr)),
+        many0(map(
+            pair(ws(statement), many0(tuple((opt(char('\r')), char('\n'))))),
+            |(expr, _)| expr,
+        )),
         preceded(expect(not(anychar), "expected EOF"), rest),
     )(input)
 }
