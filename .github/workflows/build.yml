@@ -1,6 +1,6 @@
 on: [push, pull_request]
 
-name: Continuous integration
+name: CI
 
 jobs:
   check:
@@ -16,20 +16,6 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
-
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
 
   fmt:
     name: Rustfmt
@@ -62,3 +48,65 @@ jobs:
         with:
           command: clippy
           args: -- -D warnings
+
+  build:
+    name: build
+    needs: ['check', 'fmt', 'clippy']
+    runs-on: ${{ matrix.os }}
+    env:
+      # For some builds, we use cross to test on 32-bit and big-endian
+      # systems.
+      CARGO: cargo
+      # When CARGO is set to CROSS, this is set to `--target matrix.target`.
+      TARGET_FLAGS:
+      # When CARGO is set to CROSS, TARGET_DIR includes matrix.target.
+      TARGET_DIR: ./target
+      # Emit backtraces on panics.
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        build: [linux, macos, win-msvc]
+        include:
+          - build: linux
+            os: ubuntu-18.04
+            rust: nightly
+            target: x86_64-unknown-linux-musl
+          - build: macos
+            os: macos-latest
+            rust: nightly
+            target: x86_64-apple-darwin
+          - build: win-msvc
+            os: windows-2019
+            rust: nightly
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Use Cross
+        if: matrix.os != 'windows-2019'
+        run: |
+          cargo install cross
+          echo "CARGO=cross" >> $GITHUB_ENV
+          echo "TARGET_FLAGS=--target ${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=./target/${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Show command used for Cargo
+        run: |
+          echo "cargo command is: ${{ env.CARGO }}"
+          echo "target flag is: ${{ env.TARGET_FLAGS }}"
+          echo "target dir is: ${{ env.TARGET_DIR }}"
+
+      - name: Run tests
+        run: ${{ env.CARGO }} test --verbose --release ${{ env.TARGET_FLAGS }}
