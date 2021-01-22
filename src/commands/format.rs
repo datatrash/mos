@@ -141,7 +141,7 @@ fn format_ws(lhs: &[Comment], inner: String, rhs: &[Comment], _opts: &Options) -
     format!("{}{}{}{}{}", lhs, lhs_spacing, inner, rhs_spacing, rhs)
 }
 
-fn format(ast: &[Located<Token>], opts: &Options) -> String {
+fn format<'a>(ast: &[Located<'a, Token<'a>>], opts: &Options) -> String {
     let mut str = "".to_string();
 
     let mut prev_token: Option<&Token> = None;

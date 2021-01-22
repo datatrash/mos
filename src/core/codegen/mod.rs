@@ -5,12 +5,12 @@ use crate::parser::*;
 use smallvec::{smallvec, SmallVec};
 use std::collections::HashMap;
 
-pub type CodegenResult<T> = Result<T, CodegenError>;
+pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum CodegenError {
+pub enum CodegenError<'a> {
     #[error("unknown identifier: {1}")]
-    UnknownIdentifier(Location, Identifier),
+    UnknownIdentifier(Location<'a>, Identifier),
     #[error("branch too far")]
     BranchTooFar,
     #[error("unknown code generation error")]
@@ -57,13 +57,13 @@ impl Segment {
     }
 }
 
-pub struct CodegenContext<'a> {
-    segments: HashMap<&'a str, Segment>,
-    current_segment: &'a str,
+pub struct CodegenContext<'ctx> {
+    segments: HashMap<&'ctx str, Segment>,
+    current_segment: &'ctx str,
     labels: HashMap<Identifier, ProgramCounter>,
 }
 
-impl<'a> CodegenContext<'a> {
+impl<'ctx> CodegenContext<'ctx> {
     fn new(options: CodegenOptions) -> Self {
         let mut segments = HashMap::new();
         let default_segment = Segment {
@@ -102,11 +102,11 @@ impl<'a> CodegenContext<'a> {
         self.labels.insert(label.clone(), pc);
     }
 
-    fn evaluate(
+    fn evaluate<'a>(
         &self,
-        lt: &Located<Expression>,
+        lt: &Located<'a, Expression<'a>>,
         error_on_failure: bool,
-    ) -> CodegenResult<Option<usize>> {
+    ) -> CodegenResult<'a, Option<usize>> {
         match &lt.data {
             Expression::Number(n, _) => Ok(Some(*n)),
             Expression::BinaryAdd(lhs, rhs)
@@ -137,12 +137,12 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn evaluate_operand<'b>(
+    fn evaluate_operand<'a, 'b>(
         &self,
         pc: ProgramCounter,
-        i: &'b Instruction,
+        i: &'a Instruction<'b>,
         error_on_failure: bool,
-    ) -> CodegenResult<(&'b AddressingMode, Option<usize>, Option<Register>)> {
+    ) -> CodegenResult<'b, (&'a AddressingMode, Option<usize>, Option<Register>)> {
         match i.operand.as_deref() {
             Some(Located {
                 data: Token::Operand(operand),
@@ -188,12 +188,12 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn emit_instruction(
+    fn emit_instruction<'a, 'b>(
         &mut self,
         pc: Option<ProgramCounter>,
-        i: &Instruction,
+        i: &'a Instruction<'b>,
         error_on_failure: bool,
-    ) -> CodegenResult<Option<ProgramCounter>> {
+    ) -> CodegenResult<'b, Option<ProgramCounter>> {
         let pc = pc.unwrap_or(self.current_segment().pc);
 
         type MM = Mnemonic;
@@ -366,13 +366,13 @@ impl<'a> CodegenContext<'a> {
         }
     }
 
-    fn emit_data(
+    fn emit_data<'a, 'b>(
         &mut self,
         pc: Option<ProgramCounter>,
-        lt: &Located<Expression>,
+        lt: &'a Located<'b, Expression<'b>>,
         data_length: usize,
         error_on_failure: bool,
-    ) -> CodegenResult<Option<ProgramCounter>> {
+    ) -> CodegenResult<'b, Option<ProgramCounter>> {
         let segment = self.current_segment();
         let pc = pc.unwrap_or(segment.pc);
 
@@ -419,12 +419,12 @@ impl<'a> CodegenContext<'a> {
         Ok(result)
     }
 
-    fn emit_token(
+    fn emit_token<'a, 'b>(
         &mut self,
         pc: Option<ProgramCounter>,
-        token: &Token,
+        token: &'a Token<'b>,
         error_on_failure: bool,
-    ) -> CodegenResult<Option<ProgramCounter>> {
+    ) -> CodegenResult<'b, Option<ProgramCounter>> {
         match token {
             Token::Label(id) => {
                 self.register_label(pc, id);
@@ -439,10 +439,10 @@ impl<'a> CodegenContext<'a> {
     }
 }
 
-pub fn codegen<'a>(
-    ast: Vec<Located<Token>>,
+pub fn codegen<'ctx, 'a>(
+    ast: Vec<Located<'a, Token<'a>>>,
     options: CodegenOptions,
-) -> MosResult<CodegenContext<'a>> {
+) -> MosResult<CodegenContext<'ctx>> {
     let mut ctx = CodegenContext::new(options);
 
     let ast = ast
@@ -496,24 +496,25 @@ pub fn codegen<'a>(
 mod tests {
     use super::*;
     use crate::parser::parse;
-    use std::fmt::Display;
+
+    type TestResult = MosResult<'static, ()>;
 
     #[test]
-    fn basic() -> MosResult<()> {
+    fn basic() -> TestResult {
         let ctx = test_codegen("lda #123")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
         Ok(())
     }
 
     #[test]
-    fn basic_with_comments() -> MosResult<()> {
+    fn basic_with_comments() -> TestResult {
         let ctx = test_codegen("lda /*hello*/ #123")?;
         assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
         Ok(())
     }
 
     #[test]
-    fn expressions() -> MosResult<()> {
+    fn expressions() -> TestResult {
         let ctx = test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2")?;
         assert_eq!(
             ctx.current_segment().data,
@@ -523,28 +524,28 @@ mod tests {
     }
 
     #[test]
-    fn can_access_forward_declared_labels() -> MosResult<()> {
+    fn can_access_forward_declared_labels() -> TestResult {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
         Ok(())
     }
 
     #[test]
-    fn accessing_unknown_labels_will_default_to_absolute_addressing() -> MosResult<()> {
+    fn accessing_unknown_labels_will_default_to_absolute_addressing() -> TestResult {
         let ctx = test_codegen("lda my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0xad, 0x03, 0xc0, 0xea]);
         Ok(())
     }
 
     #[test]
-    fn can_store_data() -> MosResult<()> {
+    fn can_store_data() -> TestResult {
         let ctx = test_codegen(".byte 123\n.word 64738")?;
         assert_eq!(ctx.current_segment().data, vec![123, 0xe2, 0xfc]);
         Ok(())
     }
 
     #[test]
-    fn can_perform_operations_on_labels() -> MosResult<()> {
+    fn can_perform_operations_on_labels() -> TestResult {
         // Create two labels, 'foo' and 'bar', separated by three NOPs.
         // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 NOPs).
         let ctx = test_codegen("foo: .word bar - foo\nnop\nnop\nnop\nbar: nop")?;
@@ -556,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn can_perform_branch_calculations() -> MosResult<()> {
+    fn can_perform_branch_calculations() -> TestResult {
         let ctx = test_codegen("foo: nop\nbne foo")?;
         assert_eq!(ctx.current_segment().data, vec![0xea, 0xd0, 0xfd]);
         let ctx = test_codegen("bne foo\nfoo: nop")?;
@@ -565,9 +566,10 @@ mod tests {
     }
 
     #[test]
-    fn cannot_perform_too_far_branch_calculations() -> MosResult<()> {
+    fn cannot_perform_too_far_branch_calculations() -> TestResult {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
-        let (ast, _) = parse("test.asm", &format!("foo: {}bne foo", many_nops));
+        let src = format!("foo: {}bne foo", many_nops);
+        let (ast, _) = parse("test.asm", &src);
         let result = codegen(
             ast,
             CodegenOptions {
@@ -578,7 +580,7 @@ mod tests {
             result.err(),
             Some(MosError::Codegen {
                 location: Location {
-                    path: std::rc::Rc::new("test.asm".to_string()),
+                    path: "test.asm",
                     line: 141,
                     column: 1
                 },
@@ -746,13 +748,12 @@ mod tests {
         code_eq("beq foo\nfoo: nop", &[0xf0, 0x00, 0xea]);
     }
 
-    fn code_eq(code: &str, data: &[u8]) {
+    fn code_eq(code: &'static str, data: &[u8]) {
         let ctx = test_codegen(code).unwrap();
         assert_eq!(ctx.current_segment().data, data);
     }
 
-    fn test_codegen<'a, S: Display + Into<String>>(code: S) -> MosResult<CodegenContext<'a>> {
-        let code = code.into();
+    fn test_codegen(code: &'static str) -> MosResult<'static, CodegenContext<'static>> {
         let (ast, errors) = parse("test.asm", &code);
         if !errors.is_empty() {
             println!("source:\n{}\n\nerrors:", code);

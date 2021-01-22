@@ -9,12 +9,12 @@ pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
 #[derive(Clone, Debug)]
 pub struct State<'a> {
-    pub filename: Rc<String>,
-    pub errors: &'a RefCell<Vec<MosError>>,
+    pub filename: &'a str,
+    pub errors: Rc<RefCell<Vec<MosError<'a>>>>,
 }
 
 impl<'a> State<'a> {
-    pub fn report_error(&self, error: MosError) {
+    pub fn report_error(&self, error: MosError<'a>) {
         self.errors.borrow_mut().push(error);
     }
 }
@@ -35,26 +35,16 @@ impl Display for Identifier {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Location {
-    pub path: Rc<String>,
+pub struct Location<'a> {
+    pub path: &'a str,
     pub line: u32,
     pub column: u32,
 }
 
-impl Location {
-    pub fn unknown() -> Self {
+impl<'a> From<&LocatedSpan<'a>> for Location<'a> {
+    fn from(span: &LocatedSpan<'a>) -> Self {
         Self {
-            path: Rc::new("unknown".to_string()),
-            line: 0,
-            column: 0,
-        }
-    }
-}
-
-impl<'a> From<&LocatedSpan<'a>> for Location {
-    fn from(span: &LocatedSpan) -> Self {
-        Self {
-            path: span.extra.filename.clone(),
+            path: span.extra.filename,
             line: span.location_line(),
             column: span.get_column() as u32,
         }
@@ -68,9 +58,9 @@ pub enum Register {
 }
 
 #[derive(Debug)]
-pub struct Instruction {
+pub struct Instruction<'a> {
     pub mnemonic: Mnemonic,
-    pub operand: Option<Box<Located<Token>>>,
+    pub operand: Option<Box<Located<'a, Token<'a>>>>,
 }
 
 #[derive(Debug)]
@@ -83,10 +73,10 @@ pub enum AddressingMode {
 }
 
 #[derive(Debug)]
-pub struct Operand {
-    pub expr: Box<Located<Expression>>,
+pub struct Operand<'a> {
+    pub expr: Box<Located<'a, Expression<'a>>>,
     pub addressing_mode: AddressingMode,
-    pub suffix: Option<Box<Located<Token>>>,
+    pub suffix: Option<Box<Located<'a, Token<'a>>>>,
 }
 
 #[derive(Debug)]
@@ -96,43 +86,55 @@ pub enum NumberType {
 }
 
 #[derive(Debug)]
-pub enum Expression {
+pub enum Expression<'a> {
     Identifier(Identifier),
     Number(usize, NumberType),
-    ExprParens(Box<Located<Expression>>),
-    BinaryAdd(Box<Located<Expression>>, Box<Located<Expression>>),
-    BinarySub(Box<Located<Expression>>, Box<Located<Expression>>),
-    BinaryMul(Box<Located<Expression>>, Box<Located<Expression>>),
-    BinaryDiv(Box<Located<Expression>>, Box<Located<Expression>>),
-    Ws(Vec<Comment>, Box<Located<Expression>>, Vec<Comment>),
+    ExprParens(Box<Located<'a, Expression<'a>>>),
+    BinaryAdd(
+        Box<Located<'a, Expression<'a>>>,
+        Box<Located<'a, Expression<'a>>>,
+    ),
+    BinarySub(
+        Box<Located<'a, Expression<'a>>>,
+        Box<Located<'a, Expression<'a>>>,
+    ),
+    BinaryMul(
+        Box<Located<'a, Expression<'a>>>,
+        Box<Located<'a, Expression<'a>>>,
+    ),
+    BinaryDiv(
+        Box<Located<'a, Expression<'a>>>,
+        Box<Located<'a, Expression<'a>>>,
+    ),
+    Ws(Vec<Comment>, Box<Located<'a, Expression<'a>>>, Vec<Comment>),
 }
 
 #[derive(Debug)]
-pub enum Token {
+pub enum Token<'a> {
     Label(Identifier),
-    Instruction(Instruction),
-    Operand(Operand),
+    Instruction(Instruction<'a>),
+    Operand(Operand<'a>),
     RegisterSuffix(Register),
-    Ws(Vec<Comment>, Box<Located<Token>>, Vec<Comment>),
-    Data(Option<Box<Located<Expression>>>, usize),
+    Ws(Vec<Comment>, Box<Located<'a, Token<'a>>>, Vec<Comment>),
+    Data(Option<Box<Located<'a, Expression<'a>>>>, usize),
     Error,
 }
 
 #[derive(Debug)]
-pub struct Located<T: CanWrapWhitespace> {
-    pub location: Location,
+pub struct Located<'a, T: CanWrapWhitespace<'a>> {
+    pub location: Location<'a>,
     pub data: T,
 }
 
-pub trait CanWrapWhitespace {
+pub trait CanWrapWhitespace<'a> {
     fn strip_whitespace(self) -> Self;
-    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<Self>>, rhs: Vec<Comment>) -> Self
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<'a, Self>>, rhs: Vec<Comment>) -> Self
     where
         Self: Sized;
 }
 
-impl<T: CanWrapWhitespace> Located<T> {
-    pub fn from<L: Into<Location>>(location: L, data: T) -> Self {
+impl<'a, T: CanWrapWhitespace<'a>> Located<'a, T> {
+    pub fn from<L: Into<Location<'a>>>(location: L, data: T) -> Self {
         Self {
             location: location.into(),
             data,
@@ -147,16 +149,18 @@ impl<T: CanWrapWhitespace> Located<T> {
     }
 }
 
-fn sob<T: CanWrapWhitespace>(token: Option<Box<Located<T>>>) -> Option<Box<Located<T>>> {
+fn sob<'a, T: CanWrapWhitespace<'a>>(
+    token: Option<Box<Located<'a, T>>>,
+) -> Option<Box<Located<'a, T>>> {
     token.map(|t| Box::new(t.strip_whitespace()))
 }
 
 #[allow(clippy::boxed_local)]
-fn sb<T: CanWrapWhitespace>(t: Box<Located<T>>) -> Box<Located<T>> {
+fn sb<'a, T: CanWrapWhitespace<'a>>(t: Box<Located<'a, T>>) -> Box<Located<'a, T>> {
     Box::new(t.strip_whitespace())
 }
 
-impl CanWrapWhitespace for Token {
+impl<'a> CanWrapWhitespace<'a> for Token<'a> {
     fn strip_whitespace(self) -> Self {
         match self {
             Token::Instruction(i) => Token::Instruction(Instruction {
@@ -174,12 +178,12 @@ impl CanWrapWhitespace for Token {
         }
     }
 
-    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<Self>>, rhs: Vec<Comment>) -> Self {
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<'a, Self>>, rhs: Vec<Comment>) -> Self {
         Token::Ws(lhs, inner, rhs)
     }
 }
 
-impl CanWrapWhitespace for Expression {
+impl<'a> CanWrapWhitespace<'a> for Expression<'a> {
     fn strip_whitespace(self) -> Self {
         match self {
             Expression::BinaryAdd(lhs, rhs) => Expression::BinaryAdd(sb(lhs), sb(rhs)),
@@ -192,7 +196,7 @@ impl CanWrapWhitespace for Expression {
         }
     }
 
-    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<Self>>, rhs: Vec<Comment>) -> Self {
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<'a, Self>>, rhs: Vec<Comment>) -> Self {
         Expression::Ws(lhs, inner, rhs)
     }
 }
@@ -213,7 +217,7 @@ impl Display for Comment {
     }
 }
 
-impl Display for Expression {
+impl<'a> Display for Expression<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Expression::Identifier(id) => {
@@ -243,7 +247,7 @@ impl Display for Expression {
     }
 }
 
-impl Display for Token {
+impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Token::Label(id) => {
@@ -297,10 +301,10 @@ impl Display for Token {
     }
 }
 
-fn format_ws<T: CanWrapWhitespace + Display>(
+fn format_ws<'a, T: CanWrapWhitespace<'a> + Display>(
     f: &mut Formatter,
     l: &[Comment],
-    inner: &Located<T>,
+    inner: &Located<'a, T>,
     r: &[Comment],
 ) -> std::fmt::Result {
     for w in l {

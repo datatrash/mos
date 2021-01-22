@@ -88,7 +88,9 @@ fn whitespace_or_comment<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Vec<Com
     )
 }
 
-fn ws<'a, T: CanWrapWhitespace, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<T>>
+fn ws<'a, T: CanWrapWhitespace<'a>, F>(
+    inner: F,
+) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<T>>
 where
     F: FnMut(LocatedSpan<'a>) -> IResult<Located<T>>,
 {
@@ -98,7 +100,7 @@ where
             if l.is_empty() && r.is_empty() {
                 i
             } else {
-                Located::from(Location::unknown(), T::wrap_inner(l, Box::new(i), r))
+                Located::from(i.location.clone(), T::wrap_inner(l, Box::new(i), r))
             }
         },
     )
@@ -124,7 +126,7 @@ fn register_suffix<'a>(
     input: LocatedSpan<'a>,
     reg: &'a str,
     map_to: Register,
-) -> IResult<'a, Located<Token>> {
+) -> IResult<'a, Located<'a, Token<'a>>> {
     let location = Location::from(&input);
 
     preceded(
@@ -341,10 +343,10 @@ enum Operation {
     Div,
 }
 
-fn fold_expressions(
-    initial: Located<Expression>,
-    remainder: Vec<(Operation, Located<Expression>)>,
-) -> Located<Expression> {
+fn fold_expressions<'a>(
+    initial: Located<'a, Expression<'a>>,
+    remainder: Vec<(Operation, Located<'a, Expression<'a>>)>,
+) -> Located<'a, Expression<'a>> {
     remainder.into_iter().fold(initial, |acc, pair| {
         let (oper, expr) = pair;
 
@@ -401,16 +403,21 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse(filename: &str, source: &str) -> (Vec<Located<Token>>, Vec<MosError>) {
-    let errors = RefCell::new(Vec::new());
+pub fn parse<'a>(
+    filename: &'a str,
+    source: &'a str,
+) -> (Vec<Located<'a, Token<'a>>>, Vec<MosError<'a>>) {
+    let errors = Rc::new(RefCell::new(Vec::new()));
     let input = LocatedSpan::new_extra(
         source,
         State {
-            filename: Rc::new(filename.to_string()),
-            errors: &errors,
+            filename,
+            errors: errors.clone(),
         },
     );
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
+
+    let errors = Rc::try_unwrap(errors).ok().unwrap();
     (expr, errors.into_inner())
 }
 

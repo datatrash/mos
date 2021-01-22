@@ -1,16 +1,22 @@
 use crate::parser::Location;
 
-pub type MosResult<T> = Result<T, MosError>;
+pub type MosResult<'a, T> = Result<T, MosError<'a>>;
 
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum MosError {
-    Parser { location: Location, message: String },
-    Codegen { location: Location, message: String },
+pub enum MosError<'a> {
+    Parser {
+        location: Location<'a>,
+        message: String,
+    },
+    Codegen {
+        location: Location<'a>,
+        message: String,
+    },
     Unknown,
 }
 
-impl std::fmt::Display for MosError {
+impl<'a> std::fmt::Display for MosError<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             MosError::Parser { location, message } => {
