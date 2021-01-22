@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::{App, AppSettings, Arg};
 
 use crate::commands::*;
@@ -28,7 +27,7 @@ fn get_app() -> App<'static> {
         .subcommand(format_app())
 }
 
-fn main() -> Result<()> {
+fn main() {
     #[cfg(windows)]
     ansi_term::enable_ansi_support().unwrap();
 
@@ -41,10 +40,18 @@ fn main() -> Result<()> {
         .init()
         .unwrap();
 
-    match args.subcommand() {
+    let result = match args.subcommand() {
         Some(("build", args)) => build_command(args),
         Some(("format", args)) => format_command(args),
         _ => panic!("Unknown subcommand"),
+    };
+
+    match result {
+        Ok(()) => (),
+        Err(e) => {
+            log::error!("{}", e.format(true));
+            std::process::exit(1);
+        }
     }
 }
 

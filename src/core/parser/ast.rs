@@ -1,5 +1,5 @@
 use crate::core::parser::mnemonic::Mnemonic;
-use crate::errors::MosError;
+use crate::core::parser::ParseError;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
@@ -10,11 +10,11 @@ pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 #[derive(Clone, Debug)]
 pub struct State<'a> {
     pub filename: &'a str,
-    pub errors: Rc<RefCell<Vec<MosError<'a>>>>,
+    pub errors: Rc<RefCell<Vec<ParseError<'a>>>>,
 }
 
 impl<'a> State<'a> {
-    pub fn report_error(&self, error: MosError<'a>) {
+    pub fn report_error(&self, error: ParseError<'a>) {
         self.errors.borrow_mut().push(error);
     }
 }
@@ -39,6 +39,33 @@ pub struct Location<'a> {
     pub path: &'a str,
     pub line: u32,
     pub column: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OwnedLocation {
+    pub path: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl<'a> From<Location<'a>> for OwnedLocation {
+    fn from(l: Location<'a>) -> Self {
+        Self {
+            path: String::from(l.path),
+            line: l.line,
+            column: l.column,
+        }
+    }
+}
+
+impl<'a> From<&'a Location<'a>> for OwnedLocation {
+    fn from(l: &'a Location<'a>) -> Self {
+        Self {
+            path: String::from(l.path),
+            line: l.line,
+            column: l.column,
+        }
+    }
 }
 
 impl<'a> From<&LocatedSpan<'a>> for Location<'a> {

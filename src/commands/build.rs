@@ -1,9 +1,8 @@
 use crate::core::codegen::{codegen, CodegenOptions, ProgramCounter};
 use crate::core::parser;
-use anyhow::Result;
+use crate::errors::MosResult;
 use clap::{App, Arg, ArgMatches};
 use fs_err as fs;
-use log::error;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
@@ -24,7 +23,7 @@ pub fn build_app() -> App<'static> {
         )
 }
 
-pub fn build_command(args: &ArgMatches) -> Result<()> {
+pub fn build_command(args: &ArgMatches) -> MosResult<()> {
     let input_names = args.values_of("input").unwrap().collect::<Vec<_>>();
     let target_dir = PathBuf::from(args.value_of("target-dir").unwrap());
 
@@ -39,31 +38,18 @@ pub fn build_command(args: &ArgMatches) -> Result<()> {
         let mut source = String::new();
         file.read_to_string(&mut source)?;
 
-        let (ast, errors) = parser::parse(input_name, source.as_str());
-        if !errors.is_empty() {
-            for error in errors {
-                error!("{}", error);
-            }
-            std::process::exit(1)
-        }
+        let ast = parser::parse(input_name, source.as_str())?;
 
-        match codegen(
+        let generated_code = codegen(
             ast,
             CodegenOptions {
                 pc: ProgramCounter::new(0xc000),
             },
-        ) {
-            Ok(generated_code) => {
-                let segment = generated_code.segment("Default").unwrap();
-                let mut out = fs::File::create(target_dir.join(output_path))?;
-                out.write_all(&segment.start_pc.to_le_bytes())?;
-                out.write_all(&segment.data)?;
-            }
-            Err(error) => {
-                error!("{}", error);
-                std::process::exit(1)
-            }
-        }
+        )?;
+        let segment = generated_code.segment("Default").unwrap();
+        let mut out = fs::File::create(target_dir.join(output_path))?;
+        out.write_all(&segment.start_pc.to_le_bytes())?;
+        out.write_all(&segment.data)?;
     }
 
     Ok(())

@@ -11,11 +11,40 @@ pub use ast::*;
 pub use mnemonic::*;
 
 use crate::core::parser::mnemonic::mnemonic;
-use crate::errors::MosError;
+use crate::errors::{MosError, MosResult};
 use std::rc::Rc;
 
 mod ast;
 mod mnemonic;
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum ParseError<'a> {
+    #[error("expected something, but got instead")]
+    ExpectedError {
+        location: Location<'a>,
+        message: String,
+    },
+    #[error("unexpected")]
+    UnexpectedError {
+        location: Location<'a>,
+        message: String,
+    },
+}
+
+impl<'a> From<ParseError<'a>> for MosError {
+    fn from(err: ParseError<'a>) -> Self {
+        match err {
+            ParseError::ExpectedError { location, message } => Self::Parser {
+                location: location.into(),
+                message,
+            },
+            ParseError::UnexpectedError { location, message } => Self::Parser {
+                location: location.into(),
+                message,
+            },
+        }
+    }
+}
 
 fn expect<'a, F, E, T>(
     mut parser: F,
@@ -30,7 +59,7 @@ where
         match parser(input) {
             Ok((remaining, out)) => Ok((remaining, Some(out))),
             Err(nom::Err::Error(_)) | Err(nom::Err::Failure(_)) => {
-                let err = MosError::Parser {
+                let err = ParseError::ExpectedError {
                     location: Location::from(&i),
                     message: error_msg.to_string(),
                 };
@@ -231,7 +260,7 @@ fn error(input: LocatedSpan) -> IResult<Located<Token>> {
     map(
         take_till1(|c| c == ')' || c == '\n' || c == '\r'),
         |span: LocatedSpan| {
-            let err = MosError::Parser {
+            let err = ParseError::UnexpectedError {
                 location: Location::from(&span),
                 message: format!("unexpected `{}`", span.fragment()),
             };
@@ -403,10 +432,7 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse<'a>(
-    filename: &'a str,
-    source: &'a str,
-) -> (Vec<Located<'a, Token<'a>>>, Vec<MosError<'a>>) {
+pub fn parse<'a>(filename: &'a str, source: &'a str) -> MosResult<Vec<Located<'a, Token<'a>>>> {
     let errors = Rc::new(RefCell::new(Vec::new()));
     let input = LocatedSpan::new_extra(
         source,
@@ -417,8 +443,12 @@ pub fn parse<'a>(
     );
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
 
-    let errors = Rc::try_unwrap(errors).ok().unwrap();
-    (expr, errors.into_inner())
+    let errors = Rc::try_unwrap(errors).ok().unwrap().into_inner();
+    if errors.is_empty() {
+        Ok(expr)
+    } else {
+        Err(errors.into())
+    }
 }
 
 #[cfg(test)]
@@ -444,21 +474,22 @@ mod test {
     }
 
     #[test]
-    fn parse_data() {
+    fn parse_data() -> MosResult<()> {
         let expr = parse(
             "test.asm",
             ".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2",
-        );
-        let mut e = expr.0.iter();
+        )?;
+        let mut e = expr.iter();
         assert_eq!(format!("{}", e.next().unwrap().data), ".byte 123");
         assert_eq!(format!("{}", e.next().unwrap().data), ".word foo");
         assert_eq!(format!("{}", e.next().unwrap().data), ".dword 12345678");
         assert_eq!(format!("{}", e.next().unwrap().data), ".word 1 + 2");
+        Ok(())
     }
 
     fn check(src: &str, expected: &str) {
-        let expr = dbg!(parse("test.asm", src));
-        let e = expr.0.get(0).unwrap();
+        let expr = dbg!(parse("test.asm", src)).ok().unwrap();
+        let e = expr.get(0).unwrap();
         assert_eq!(format!("{}", e.data), expected.to_string());
     }
 }

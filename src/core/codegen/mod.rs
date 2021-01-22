@@ -12,9 +12,20 @@ pub enum CodegenError<'a> {
     #[error("unknown identifier: {1}")]
     UnknownIdentifier(Location<'a>, Identifier),
     #[error("branch too far")]
-    BranchTooFar,
-    #[error("unknown code generation error")]
-    Unknown,
+    BranchTooFar(Location<'a>),
+}
+
+impl<'a> From<CodegenError<'a>> for MosError {
+    fn from(error: CodegenError<'a>) -> Self {
+        let location = match &error {
+            CodegenError::UnknownIdentifier(location, _) => location,
+            CodegenError::BranchTooFar(location) => location,
+        };
+        MosError::Codegen {
+            location: location.into(),
+            message: format!("{}", error),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -141,6 +152,7 @@ impl<'ctx> CodegenContext<'ctx> {
         &self,
         pc: ProgramCounter,
         i: &'a Instruction<'b>,
+        location: &'a Location<'b>,
         error_on_failure: bool,
     ) -> CodegenResult<'b, (&'a AddressingMode, Option<usize>, Option<Register>)> {
         match i.operand.as_deref() {
@@ -177,7 +189,7 @@ impl<'ctx> CodegenContext<'ctx> {
                                 let val = offset as usize;
                                 Ok((&operand.addressing_mode, Some(val), register_suffix))
                             } else {
-                                Err(CodegenError::BranchTooFar)
+                                Err(CodegenError::BranchTooFar(location.clone()))
                             }
                         }
                         _ => Ok((&operand.addressing_mode, Some(val), register_suffix)),
@@ -192,6 +204,7 @@ impl<'ctx> CodegenContext<'ctx> {
         &mut self,
         pc: Option<ProgramCounter>,
         i: &'a Instruction<'b>,
+        location: &'a Location<'b>,
         error_on_failure: bool,
     ) -> CodegenResult<'b, Option<ProgramCounter>> {
         let pc = pc.unwrap_or(self.current_segment().pc);
@@ -200,7 +213,7 @@ impl<'ctx> CodegenContext<'ctx> {
         type AM = AddressingMode;
         use smallvec::smallvec as v;
 
-        let (am, val, suffix) = self.evaluate_operand(pc, i, error_on_failure)?;
+        let (am, val, suffix) = self.evaluate_operand(pc, i, location, error_on_failure)?;
         let possible_opcodes: SmallVec<[(u8, usize); 2]> = match (&i.mnemonic, am, suffix) {
             (MM::Adc, AM::Immediate, None) => v![(0x69, 1)],
             (MM::Adc, AM::Indirect, Some(Register::X)) => v![(0x61, 1)],
@@ -423,6 +436,7 @@ impl<'ctx> CodegenContext<'ctx> {
         &mut self,
         pc: Option<ProgramCounter>,
         token: &'a Token<'b>,
+        location: &'a Location<'b>,
         error_on_failure: bool,
     ) -> CodegenResult<'b, Option<ProgramCounter>> {
         match token {
@@ -430,7 +444,7 @@ impl<'ctx> CodegenContext<'ctx> {
                 self.register_label(pc, id);
                 Ok(None)
             }
-            Token::Instruction(i) => self.emit_instruction(pc, i, error_on_failure),
+            Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
             Token::Data(Some(expr), data_length) => {
                 self.emit_data(pc, expr, *data_length, error_on_failure)
             }
@@ -456,29 +470,25 @@ pub fn codegen<'ctx, 'a>(
         .collect::<Vec<_>>();
 
     // Apply passes
+
+    // On the first pass, any error is not a failure since we may encounter unresolved labels and such
+    // After the first pass, all labels should be present so any error will be a failure then
     let mut error_on_failure = false;
+    let mut errors: Vec<CodegenError> = vec![];
     while !to_process.is_empty() {
         let to_process_len = to_process.len();
         let mut next_to_process = vec![];
         for (pc, lt) in to_process {
-            let token = &lt.data;
-            let process_again_at_pc = match ctx.emit_token(pc, token, error_on_failure) {
-                Ok(pc) => pc,
+            match ctx.emit_token(pc, &lt.data, &lt.location, error_on_failure) {
+                Ok(pc) => {
+                    if let Some(pc) = pc {
+                        next_to_process.push((Some(pc), lt));
+                    }
+                }
                 Err(error) => {
-                    let location = match &error {
-                        CodegenError::UnknownIdentifier(location, _) => location.clone(),
-                        _ => lt.location,
-                    };
-                    return Err(MosError::Codegen {
-                        location,
-                        message: format!("{}", error),
-                    });
+                    errors.push(error);
                 }
             };
-
-            if let Some(pc) = process_again_at_pc {
-                next_to_process.push((Some(pc), lt));
-            }
         }
 
         // If we haven't processed any tokens then the tokens that are left could not be resolved.
@@ -489,7 +499,11 @@ pub fn codegen<'ctx, 'a>(
         to_process = next_to_process;
     }
 
-    Ok(ctx)
+    if errors.is_empty() {
+        Ok(ctx)
+    } else {
+        Err(errors.into())
+    }
 }
 
 #[cfg(test)]
@@ -497,7 +511,7 @@ mod tests {
     use super::*;
     use crate::parser::parse;
 
-    type TestResult = MosResult<'static, ()>;
+    type TestResult = MosResult<()>;
 
     #[test]
     fn basic() -> TestResult {
@@ -531,10 +545,16 @@ mod tests {
     }
 
     #[test]
-    fn accessing_unknown_labels_will_default_to_absolute_addressing() -> TestResult {
+    fn accessing_forwarded_labels_will_default_to_absolute_addressing() -> TestResult {
         let ctx = test_codegen("lda my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0xad, 0x03, 0xc0, 0xea]);
         Ok(())
+    }
+
+    #[test]
+    fn error_unknown_identifier() {
+        let err = test_codegen(".byte foo\n.byte foo2").err().unwrap();
+        assert_eq!(format!("{}", err), "test.asm:1:7: error: unknown identifier: foo\ntest.asm:2:7: error: unknown identifier: foo2");
     }
 
     #[test]
@@ -569,7 +589,7 @@ mod tests {
     fn cannot_perform_too_far_branch_calculations() -> TestResult {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
         let src = format!("foo: {}bne foo", many_nops);
-        let (ast, _) = parse("test.asm", &src);
+        let ast = parse("test.asm", &src)?;
         let result = codegen(
             ast,
             CodegenOptions {
@@ -577,15 +597,8 @@ mod tests {
             },
         );
         assert_eq!(
-            result.err(),
-            Some(MosError::Codegen {
-                location: Location {
-                    path: "test.asm",
-                    line: 141,
-                    column: 1
-                },
-                message: "branch too far".to_string()
-            })
+            format!("{}", result.err().unwrap()),
+            "test.asm:141:1: error: branch too far"
         );
         Ok(())
     }
@@ -753,13 +766,8 @@ mod tests {
         assert_eq!(ctx.current_segment().data, data);
     }
 
-    fn test_codegen(code: &'static str) -> MosResult<'static, CodegenContext<'static>> {
-        let (ast, errors) = parse("test.asm", &code);
-        if !errors.is_empty() {
-            println!("source:\n{}\n\nerrors:", code);
-            println!("{:?}", errors);
-        }
-        assert_eq!(errors.is_empty(), true);
+    fn test_codegen(code: &'static str) -> MosResult<CodegenContext<'static>> {
+        let ast = parse("test.asm", &code)?;
         codegen(
             ast,
             CodegenOptions {

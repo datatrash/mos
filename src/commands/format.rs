@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 use crate::core::parser::*;
-use anyhow::Result;
+use crate::errors::MosResult;
 use clap::{App, Arg, ArgMatches};
 use fs_err::{read_to_string, OpenOptions};
 use std::io::Write;
@@ -193,20 +193,18 @@ pub fn format_app() -> App<'static> {
     )
 }
 
-pub fn format_command(args: &ArgMatches) -> Result<()> {
+pub fn format_command(args: &ArgMatches) -> MosResult<()> {
     let input_names = args.values_of("input").unwrap().collect::<Vec<_>>();
 
     for input_name in input_names {
         let source = read_to_string(input_name)?;
-        let (ast, errors) = parse(input_name, &source);
-        if errors.is_empty() {
-            let formatted = format(&ast, &Options::default());
-            let mut output_file = OpenOptions::new()
-                .truncate(true)
-                .write(true)
-                .open(input_name)?;
-            output_file.write_all(formatted.as_bytes())?;
-        }
+        let ast = parse(input_name, &source)?;
+        let formatted = format(&ast, &Options::default());
+        let mut output_file = OpenOptions::new()
+            .truncate(true)
+            .write(true)
+            .open(input_name)?;
+        output_file.write_all(formatted.as_bytes())?;
     }
 
     Ok(())
@@ -220,12 +218,12 @@ mod tests {
     use anyhow::Result;
 
     #[test]
-    fn format_valid_code() {
+    fn format_valid_code() -> Result<()> {
         let source = include_str!("../../test/valid-unformatted.asm");
         let expected = include_str!("../../test/valid-formatted.asm");
-        let (ast, errors) = parse("test.asm", source);
-        assert_eq!(errors.is_empty(), true);
+        let ast = parse("test.asm", source)?;
         assert_eq!(format(&ast, &Options::default()), expected);
+        Ok(())
     }
 
     #[test]
