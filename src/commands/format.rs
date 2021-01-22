@@ -97,9 +97,10 @@ fn format_token(token: &Token, opts: &Options) -> String {
         }
         Token::Data(expr, size) => {
             let expr = expr
-                .as_ref()
+                .iter()
                 .map(|t| format_expression(&t.data, opts))
-                .unwrap_or_else(|| "".to_string());
+                .collect::<Vec<_>>()
+                .join(", ");
             match size {
                 1 => format!(".byte {}", expr),
                 2 => format!(".word {}", expr),

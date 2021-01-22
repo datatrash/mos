@@ -143,7 +143,7 @@ pub enum Token<'a> {
     Operand(Operand<'a>),
     RegisterSuffix(Register),
     Ws(Vec<Comment>, Box<Located<'a, Token<'a>>>, Vec<Comment>),
-    Data(Option<Box<Located<'a, Expression<'a>>>>, usize),
+    Data(Vec<Located<'a, Expression<'a>>>, usize),
     Error,
 }
 
@@ -199,7 +199,10 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
                 suffix: sob(o.suffix),
                 ..o
             }),
-            Token::Data(inner, size) => Token::Data(sob(inner), size),
+            Token::Data(inner, size) => {
+                let inner = inner.into_iter().map(|v| v.strip_whitespace()).collect();
+                Token::Data(inner, size)
+            }
             Token::Ws(_, inner, _) => inner.data,
             _ => self,
         }
@@ -318,10 +321,12 @@ impl<'a> Display for Token<'a> {
                     4 => ".dword",
                     _ => panic!(),
                 };
-                match tok {
-                    Some(t) => write!(f, "{} {}", label, t.data),
-                    None => write!(f, "{}", label),
-                }
+                let data = tok
+                    .iter()
+                    .map(|t| format!("{}", t.data))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{} {}", label, data)
             }
             Token::Error => write!(f, "Error"),
         }

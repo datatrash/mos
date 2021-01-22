@@ -292,9 +292,12 @@ fn data(input: LocatedSpan) -> IResult<Located<Token>> {
                 map(tag_no_case(".word"), |_| 2),
                 map(tag_no_case(".dword"), |_| 4),
             )),
-            expect(expression, "expected expression"),
+            expect(
+                many0(alt((terminated(expression, char(',')), expression))),
+                "expected expression",
+            ),
         )),
-        move |(sz, exp)| Located::from(location.clone(), Token::Data(exp.map(Box::new), sz)),
+        move |(sz, exp)| Located::from(location.clone(), Token::Data(exp.unwrap_or_default(), sz)),
     )(input)
 }
 
@@ -477,13 +480,16 @@ mod test {
     fn parse_data() -> MosResult<()> {
         let expr = parse(
             "test.asm",
-            ".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2",
+            ".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2, 3, 4 * 4",
         )?;
         let mut e = expr.iter();
         assert_eq!(format!("{}", e.next().unwrap().data), ".byte 123");
         assert_eq!(format!("{}", e.next().unwrap().data), ".word foo");
         assert_eq!(format!("{}", e.next().unwrap().data), ".dword 12345678");
-        assert_eq!(format!("{}", e.next().unwrap().data), ".word 1 + 2");
+        assert_eq!(
+            format!("{}", e.next().unwrap().data),
+            ".word 1 + 2, 3, 4 * 4"
+        );
         Ok(())
     }
 

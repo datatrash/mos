@@ -379,57 +379,50 @@ impl<'ctx> CodegenContext<'ctx> {
         }
     }
 
-    fn emit_data<'a, 'b>(
+    fn emit_data<'a>(
         &mut self,
         pc: Option<ProgramCounter>,
-        lt: &'a Located<'b, Expression<'b>>,
+        exprs: &[Located<'a, Expression<'a>>],
         data_length: usize,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, Option<ProgramCounter>> {
+    ) -> CodegenResult<'a, Option<ProgramCounter>> {
         let segment = self.current_segment();
         let pc = pc.unwrap_or(segment.pc);
 
-        let evaluated = self.evaluate(lt, error_on_failure)?;
-        let result = match evaluated {
-            Some(val) => {
-                let segment = self.current_segment_mut();
-                match data_length {
-                    1 => {
-                        segment.set(pc, &[val as u8]);
-                        None
-                    }
-                    2 => {
-                        segment.set(pc, &((val as u16).to_le_bytes()));
-                        None
-                    }
-                    4 => {
-                        segment.set(pc, &((val as u32).to_le_bytes()));
-                        None
-                    }
-                    _ => panic!(),
-                }
-            }
-            None => {
-                let segment = self.current_segment_mut();
-                match data_length {
-                    1 => {
-                        segment.set(pc, &[0_u8]);
-                        Some(pc)
-                    }
-                    2 => {
-                        segment.set(pc, &(0_u16.to_le_bytes()));
-                        Some(pc)
-                    }
-                    4 => {
-                        segment.set(pc, &(0_u32.to_le_bytes()));
-                        Some(pc)
-                    }
-                    _ => panic!(),
-                }
-            }
-        };
+        // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
+        let mut any_failed = false;
 
-        Ok(result)
+        let mut cur_pc = pc;
+        for expr in exprs {
+            let evaluated = self.evaluate(expr, error_on_failure)?;
+            match evaluated {
+                Some(val) => {
+                    let segment = self.current_segment_mut();
+                    match data_length {
+                        1 => cur_pc = segment.set(cur_pc, &[val as u8]),
+                        2 => cur_pc = segment.set(cur_pc, &((val as u16).to_le_bytes())),
+                        4 => cur_pc = segment.set(cur_pc, &((val as u32).to_le_bytes())),
+                        _ => panic!(),
+                    }
+                }
+                None => {
+                    any_failed = true;
+                    let segment = self.current_segment_mut();
+                    match data_length {
+                        1 => cur_pc = segment.set(cur_pc, &[0_u8]),
+                        2 => cur_pc = segment.set(cur_pc, &(0_u16.to_le_bytes())),
+                        4 => cur_pc = segment.set(cur_pc, &(0_u32.to_le_bytes())),
+                        _ => panic!(),
+                    }
+                }
+            }
+        }
+
+        if any_failed {
+            Ok(Some(pc))
+        } else {
+            Ok(None)
+        }
     }
 
     fn emit_token<'a, 'b>(
@@ -445,8 +438,8 @@ impl<'ctx> CodegenContext<'ctx> {
                 Ok(None)
             }
             Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
-            Token::Data(Some(expr), data_length) => {
-                self.emit_data(pc, expr, *data_length, error_on_failure)
+            Token::Data(exprs, data_length) => {
+                self.emit_data(pc, exprs, *data_length, error_on_failure)
             }
             _ => Ok(None),
         }
@@ -559,8 +552,18 @@ mod tests {
 
     #[test]
     fn can_store_data() -> TestResult {
-        let ctx = test_codegen(".byte 123\n.word 64738")?;
-        assert_eq!(ctx.current_segment().data, vec![123, 0xe2, 0xfc]);
+        let ctx = test_codegen(".byte 123\n.word 123\n.word $fce2")?;
+        assert_eq!(ctx.current_segment().data, vec![123, 123, 0, 0xe2, 0xfc]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_store_csv_data() -> TestResult {
+        let ctx = test_codegen(".word 123, foo, 234\nfoo: nop")?;
+        assert_eq!(
+            ctx.current_segment().data,
+            vec![123, 0, 0x06, 0xc0, 234, 0, 0xea]
+        );
         Ok(())
     }
 
