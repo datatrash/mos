@@ -113,8 +113,23 @@ pub enum NumberType {
 }
 
 #[derive(Debug)]
+pub enum AddressModifier {
+    HighByte,
+    LowByte,
+}
+
+impl Display for AddressModifier {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            Self::LowByte => write!(f, "<"),
+            Self::HighByte => write!(f, ">"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Expression<'a> {
-    Identifier(Identifier),
+    Identifier(Identifier, Option<AddressModifier>),
     Number(usize, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     BinaryAdd(
@@ -250,8 +265,12 @@ impl Display for Comment {
 impl<'a> Display for Expression<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Expression::Identifier(id) => {
-                write!(f, "{}", id.0)
+            Expression::Identifier(id, modifier) => {
+                let modifier = match modifier {
+                    Some(m) => m.to_string(),
+                    None => "".to_string(),
+                };
+                write!(f, "{}{}", modifier, id.0)
             }
             Expression::Number(val, ty) => match ty {
                 NumberType::Hex => write!(f, "${:x}", val),

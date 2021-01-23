@@ -134,11 +134,15 @@ impl<'ctx> CodegenContext<'ctx> {
                     _ => Ok(None),
                 }
             }
-            Expression::Identifier(label_name) => {
-                match (self.labels.get(label_name), error_on_failure) {
-                    (Some(pc), _) => Ok(Some(pc.0 as usize)),
-                    (None, false) => Ok(None),
-                    (None, true) => Err(CodegenError::UnknownIdentifier(
+            Expression::Identifier(label_name, modifier) => {
+                match (self.labels.get(label_name), modifier, error_on_failure) {
+                    (Some(pc), None, _) => Ok(Some(pc.0 as usize)),
+                    (Some(pc), Some(modifier), _) => match modifier {
+                        AddressModifier::HighByte => Ok(Some((pc.0 >> 8) as usize)),
+                        AddressModifier::LowByte => Ok(Some((pc.0 & 255) as usize)),
+                    },
+                    (None, _, false) => Ok(None),
+                    (None, _, true) => Err(CodegenError::UnknownIdentifier(
                         lt.location.clone(),
                         label_name.clone(),
                     )),
@@ -541,6 +545,16 @@ mod tests {
     fn accessing_forwarded_labels_will_default_to_absolute_addressing() -> TestResult {
         let ctx = test_codegen("lda my_label\nmy_label: nop")?;
         assert_eq!(ctx.current_segment().data, vec![0xad, 0x03, 0xc0, 0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_modify_addresses() -> TestResult {
+        let ctx = test_codegen("lda #<my_label\nlda #>my_label\nmy_label: nop")?;
+        assert_eq!(
+            ctx.current_segment().data,
+            vec![0xa9, 0x04, 0xa9, 0xc0, 0xea]
+        );
         Ok(())
     }
 

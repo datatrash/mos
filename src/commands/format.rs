@@ -48,7 +48,13 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
             NumberType::Hex => format!("${:x}", val),
             NumberType::Dec => format!("{}", val),
         },
-        Expression::Identifier(id) => id.0.clone(),
+        Expression::Identifier(id, modifier) => {
+            let modifier = match modifier {
+                Some(m) => m.to_string(),
+                None => "".to_string(),
+            };
+            format!("{}{}", modifier, id.0.clone())
+        }
         Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
         Expression::BinaryAdd(lhs, rhs) => {
             format!("{} + {}", lhs.data, rhs.data)

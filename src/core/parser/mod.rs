@@ -135,18 +135,29 @@ where
     )
 }
 
+fn identifier_name(input: LocatedSpan) -> IResult<LocatedSpan> {
+    recognize(pair(
+        alt((alpha1, tag("_"))),
+        many0(alt((alphanumeric1, tag("_")))),
+    ))(input)
+}
+
 fn identifier(input: LocatedSpan) -> IResult<Located<Expression>> {
     let location = Location::from(&input);
 
-    let id = recognize(pair(
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_")))),
+    let id = tuple((
+        opt(map(alt((char('<'), char('>'))), move |m| match m {
+            '<' => Some(AddressModifier::LowByte),
+            '>' => Some(AddressModifier::HighByte),
+            _ => panic!(),
+        })),
+        identifier_name,
     ));
 
-    map(id, move |span: LocatedSpan| {
+    map(id, move |(modifier, span)| {
         Located::from(
             location.clone(),
-            Expression::Identifier(Identifier(span.fragment().to_string())),
+            Expression::Identifier(Identifier(span.fragment().to_string()), modifier.flatten()),
         )
     })(input)
 }
@@ -262,7 +273,7 @@ fn error(input: LocatedSpan) -> IResult<Located<Token>> {
         |span: LocatedSpan| {
             let err = ParseError::UnexpectedError {
                 location: Location::from(&span),
-                message: format!("unexpected `{}`", span.fragment()),
+                message: format!("unexpected '{}'", span.fragment()),
             };
             span.extra.report_error(err);
             Located::from(Location::from(&span), Token::Error)
@@ -274,10 +285,13 @@ fn label(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map(
-        tuple((identifier, expect(char(':'), "labels should end with ':'"))),
-        move |(id, _)| match id.data {
-            Expression::Identifier(id) => Located::from(location.clone(), Token::Label(id)),
-            _ => panic!(),
+        tuple((
+            identifier_name,
+            expect(char(':'), "labels should end with ':'"),
+        )),
+        move |(id, _)| {
+            let id = Identifier(id.fragment().to_string());
+            Located::from(location.clone(), Token::Label(id))
         },
     )(input)
 }
@@ -477,6 +491,13 @@ mod test {
     }
 
     #[test]
+    fn parse_address_modifiers() {
+        check("lda #<foo", "LDA #<foo");
+        check("lda #>foo", "LDA #>foo");
+        check_err("lda #!foo", "test.asm:1:5: error: unexpected '#!foo'");
+    }
+
+    #[test]
     fn parse_data() -> MosResult<()> {
         let expr = parse(
             "test.asm",
@@ -494,8 +515,13 @@ mod test {
     }
 
     fn check(src: &str, expected: &str) {
-        let expr = dbg!(parse("test.asm", src)).ok().unwrap();
+        let expr = parse("test.asm", src).ok().unwrap();
         let e = expr.get(0).unwrap();
         assert_eq!(format!("{}", e.data), expected.to_string());
+    }
+
+    fn check_err(src: &str, expected: &str) {
+        let err = parse("test.asm", src).err().unwrap();
+        assert_eq!(err.to_string(), expected.to_string());
     }
 }
