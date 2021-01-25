@@ -3,7 +3,7 @@ name = "mos"
 version = "0.1.0"
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
 edition = "2018"
-repository = "https://github.com/RoyJacobs/mosdev/tree/master/mos"
+repository = "https://github.com/datatrash/mos"
 license = "MIT"
 keywords = ["retro", "6502", "assembler"]
 
