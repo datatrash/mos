@@ -43,7 +43,7 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
         let ast = parser::parse(input_name, source.as_str())?;
 
         let generated_code = codegen(ast, CodegenOptions::default())?;
-        let segment = generated_code.segment("Default").unwrap();
+        let segment = generated_code.segments().current();
         let mut out = fs::File::create(target_dir.join(output_path))?;
         out.write_all(&segment.range().start.to_le_bytes())?;
         out.write_all(&segment.range_data())?;

@@ -45,45 +45,75 @@ impl Default for CodegenOptions {
     }
 }
 
+pub enum Symbol {
+    Label(ProgramCounter),
+}
+
+pub struct SegmentMap<'a> {
+    segments: HashMap<&'a str, Segment>,
+    current: Option<&'a str>,
+}
+
+impl<'a> SegmentMap<'a> {
+    fn new() -> Self {
+        Self {
+            segments: HashMap::new(),
+            current: None,
+        }
+    }
+
+    fn insert<'b: 'a>(&mut self, name: &'b str, segment: Segment) {
+        self.segments.insert(name, segment);
+        if self.current.is_none() {
+            self.current = Some(name);
+        }
+    }
+
+    fn get(&self, name: &str) -> &Segment {
+        self.segments
+            .get(name)
+            .unwrap_or_else(|| panic!("Segment not found: {}", name))
+    }
+
+    fn get_mut(&mut self, name: &str) -> &mut Segment {
+        self.segments
+            .get_mut(name)
+            .unwrap_or_else(|| panic!("Segment not found: {}", name))
+    }
+
+    pub(crate) fn current(&self) -> &Segment {
+        self.get(self.current.expect("No current segment"))
+    }
+
+    fn current_mut(&mut self) -> &mut Segment {
+        self.get_mut(self.current.expect("No current segment"))
+    }
+}
+
 pub struct CodegenContext<'ctx> {
-    segments: HashMap<&'ctx str, Segment>,
-    current_segment: &'ctx str,
-    labels: HashMap<String, ProgramCounter>,
+    segments: SegmentMap<'ctx>,
+    symbols: HashMap<String, Symbol>,
 }
 
 impl<'ctx> CodegenContext<'ctx> {
     fn new(options: CodegenOptions) -> Self {
-        let mut segments = HashMap::new();
+        let mut segments = SegmentMap::new();
         let default_segment = Segment::new(options.pc);
         segments.insert("Default", default_segment);
 
         Self {
             segments,
-            current_segment: "Default",
-            labels: HashMap::new(),
+            symbols: HashMap::new(),
         }
     }
 
-    pub fn segment(&self, name: &str) -> Option<&Segment> {
-        self.segments.get(name)
+    pub fn segments(&self) -> &SegmentMap {
+        &self.segments
     }
 
-    fn segment_mut(&mut self, name: &str) -> Option<&mut Segment> {
-        self.segments.get_mut(name)
-    }
-
-    fn current_segment(&self) -> &Segment {
-        self.segments.get(self.current_segment).unwrap()
-    }
-
-    fn current_segment_mut(&mut self) -> &mut Segment {
-        self.segments.get_mut(self.current_segment).unwrap()
-    }
-
-    fn register_label(&mut self, pc: Option<ProgramCounter>, label: &Identifier) {
-        let segment = self.current_segment_mut();
-        let pc = pc.unwrap_or_else(|| segment.current_pc());
-        self.labels.insert(label.0.to_string(), pc);
+    fn register_label(&mut self, pc: Option<ProgramCounter>, label: String) {
+        let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
+        self.symbols.insert(label, Symbol::Label(pc));
     }
 
     fn evaluate<'a>(
@@ -94,8 +124,7 @@ impl<'ctx> CodegenContext<'ctx> {
         match &lt.data {
             Expression::Number(n, _) => Ok(Some(*n)),
             Expression::CurrentProgramCounter => {
-                let segment = self.current_segment();
-                Ok(Some(segment.current_pc().into()))
+                Ok(Some(self.segments.current().current_pc().into()))
             }
             Expression::BinaryAdd(lhs, rhs)
             | Expression::BinarySub(lhs, rhs)
@@ -112,7 +141,15 @@ impl<'ctx> CodegenContext<'ctx> {
                 }
             }
             Expression::Identifier(label_name, modifier) => {
-                match (self.labels.get(label_name.0), modifier, error_on_failure) {
+                let symbol_pc = self
+                    .symbols
+                    .get(label_name.0)
+                    .map(|s| match s {
+                        Symbol::Label(pc) => Some(pc),
+                    })
+                    .flatten();
+
+                match (symbol_pc, modifier, error_on_failure) {
                     (Some(pc), None, _) => Ok(Some(pc.into())),
                     (Some(pc), Some(modifier), _) => match modifier {
                         AddressModifier::HighByte => Ok(Some((usize::from(pc) >> 8) & 255)),
@@ -190,10 +227,10 @@ impl<'ctx> CodegenContext<'ctx> {
     ) -> CodegenResult<'b, Option<ProgramCounter>> {
         let pc = match pc {
             Some(pc) => {
-                self.current_segment_mut().set_current_pc(pc);
+                self.segments.current_mut().set_current_pc(pc);
                 pc
             }
-            None => self.current_segment().current_pc(),
+            None => self.segments.current().current_pc(),
         };
 
         type MM = Mnemonic;
@@ -354,8 +391,7 @@ impl<'ctx> CodegenContext<'ctx> {
             None => (true, smallvec![possible_opcodes[0].0]),
         };
 
-        let segment = self.current_segment_mut();
-        segment.set(&bytes);
+        self.segments.current_mut().set(&bytes);
 
         if expression_is_valid {
             // Done with this token
@@ -373,35 +409,37 @@ impl<'ctx> CodegenContext<'ctx> {
         data_length: usize,
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<ProgramCounter>> {
-        let segment = self.current_segment();
-        let pc = pc.unwrap_or_else(|| segment.current_pc());
+        let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
 
         // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
         let mut any_failed = false;
 
         // Before evaluating, make sure that the current segment has the right PC, since it may be used in an expression (e.g. 'lda *')
-        let segment = self.current_segment_mut();
-        segment.set_current_pc(pc);
+        self.segments.current_mut().set_current_pc(pc);
 
         for expr in exprs {
             let evaluated = self.evaluate(expr, error_on_failure)?;
             match evaluated {
                 Some(val) => {
-                    let segment = self.current_segment_mut();
                     match data_length {
-                        1 => segment.set(&[val as u8]),
-                        2 => segment.set(&((val as u16).to_le_bytes())),
-                        4 => segment.set(&((val as u32).to_le_bytes())),
+                        1 => self.segments.current_mut().set(&[val as u8]),
+                        2 => self
+                            .segments
+                            .current_mut()
+                            .set(&((val as u16).to_le_bytes())),
+                        4 => self
+                            .segments
+                            .current_mut()
+                            .set(&((val as u32).to_le_bytes())),
                         _ => panic!(),
                     };
                 }
                 None => {
                     any_failed = true;
-                    let segment = self.current_segment_mut();
                     match data_length {
-                        1 => segment.set(&[0_u8]),
-                        2 => segment.set(&(0_u16.to_le_bytes())),
-                        4 => segment.set(&(0_u32.to_le_bytes())),
+                        1 => self.segments.current_mut().set(&[0_u8]),
+                        2 => self.segments.current_mut().set(&(0_u16.to_le_bytes())),
+                        4 => self.segments.current_mut().set(&(0_u32.to_le_bytes())),
                         _ => panic!(),
                     };
                 }
@@ -424,7 +462,7 @@ impl<'ctx> CodegenContext<'ctx> {
     ) -> CodegenResult<'b, Option<ProgramCounter>> {
         match token {
             Token::Label(id) => {
-                self.register_label(pc, id);
+                self.register_label(pc, id.0.to_string());
                 Ok(None)
             }
             Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
@@ -500,14 +538,14 @@ mod tests {
     #[test]
     fn basic() -> TestResult {
         let ctx = test_codegen("lda #123")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 123]);
+        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 123]);
         Ok(())
     }
 
     #[test]
     fn basic_with_comments() -> TestResult {
         let ctx = test_codegen("lda /*hello*/ #123")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 123]);
+        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 123]);
         Ok(())
     }
 
@@ -516,7 +554,7 @@ mod tests {
         let ctx =
             test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2\nlda #1 + 5 * 4 + 3")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]
         );
         Ok(())
@@ -526,7 +564,7 @@ mod tests {
     fn can_access_current_pc() -> TestResult {
         let ctx = test_codegen("lda * + 3\nlda *")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0xad, 0x03, 0xc0, 0xad, 0x03, 0xc0]
         );
         Ok(())
@@ -536,7 +574,7 @@ mod tests {
     fn can_access_forward_declared_labels() -> TestResult {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0x4c, 0x03, 0xc0, 0xea]
         );
         Ok(())
@@ -546,7 +584,7 @@ mod tests {
     fn accessing_forwarded_labels_will_default_to_absolute_addressing() -> TestResult {
         let ctx = test_codegen("lda my_label\nmy_label: nop")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0xad, 0x03, 0xc0, 0xea]
         );
         Ok(())
@@ -556,7 +594,7 @@ mod tests {
     fn can_modify_addresses() -> TestResult {
         let ctx = test_codegen("lda #<my_label\nlda #>my_label\nmy_label: nop")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0xa9, 0x04, 0xa9, 0xc0, 0xea]
         );
         Ok(())
@@ -572,7 +610,7 @@ mod tests {
     fn can_store_data() -> TestResult {
         let ctx = test_codegen(".byte 123\n.word 123\n.word $fce2")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![123, 123, 0, 0xe2, 0xfc]
         );
         Ok(())
@@ -582,7 +620,7 @@ mod tests {
     fn can_store_current_pc_as_data() -> TestResult {
         let ctx = test_codegen(".word *\n.word foo - *\nfoo: nop")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0x00, 0xc0, 0x02, 0x00, 0xea]
         );
         Ok(())
@@ -592,7 +630,7 @@ mod tests {
     fn can_store_csv_data() -> TestResult {
         let ctx = test_codegen(".word 123, foo, 234\nfoo: nop")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![123, 0, 0x06, 0xc0, 234, 0, 0xea]
         );
         Ok(())
@@ -604,7 +642,7 @@ mod tests {
         // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 NOPs).
         let ctx = test_codegen("foo: .word bar - foo\nnop\nnop\nnop\nbar: nop")?;
         assert_eq!(
-            ctx.current_segment().range_data(),
+            ctx.segments().current().range_data(),
             vec![0x05, 0x00, 0xea, 0xea, 0xea, 0xea]
         );
         Ok(())
@@ -613,9 +651,15 @@ mod tests {
     #[test]
     fn can_perform_branch_calculations() -> TestResult {
         let ctx = test_codegen("foo: nop\nbne foo")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0xd0, 0xfd]);
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xea, 0xd0, 0xfd]
+        );
         let ctx = test_codegen("bne foo\nfoo: nop")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![0xd0, 0x00, 0xea]);
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xd0, 0x00, 0xea]
+        );
         Ok(())
     }
 
@@ -792,7 +836,7 @@ mod tests {
 
     fn code_eq(code: &'static str, data: &[u8]) {
         let ctx = test_codegen(code).unwrap();
-        assert_eq!(ctx.current_segment().range_data(), data);
+        assert_eq!(ctx.segments().current().range_data(), data);
     }
 
     fn test_codegen(code: &'static str) -> MosResult<CodegenContext<'static>> {
