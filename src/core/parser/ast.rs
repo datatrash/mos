@@ -1,8 +1,9 @@
-use crate::core::parser::mnemonic::Mnemonic;
-use crate::core::parser::ParseError;
 use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
+
+use crate::core::parser::mnemonic::Mnemonic;
+use crate::core::parser::ParseError;
 
 pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
@@ -132,6 +133,7 @@ pub enum Expression<'a> {
     Identifier(Identifier<'a>, Option<AddressModifier>),
     Number(usize, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
+    CurrentProgramCounter,
     BinaryAdd(
         Box<Located<'a, Expression<'a>>>,
         Box<Located<'a, Expression<'a>>>,
@@ -276,6 +278,7 @@ impl<'a> Display for Expression<'a> {
                 NumberType::Hex => write!(f, "${:x}", val),
                 NumberType::Dec => write!(f, "{}", val),
             },
+            Expression::CurrentProgramCounter => write!(f, "*"),
             Expression::ExprParens(inner) => {
                 write!(f, "[{}]", inner.data)
             }

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use nom::bytes::complete::{is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
@@ -12,7 +13,6 @@ pub use mnemonic::*;
 
 use crate::core::parser::mnemonic::mnemonic;
 use crate::errors::{MosError, MosResult};
-use std::rc::Rc;
 
 mod ast;
 mod mnemonic;
@@ -378,8 +378,16 @@ fn expression_parens(input: LocatedSpan) -> IResult<Located<Expression>> {
     )(input)
 }
 
+fn current_pc(input: LocatedSpan) -> IResult<Located<Expression>> {
+    let location = Location::from(&input);
+
+    ws(map(char('*'), move |_| {
+        Located::from(location.clone(), Expression::CurrentProgramCounter)
+    }))(input)
+}
+
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
-    ws(alt((number, identifier, expression_parens)))(input)
+    ws(alt((number, identifier, current_pc, expression_parens)))(input)
 }
 
 enum Operation {
@@ -488,6 +496,12 @@ mod test {
         check("lda 12345, y", "LDA 12345, y");
         check("lda (123), x", "LDA (123), x");
         check("lda (123, x)", "LDA (123, x)");
+    }
+
+    #[test]
+    fn parse_current_pc() {
+        check("lda *", "LDA *");
+        check("lda * - 3", "LDA * - 3");
     }
 
     #[test]

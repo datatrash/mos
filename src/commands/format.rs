@@ -1,10 +1,13 @@
 #![allow(dead_code)]
+
+use std::io::Write;
+
+use clap::{App, Arg, ArgMatches};
+use fs_err::{read_to_string, OpenOptions};
+
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::*;
 use crate::errors::MosResult;
-use clap::{App, Arg, ArgMatches};
-use fs_err::{read_to_string, OpenOptions};
-use std::io::Write;
 
 #[cfg(windows)]
 const LINE_ENDING: &str = "\r\n";
@@ -57,6 +60,7 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
             format!("{}{}", modifier, id.0)
         }
         Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
+        Expression::CurrentProgramCounter => "*".to_string(),
         Expression::BinaryAdd(lhs, rhs) => {
             format!("{} + {}", lhs.data, rhs.data)
         }
@@ -221,10 +225,11 @@ pub fn format_command(args: &ArgMatches) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
+
     use crate::commands::format::{format, Options};
     use crate::commands::{format_app, format_command};
     use crate::core::parser::parse;
-    use anyhow::Result;
 
     #[test]
     fn format_valid_code() -> Result<()> {

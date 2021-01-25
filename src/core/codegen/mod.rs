@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+
+use smallvec::{smallvec, SmallVec};
+
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
-use smallvec::{smallvec, SmallVec};
-use std::collections::HashMap;
 
 pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
 
@@ -74,6 +76,10 @@ impl Segment {
         self.pc.0 += length as u16;
         self.pc
     }
+
+    fn set_pc(&mut self, pc: ProgramCounter) {
+        self.pc = pc;
+    }
 }
 
 pub struct CodegenContext<'ctx> {
@@ -128,6 +134,10 @@ impl<'ctx> CodegenContext<'ctx> {
     ) -> CodegenResult<'a, Option<usize>> {
         match &lt.data {
             Expression::Number(n, _) => Ok(Some(*n)),
+            Expression::CurrentProgramCounter => {
+                let segment = self.current_segment();
+                Ok(Some(segment.pc.0.into()))
+            }
             Expression::BinaryAdd(lhs, rhs)
             | Expression::BinarySub(lhs, rhs)
             | Expression::BinaryMul(lhs, rhs)
@@ -399,21 +409,26 @@ impl<'ctx> CodegenContext<'ctx> {
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<ProgramCounter>> {
         let segment = self.current_segment();
-        let pc = pc.unwrap_or(segment.pc);
+        let original_pc = pc.unwrap_or(segment.pc);
+        let mut pc = original_pc;
 
         // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
         let mut any_failed = false;
 
-        let mut cur_pc = pc;
+        // Before evaluating, make sure that the current segment has the right PC, since it may be used in an expression (e.g. 'lda *')
+        let segment = self.current_segment_mut();
+        segment.set_pc(pc);
+
         for expr in exprs {
             let evaluated = self.evaluate(expr, error_on_failure)?;
             match evaluated {
                 Some(val) => {
                     let segment = self.current_segment_mut();
+                    segment.set_pc(pc);
                     match data_length {
-                        1 => cur_pc = segment.set(cur_pc, &[val as u8]),
-                        2 => cur_pc = segment.set(cur_pc, &((val as u16).to_le_bytes())),
-                        4 => cur_pc = segment.set(cur_pc, &((val as u32).to_le_bytes())),
+                        1 => pc = segment.set(pc, &[val as u8]),
+                        2 => pc = segment.set(pc, &((val as u16).to_le_bytes())),
+                        4 => pc = segment.set(pc, &((val as u32).to_le_bytes())),
                         _ => panic!(),
                     }
                 }
@@ -421,9 +436,9 @@ impl<'ctx> CodegenContext<'ctx> {
                     any_failed = true;
                     let segment = self.current_segment_mut();
                     match data_length {
-                        1 => cur_pc = segment.set(cur_pc, &[0_u8]),
-                        2 => cur_pc = segment.set(cur_pc, &(0_u16.to_le_bytes())),
-                        4 => cur_pc = segment.set(cur_pc, &(0_u32.to_le_bytes())),
+                        1 => pc = segment.set(pc, &[0_u8]),
+                        2 => pc = segment.set(pc, &(0_u16.to_le_bytes())),
+                        4 => pc = segment.set(pc, &(0_u32.to_le_bytes())),
                         _ => panic!(),
                     }
                 }
@@ -431,7 +446,7 @@ impl<'ctx> CodegenContext<'ctx> {
         }
 
         if any_failed {
-            Ok(Some(pc))
+            Ok(Some(original_pc))
         } else {
             Ok(None)
         }
@@ -513,8 +528,9 @@ pub fn codegen<'ctx, 'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::parser::parse;
+
+    use super::*;
 
     type TestResult = MosResult<()>;
 
@@ -539,6 +555,16 @@ mod tests {
         assert_eq!(
             ctx.current_segment().data,
             vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_access_current_pc() -> TestResult {
+        let ctx = test_codegen("lda * + 3\nlda *")?;
+        assert_eq!(
+            ctx.current_segment().data,
+            vec![0xad, 0x03, 0xc0, 0xad, 0x03, 0xc0]
         );
         Ok(())
     }
@@ -577,6 +603,16 @@ mod tests {
     fn can_store_data() -> TestResult {
         let ctx = test_codegen(".byte 123\n.word 123\n.word $fce2")?;
         assert_eq!(ctx.current_segment().data, vec![123, 123, 0, 0xe2, 0xfc]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_store_current_pc_as_data() -> TestResult {
+        let ctx = test_codegen(".word *\n.word foo - *\nfoo: nop")?;
+        assert_eq!(
+            ctx.current_segment().data,
+            vec![0x00, 0xc0, 0x02, 0x00, 0xea]
+        );
         Ok(())
     }
 
