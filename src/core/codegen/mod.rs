@@ -45,6 +45,14 @@ pub struct CodegenOptions {
     pub pc: ProgramCounter,
 }
 
+impl Default for CodegenOptions {
+    fn default() -> Self {
+        Self {
+            pc: ProgramCounter::new(0xc000),
+        }
+    }
+}
+
 pub struct Segment {
     pub data: Vec<u8>,
     pub start_pc: ProgramCounter,
@@ -526,10 +534,11 @@ mod tests {
 
     #[test]
     fn expressions() -> TestResult {
-        let ctx = test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2")?;
+        let ctx =
+            test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2\nlda #1 + 5 * 4 + 3")?;
         assert_eq!(
             ctx.current_segment().data,
-            vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4]
+            vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]
         );
         Ok(())
     }
@@ -607,12 +616,7 @@ mod tests {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
         let src = format!("foo: {}bne foo", many_nops);
         let ast = parse("test.asm", &src)?;
-        let result = codegen(
-            ast,
-            CodegenOptions {
-                pc: ProgramCounter::new(0xc000),
-            },
-        );
+        let result = codegen(ast, CodegenOptions::default());
         assert_eq!(
             format!("{}", result.err().unwrap()),
             "test.asm:141:1: error: branch too far"
@@ -785,11 +789,6 @@ mod tests {
 
     fn test_codegen(code: &'static str) -> MosResult<CodegenContext<'static>> {
         let ast = parse("test.asm", &code)?;
-        codegen(
-            ast,
-            CodegenOptions {
-                pc: ProgramCounter::new(0xc000),
-            },
-        )
+        codegen(ast, CodegenOptions::default())
     }
 }

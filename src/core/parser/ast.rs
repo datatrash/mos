@@ -19,7 +19,7 @@ impl<'a> State<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Comment {
     CStyle(String),
     CppStyle(String),
@@ -84,13 +84,13 @@ pub enum Register {
     Y,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instruction<'a> {
     pub mnemonic: Mnemonic,
     pub operand: Option<Box<Located<'a, Token<'a>>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AddressingMode {
     AbsoluteOrZP,
     Immediate,
@@ -99,20 +99,20 @@ pub enum AddressingMode {
     OuterIndirect,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Operand<'a> {
     pub expr: Box<Located<'a, Expression<'a>>>,
     pub addressing_mode: AddressingMode,
     pub suffix: Option<Box<Located<'a, Token<'a>>>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NumberType {
     Hex,
     Dec,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AddressModifier {
     HighByte,
     LowByte,
@@ -127,7 +127,7 @@ impl Display for AddressModifier {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression<'a> {
     Identifier(Identifier<'a>, Option<AddressModifier>),
     Number(usize, NumberType),
@@ -151,7 +151,7 @@ pub enum Expression<'a> {
     Ws(Vec<Comment>, Box<Located<'a, Expression<'a>>>, Vec<Comment>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Token<'a> {
     Label(Identifier<'a>),
     Instruction(Instruction<'a>),
@@ -162,7 +162,7 @@ pub enum Token<'a> {
     Error,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Located<'a, T: CanWrapWhitespace<'a>> {
     pub location: Location<'a>,
     pub data: T,

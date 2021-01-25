@@ -1,4 +1,4 @@
-use crate::core::codegen::{codegen, CodegenOptions, ProgramCounter};
+use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser;
 use crate::errors::MosResult;
 use clap::{App, Arg, ArgMatches};
@@ -40,12 +40,7 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
         let ast = parser::parse(input_name, source.as_str())?;
 
-        let generated_code = codegen(
-            ast,
-            CodegenOptions {
-                pc: ProgramCounter::new(0xc000),
-            },
-        )?;
+        let generated_code = codegen(ast, CodegenOptions::default())?;
         let segment = generated_code.segment("Default").unwrap();
         let mut out = fs::File::create(target_dir.join(output_path))?;
         out.write_all(&segment.start_pc.to_le_bytes())?;

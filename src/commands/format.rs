@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::*;
 use crate::errors::MosResult;
 use clap::{App, Arg, ArgMatches};
@@ -206,6 +207,7 @@ pub fn format_command(args: &ArgMatches) -> MosResult<()> {
     for input_name in input_names {
         let source = read_to_string(input_name)?;
         let ast = parse(input_name, &source)?;
+        let _code = codegen(ast.clone(), CodegenOptions::default())?;
         let formatted = format(&ast, &Options::default());
         let mut output_file = OpenOptions::new()
             .truncate(true)
