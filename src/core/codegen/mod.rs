@@ -10,7 +10,7 @@ pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum CodegenError<'a> {
     #[error("unknown identifier: {1}")]
-    UnknownIdentifier(Location<'a>, Identifier),
+    UnknownIdentifier(Location<'a>, Identifier<'a>),
     #[error("branch too far")]
     BranchTooFar(Location<'a>),
 }
@@ -71,7 +71,7 @@ impl Segment {
 pub struct CodegenContext<'ctx> {
     segments: HashMap<&'ctx str, Segment>,
     current_segment: &'ctx str,
-    labels: HashMap<Identifier, ProgramCounter>,
+    labels: HashMap<String, ProgramCounter>,
 }
 
 impl<'ctx> CodegenContext<'ctx> {
@@ -110,7 +110,7 @@ impl<'ctx> CodegenContext<'ctx> {
     fn register_label(&mut self, pc: Option<ProgramCounter>, label: &Identifier) {
         let segment = self.current_segment_mut();
         let pc = pc.unwrap_or(segment.pc);
-        self.labels.insert(label.clone(), pc);
+        self.labels.insert(label.0.to_string(), pc);
     }
 
     fn evaluate<'a>(
@@ -135,7 +135,7 @@ impl<'ctx> CodegenContext<'ctx> {
                 }
             }
             Expression::Identifier(label_name, modifier) => {
-                match (self.labels.get(label_name), modifier, error_on_failure) {
+                match (self.labels.get(label_name.0), modifier, error_on_failure) {
                     (Some(pc), None, _) => Ok(Some(pc.0 as usize)),
                     (Some(pc), Some(modifier), _) => match modifier {
                         AddressModifier::HighByte => Ok(Some((pc.0 >> 8) as usize)),

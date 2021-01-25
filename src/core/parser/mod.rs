@@ -157,7 +157,7 @@ fn identifier(input: LocatedSpan) -> IResult<Located<Expression>> {
     map(id, move |(modifier, span)| {
         Located::from(
             location.clone(),
-            Expression::Identifier(Identifier(span.fragment().to_string()), modifier.flatten()),
+            Expression::Identifier(Identifier(span.fragment()), modifier.flatten()),
         )
     })(input)
 }
@@ -290,7 +290,7 @@ fn label(input: LocatedSpan) -> IResult<Located<Token>> {
             expect(char(':'), "labels should end with ':'"),
         )),
         move |(id, _)| {
-            let id = Identifier(id.fragment().to_string());
+            let id = Identifier(id.fragment());
             Located::from(location.clone(), Token::Label(id))
         },
     )(input)

@@ -26,9 +26,9 @@ pub enum Comment {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Identifier(pub String);
+pub struct Identifier<'a>(pub &'a str);
 
-impl Display for Identifier {
+impl<'a> Display for Identifier<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -129,7 +129,7 @@ impl Display for AddressModifier {
 
 #[derive(Debug)]
 pub enum Expression<'a> {
-    Identifier(Identifier, Option<AddressModifier>),
+    Identifier(Identifier<'a>, Option<AddressModifier>),
     Number(usize, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     BinaryAdd(
@@ -153,7 +153,7 @@ pub enum Expression<'a> {
 
 #[derive(Debug)]
 pub enum Token<'a> {
-    Label(Identifier),
+    Label(Identifier<'a>),
     Instruction(Instruction<'a>),
     Operand(Operand<'a>),
     RegisterSuffix(Register),

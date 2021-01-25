@@ -53,7 +53,7 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
                 Some(m) => m.to_string(),
                 None => "".to_string(),
             };
-            format!("{}{}", modifier, id.0.clone())
+            format!("{}{}", modifier, id.0)
         }
         Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
         Expression::BinaryAdd(lhs, rhs) => {
