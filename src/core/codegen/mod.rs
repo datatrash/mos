@@ -4,8 +4,11 @@ use std::collections::HashMap;
 
 use smallvec::{smallvec, SmallVec};
 
+use crate::core::codegen::segment::{ProgramCounter, Segment};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
+
+mod segment;
 
 pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
 
@@ -30,19 +33,6 @@ impl<'a> From<CodegenError<'a>> for MosError {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct ProgramCounter(u16);
-
-impl ProgramCounter {
-    pub fn new(pc: u16) -> Self {
-        Self(pc)
-    }
-
-    pub fn to_le_bytes(&self) -> [u8; 2] {
-        self.0.to_le_bytes()
-    }
-}
-
 pub struct CodegenOptions {
     pub pc: ProgramCounter,
 }
@@ -55,33 +45,6 @@ impl Default for CodegenOptions {
     }
 }
 
-pub struct Segment {
-    pub data: Vec<u8>,
-    pub start_pc: ProgramCounter,
-    pc: ProgramCounter,
-}
-
-impl Segment {
-    fn set(&mut self, pc: ProgramCounter, bytes: &[u8]) -> ProgramCounter {
-        self.pc = pc;
-
-        let length = bytes.len();
-        let target = (self.pc.0 - self.start_pc.0) as usize;
-        if self.data.len() < target + length {
-            self.data.resize(target + length, 0);
-        }
-        for (offset, byte) in bytes.iter().enumerate() {
-            self.data[target + offset] = *byte;
-        }
-        self.pc.0 += length as u16;
-        self.pc
-    }
-
-    fn set_pc(&mut self, pc: ProgramCounter) {
-        self.pc = pc;
-    }
-}
-
 pub struct CodegenContext<'ctx> {
     segments: HashMap<&'ctx str, Segment>,
     current_segment: &'ctx str,
@@ -91,11 +54,7 @@ pub struct CodegenContext<'ctx> {
 impl<'ctx> CodegenContext<'ctx> {
     fn new(options: CodegenOptions) -> Self {
         let mut segments = HashMap::new();
-        let default_segment = Segment {
-            data: vec![],
-            start_pc: options.pc,
-            pc: options.pc,
-        };
+        let default_segment = Segment::new(options.pc);
         segments.insert("Default", default_segment);
 
         Self {
@@ -123,7 +82,7 @@ impl<'ctx> CodegenContext<'ctx> {
 
     fn register_label(&mut self, pc: Option<ProgramCounter>, label: &Identifier) {
         let segment = self.current_segment_mut();
-        let pc = pc.unwrap_or(segment.pc);
+        let pc = pc.unwrap_or_else(|| segment.current_pc());
         self.labels.insert(label.0.to_string(), pc);
     }
 
@@ -136,7 +95,7 @@ impl<'ctx> CodegenContext<'ctx> {
             Expression::Number(n, _) => Ok(Some(*n)),
             Expression::CurrentProgramCounter => {
                 let segment = self.current_segment();
-                Ok(Some(segment.pc.0.into()))
+                Ok(Some(segment.current_pc().into()))
             }
             Expression::BinaryAdd(lhs, rhs)
             | Expression::BinarySub(lhs, rhs)
@@ -154,10 +113,10 @@ impl<'ctx> CodegenContext<'ctx> {
             }
             Expression::Identifier(label_name, modifier) => {
                 match (self.labels.get(label_name.0), modifier, error_on_failure) {
-                    (Some(pc), None, _) => Ok(Some(pc.0 as usize)),
+                    (Some(pc), None, _) => Ok(Some(pc.into())),
                     (Some(pc), Some(modifier), _) => match modifier {
-                        AddressModifier::HighByte => Ok(Some((pc.0 >> 8) as usize)),
-                        AddressModifier::LowByte => Ok(Some((pc.0 & 255) as usize)),
+                        AddressModifier::HighByte => Ok(Some((usize::from(pc) >> 8) & 255)),
+                        AddressModifier::LowByte => Ok(Some(usize::from(pc) & 255)),
                     },
                     (None, _, false) => Ok(None),
                     (None, _, true) => Err(CodegenError::UnknownIdentifier(
@@ -202,7 +161,7 @@ impl<'ctx> CodegenContext<'ctx> {
                         | Mnemonic::Bvc
                         | Mnemonic::Bvs => {
                             let target_pc = val as i64;
-                            let cur_pc = (pc.0 + 2) as i64;
+                            let cur_pc = (usize::from(pc) + 2) as i64;
                             let mut offset = target_pc - cur_pc;
                             if offset >= -128 && offset <= 127 {
                                 if offset < 0 {
@@ -229,7 +188,13 @@ impl<'ctx> CodegenContext<'ctx> {
         location: &'a Location<'b>,
         error_on_failure: bool,
     ) -> CodegenResult<'b, Option<ProgramCounter>> {
-        let pc = pc.unwrap_or(self.current_segment().pc);
+        let pc = match pc {
+            Some(pc) => {
+                self.current_segment_mut().set_current_pc(pc);
+                pc
+            }
+            None => self.current_segment().current_pc(),
+        };
 
         type MM = Mnemonic;
         type AM = AddressingMode;
@@ -390,7 +355,7 @@ impl<'ctx> CodegenContext<'ctx> {
         };
 
         let segment = self.current_segment_mut();
-        segment.set(pc, &bytes);
+        segment.set(&bytes);
 
         if expression_is_valid {
             // Done with this token
@@ -409,44 +374,42 @@ impl<'ctx> CodegenContext<'ctx> {
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<ProgramCounter>> {
         let segment = self.current_segment();
-        let original_pc = pc.unwrap_or(segment.pc);
-        let mut pc = original_pc;
+        let pc = pc.unwrap_or_else(|| segment.current_pc());
 
         // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
         let mut any_failed = false;
 
         // Before evaluating, make sure that the current segment has the right PC, since it may be used in an expression (e.g. 'lda *')
         let segment = self.current_segment_mut();
-        segment.set_pc(pc);
+        segment.set_current_pc(pc);
 
         for expr in exprs {
             let evaluated = self.evaluate(expr, error_on_failure)?;
             match evaluated {
                 Some(val) => {
                     let segment = self.current_segment_mut();
-                    segment.set_pc(pc);
                     match data_length {
-                        1 => pc = segment.set(pc, &[val as u8]),
-                        2 => pc = segment.set(pc, &((val as u16).to_le_bytes())),
-                        4 => pc = segment.set(pc, &((val as u32).to_le_bytes())),
+                        1 => segment.set(&[val as u8]),
+                        2 => segment.set(&((val as u16).to_le_bytes())),
+                        4 => segment.set(&((val as u32).to_le_bytes())),
                         _ => panic!(),
-                    }
+                    };
                 }
                 None => {
                     any_failed = true;
                     let segment = self.current_segment_mut();
                     match data_length {
-                        1 => pc = segment.set(pc, &[0_u8]),
-                        2 => pc = segment.set(pc, &(0_u16.to_le_bytes())),
-                        4 => pc = segment.set(pc, &(0_u32.to_le_bytes())),
+                        1 => segment.set(&[0_u8]),
+                        2 => segment.set(&(0_u16.to_le_bytes())),
+                        4 => segment.set(&(0_u32.to_le_bytes())),
                         _ => panic!(),
-                    }
+                    };
                 }
             }
         }
 
         if any_failed {
-            Ok(Some(original_pc))
+            Ok(Some(pc))
         } else {
             Ok(None)
         }
@@ -537,14 +500,14 @@ mod tests {
     #[test]
     fn basic() -> TestResult {
         let ctx = test_codegen("lda #123")?;
-        assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
+        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 123]);
         Ok(())
     }
 
     #[test]
     fn basic_with_comments() -> TestResult {
         let ctx = test_codegen("lda /*hello*/ #123")?;
-        assert_eq!(ctx.current_segment().data, vec![0xa9, 123]);
+        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 123]);
         Ok(())
     }
 
@@ -553,7 +516,7 @@ mod tests {
         let ctx =
             test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2\nlda #1 + 5 * 4 + 3")?;
         assert_eq!(
-            ctx.current_segment().data,
+            ctx.current_segment().range_data(),
             vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]
         );
         Ok(())
@@ -563,7 +526,7 @@ mod tests {
     fn can_access_current_pc() -> TestResult {
         let ctx = test_codegen("lda * + 3\nlda *")?;
         assert_eq!(
-            ctx.current_segment().data,
+            ctx.current_segment().range_data(),
             vec![0xad, 0x03, 0xc0, 0xad, 0x03, 0xc0]
         );
         Ok(())
@@ -572,14 +535,20 @@ mod tests {
     #[test]
     fn can_access_forward_declared_labels() -> TestResult {
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
-        assert_eq!(ctx.current_segment().data, vec![0x4c, 0x03, 0xc0, 0xea]);
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0x4c, 0x03, 0xc0, 0xea]
+        );
         Ok(())
     }
 
     #[test]
     fn accessing_forwarded_labels_will_default_to_absolute_addressing() -> TestResult {
         let ctx = test_codegen("lda my_label\nmy_label: nop")?;
-        assert_eq!(ctx.current_segment().data, vec![0xad, 0x03, 0xc0, 0xea]);
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xad, 0x03, 0xc0, 0xea]
+        );
         Ok(())
     }
 
@@ -587,7 +556,7 @@ mod tests {
     fn can_modify_addresses() -> TestResult {
         let ctx = test_codegen("lda #<my_label\nlda #>my_label\nmy_label: nop")?;
         assert_eq!(
-            ctx.current_segment().data,
+            ctx.current_segment().range_data(),
             vec![0xa9, 0x04, 0xa9, 0xc0, 0xea]
         );
         Ok(())
@@ -602,7 +571,10 @@ mod tests {
     #[test]
     fn can_store_data() -> TestResult {
         let ctx = test_codegen(".byte 123\n.word 123\n.word $fce2")?;
-        assert_eq!(ctx.current_segment().data, vec![123, 123, 0, 0xe2, 0xfc]);
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![123, 123, 0, 0xe2, 0xfc]
+        );
         Ok(())
     }
 
@@ -610,7 +582,7 @@ mod tests {
     fn can_store_current_pc_as_data() -> TestResult {
         let ctx = test_codegen(".word *\n.word foo - *\nfoo: nop")?;
         assert_eq!(
-            ctx.current_segment().data,
+            ctx.current_segment().range_data(),
             vec![0x00, 0xc0, 0x02, 0x00, 0xea]
         );
         Ok(())
@@ -620,7 +592,7 @@ mod tests {
     fn can_store_csv_data() -> TestResult {
         let ctx = test_codegen(".word 123, foo, 234\nfoo: nop")?;
         assert_eq!(
-            ctx.current_segment().data,
+            ctx.current_segment().range_data(),
             vec![123, 0, 0x06, 0xc0, 234, 0, 0xea]
         );
         Ok(())
@@ -632,7 +604,7 @@ mod tests {
         // 'foo' is a word label (so, 2 bytes), so 'bar - foo' should be 5 (2 bytes + 3 NOPs).
         let ctx = test_codegen("foo: .word bar - foo\nnop\nnop\nnop\nbar: nop")?;
         assert_eq!(
-            ctx.current_segment().data,
+            ctx.current_segment().range_data(),
             vec![0x05, 0x00, 0xea, 0xea, 0xea, 0xea]
         );
         Ok(())
@@ -641,9 +613,9 @@ mod tests {
     #[test]
     fn can_perform_branch_calculations() -> TestResult {
         let ctx = test_codegen("foo: nop\nbne foo")?;
-        assert_eq!(ctx.current_segment().data, vec![0xea, 0xd0, 0xfd]);
+        assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0xd0, 0xfd]);
         let ctx = test_codegen("bne foo\nfoo: nop")?;
-        assert_eq!(ctx.current_segment().data, vec![0xd0, 0x00, 0xea]);
+        assert_eq!(ctx.current_segment().range_data(), vec![0xd0, 0x00, 0xea]);
         Ok(())
     }
 
@@ -820,7 +792,7 @@ mod tests {
 
     fn code_eq(code: &'static str, data: &[u8]) {
         let ctx = test_codegen(code).unwrap();
-        assert_eq!(ctx.current_segment().data, data);
+        assert_eq!(ctx.current_segment().range_data(), data);
     }
 
     fn test_codegen(code: &'static str) -> MosResult<CodegenContext<'static>> {

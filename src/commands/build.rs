@@ -1,10 +1,12 @@
+use std::io::{Read, Write};
+use std::path::PathBuf;
+
+use clap::{App, Arg, ArgMatches};
+use fs_err as fs;
+
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser;
 use crate::errors::MosResult;
-use clap::{App, Arg, ArgMatches};
-use fs_err as fs;
-use std::io::{Read, Write};
-use std::path::PathBuf;
 
 pub fn build_app() -> App<'static> {
     App::new("build")
@@ -43,8 +45,8 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
         let generated_code = codegen(ast, CodegenOptions::default())?;
         let segment = generated_code.segment("Default").unwrap();
         let mut out = fs::File::create(target_dir.join(output_path))?;
-        out.write_all(&segment.start_pc.to_le_bytes())?;
-        out.write_all(&segment.data)?;
+        out.write_all(&segment.range().start.to_le_bytes())?;
+        out.write_all(&segment.range_data())?;
     }
 
     Ok(())
@@ -52,9 +54,11 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{build_app, build_command};
-    use anyhow::Result;
     use std::path::Path;
+
+    use anyhow::Result;
+
+    use crate::commands::{build_app, build_command};
 
     #[test]
     fn can_invoke_build() -> Result<()> {
