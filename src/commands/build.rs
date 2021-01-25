@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn can_invoke_build() -> Result<()> {
         let root = env!("CARGO_MANIFEST_DIR");
-        let input = &format!("{}/test/valid.asm", root);
+        let input = &format!("{}/test/cli/build/valid.asm", root);
 
         let args = build_app().get_matches_from(vec![
             "build",

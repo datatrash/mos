@@ -135,14 +135,22 @@ where
     )
 }
 
-fn identifier_name(input: LocatedSpan) -> IResult<LocatedSpan> {
-    recognize(pair(
-        alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_")))),
-    ))(input)
+fn identifier_name(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        )),
+        move |id: LocatedSpan| {
+            let id = Identifier(id.fragment());
+            Located::from(location.clone(), Token::IdentifierName(id))
+        },
+    )(input)
 }
 
-fn identifier(input: LocatedSpan) -> IResult<Located<Expression>> {
+fn identifier_value(input: LocatedSpan) -> IResult<Located<Expression>> {
     let location = Location::from(&input);
 
     let id = tuple((
@@ -154,10 +162,13 @@ fn identifier(input: LocatedSpan) -> IResult<Located<Expression>> {
         identifier_name,
     ));
 
-    map(id, move |(modifier, span)| {
+    map(id, move |(modifier, identifier_name)| {
         Located::from(
             location.clone(),
-            Expression::Identifier(Identifier(span.fragment()), modifier.flatten()),
+            Expression::IdentifierValue(
+                identifier_name.data.as_identifier().clone(),
+                modifier.flatten(),
+            ),
         )
     })(input)
 }
@@ -290,7 +301,7 @@ fn label(input: LocatedSpan) -> IResult<Located<Token>> {
             expect(char(':'), "labels should end with ':'"),
         )),
         move |(id, _)| {
-            let id = Identifier(id.fragment());
+            let id = id.data.as_identifier().clone();
             Located::from(location.clone(), Token::Label(id))
         },
     )(input)
@@ -315,8 +326,23 @@ fn data(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
+fn variable_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        tuple((
+            ws(preceded(tag_no_case(".var"), ws(identifier_name))),
+            ws(preceded(char('='), ws(expression))),
+        )),
+        move |(id, expr)| {
+            let id = id.data.as_identifier().clone();
+            Located::from(location.clone(), Token::VariableDefinition(id, expr))
+        },
+    )(input)
+}
+
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
-    alt((instruction, label, data, error))(input)
+    alt((instruction, variable_definition, label, data, error))(input)
 }
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
@@ -387,7 +413,12 @@ fn current_pc(input: LocatedSpan) -> IResult<Located<Expression>> {
 }
 
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
-    ws(alt((number, identifier, current_pc, expression_parens)))(input)
+    ws(alt((
+        number,
+        identifier_value,
+        current_pc,
+        expression_parens,
+    )))(input)
 }
 
 enum Operation {
@@ -499,6 +530,11 @@ mod test {
     }
 
     #[test]
+    fn parse_variable_definitions() {
+        check(".var foo=123", ".VAR foo = 123");
+    }
+
+    #[test]
     fn parse_current_pc() {
         check("lda *", "LDA *");
         check("lda * - 3", "LDA * - 3");
@@ -529,7 +565,10 @@ mod test {
     }
 
     fn check(src: &str, expected: &str) {
-        let expr = parse("test.asm", src).ok().unwrap();
+        let expr = match parse("test.asm", src) {
+            Ok(expr) => expr,
+            Err(e) => panic!("Errors: {:?}", e),
+        };
         let e = expr.get(0).unwrap();
         assert_eq!(format!("{}", e.data), expected.to_string());
     }

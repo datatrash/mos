@@ -11,6 +11,10 @@ impl ProgramCounter {
     pub fn to_le_bytes(&self) -> [u8; 2] {
         self.0.to_le_bytes()
     }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
 }
 
 impl From<u16> for ProgramCounter {

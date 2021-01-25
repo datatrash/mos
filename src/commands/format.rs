@@ -52,7 +52,7 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
             NumberType::Hex => format!("${:x}", val),
             NumberType::Dec => format!("{}", val),
         },
-        Expression::Identifier(id, modifier) => {
+        Expression::IdentifierValue(id, modifier) => {
             let modifier = match modifier {
                 Some(m) => m.to_string(),
                 None => "".to_string(),
@@ -105,6 +105,12 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 AddressingMode::Indirect => format!("({}{})", expr, suffix),
                 AddressingMode::OuterIndirect => format!("({}){}", expr, suffix),
             }
+        }
+        Token::IdentifierName(id) => {
+            format!("{}", id)
+        }
+        Token::VariableDefinition(id, val) => {
+            format!(".var {} = {}", id, val.data)
         }
         Token::Data(expr, size) => {
             let expr = expr
@@ -233,8 +239,8 @@ mod tests {
 
     #[test]
     fn format_valid_code() -> Result<()> {
-        let source = include_str!("../../test/valid-unformatted.asm");
-        let expected = include_str!("../../test/valid-formatted.asm");
+        let source = include_str!("../../test/cli/format/valid-unformatted.asm");
+        let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse("test.asm", source)?;
         assert_eq!(format(&ast, &Options::default()), expected);
         Ok(())
@@ -243,8 +249,8 @@ mod tests {
     #[test]
     fn can_invoke_format_on_valid_file() -> Result<()> {
         let root = env!("CARGO_MANIFEST_DIR");
-        let unformatted = &format!("{}/test/valid-unformatted.asm", root);
-        let formatted = &format!("{}/test/valid-formatted.asm", root);
+        let unformatted = &format!("{}/test/cli/format/valid-unformatted.asm", root);
+        let formatted = &format!("{}/test/cli/format/valid-formatted.asm", root);
         let copied = &format!("{}/target/can_invoke_format.asm", root);
         std::fs::copy(unformatted, copied)?;
 

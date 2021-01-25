@@ -47,6 +47,7 @@ impl Default for CodegenOptions {
 
 pub enum Symbol {
     Label(ProgramCounter),
+    Variable(usize),
 }
 
 pub struct SegmentMap<'a> {
@@ -111,9 +112,8 @@ impl<'ctx> CodegenContext<'ctx> {
         &self.segments
     }
 
-    fn register_label(&mut self, pc: Option<ProgramCounter>, label: String) {
-        let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
-        self.symbols.insert(label, Symbol::Label(pc));
+    fn register_symbol(&mut self, name: String, value: Symbol) {
+        self.symbols.insert(name, value);
     }
 
     fn evaluate<'a>(
@@ -140,20 +140,21 @@ impl<'ctx> CodegenContext<'ctx> {
                     _ => Ok(None),
                 }
             }
-            Expression::Identifier(label_name, modifier) => {
-                let symbol_pc = self
+            Expression::IdentifierValue(label_name, modifier) => {
+                let symbol_value = self
                     .symbols
                     .get(label_name.0)
                     .map(|s| match s {
-                        Symbol::Label(pc) => Some(pc),
+                        Symbol::Label(pc) => Some(pc.as_usize()),
+                        Symbol::Variable(val) => Some(*val),
                     })
                     .flatten();
 
-                match (symbol_pc, modifier, error_on_failure) {
-                    (Some(pc), None, _) => Ok(Some(pc.into())),
-                    (Some(pc), Some(modifier), _) => match modifier {
-                        AddressModifier::HighByte => Ok(Some((usize::from(pc) >> 8) & 255)),
-                        AddressModifier::LowByte => Ok(Some(usize::from(pc) & 255)),
+                match (symbol_value, modifier, error_on_failure) {
+                    (Some(val), None, _) => Ok(Some(val)),
+                    (Some(val), Some(modifier), _) => match modifier {
+                        AddressModifier::HighByte => Ok(Some((val >> 8) & 255)),
+                        AddressModifier::LowByte => Ok(Some(val & 255)),
                     },
                     (None, _, false) => Ok(None),
                     (None, _, true) => Err(CodegenError::UnknownIdentifier(
@@ -462,7 +463,13 @@ impl<'ctx> CodegenContext<'ctx> {
     ) -> CodegenResult<'b, Option<ProgramCounter>> {
         match token {
             Token::Label(id) => {
-                self.register_label(pc, id.0.to_string());
+                let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
+                self.register_symbol(id.0.to_string(), Symbol::Label(pc));
+                Ok(None)
+            }
+            Token::VariableDefinition(id, val) => {
+                let eval = self.evaluate(val, error_on_failure)?.unwrap();
+                self.register_symbol(id.0.to_string(), Symbol::Variable(eval));
                 Ok(None)
             }
             Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
@@ -557,6 +564,20 @@ mod tests {
             ctx.segments().current().range_data(),
             vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_variables() -> TestResult {
+        let ctx = test_codegen(".var foo=49152\nlda #>foo")?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0xc0]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_redefine_variables() -> TestResult {
+        let ctx = test_codegen(".var foo=49152\n.var foo=foo + 5\nlda #<foo")?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0x05]);
         Ok(())
     }
 

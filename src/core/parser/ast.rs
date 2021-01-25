@@ -130,7 +130,7 @@ impl Display for AddressModifier {
 
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
-    Identifier(Identifier<'a>, Option<AddressModifier>),
+    IdentifierValue(Identifier<'a>, Option<AddressModifier>),
     Number(usize, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     CurrentProgramCounter,
@@ -157,11 +157,22 @@ pub enum Expression<'a> {
 pub enum Token<'a> {
     Label(Identifier<'a>),
     Instruction(Instruction<'a>),
+    IdentifierName(Identifier<'a>),
+    VariableDefinition(Identifier<'a>, Located<'a, Expression<'a>>),
     Operand(Operand<'a>),
     RegisterSuffix(Register),
     Ws(Vec<Comment>, Box<Located<'a, Token<'a>>>, Vec<Comment>),
     Data(Vec<Located<'a, Expression<'a>>>, usize),
     Error,
+}
+
+impl<'a> Token<'a> {
+    pub(crate) fn as_identifier(&self) -> &Identifier<'a> {
+        match self {
+            Token::IdentifierName(id) => id,
+            _ => panic!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -267,7 +278,7 @@ impl Display for Comment {
 impl<'a> Display for Expression<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Expression::Identifier(id, modifier) => {
+            Expression::IdentifierValue(id, modifier) => {
                 let modifier = match modifier {
                     Some(m) => m.to_string(),
                     None => "".to_string(),
@@ -311,6 +322,12 @@ impl<'a> Display for Token<'a> {
                 }
                 None => write!(f, "{}", i.mnemonic),
             },
+            Token::IdentifierName(id) => {
+                write!(f, "{}", id.0)
+            }
+            Token::VariableDefinition(id, val) => {
+                write!(f, ".VAR {} = {}", id, val.data)
+            }
             Token::Operand(o) => {
                 let suffix = match &o.suffix {
                     Some(s) => format!("{}", s.data),
