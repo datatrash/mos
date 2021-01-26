@@ -53,7 +53,8 @@ impl Default for CodegenOptions {
 
 pub enum Symbol {
     Label(ProgramCounter),
-    Variable(VariableType, usize),
+    Variable(usize),
+    Constant(usize),
 }
 
 pub struct SegmentMap<'a> {
@@ -118,10 +119,6 @@ impl<'ctx> CodegenContext<'ctx> {
         &self.segments
     }
 
-    fn register_symbol(&mut self, name: String, value: Symbol) {
-        self.symbols.insert(name, value);
-    }
-
     fn evaluate<'a>(
         &self,
         lt: &Located<'a, Expression<'a>>,
@@ -152,7 +149,8 @@ impl<'ctx> CodegenContext<'ctx> {
                     .get(label_name.0)
                     .map(|s| match s {
                         Symbol::Label(pc) => Some(pc.as_usize()),
-                        Symbol::Variable(_, val) => Some(*val),
+                        Symbol::Variable(val) => Some(*val),
+                        Symbol::Constant(val) => Some(*val),
                     })
                     .flatten();
 
@@ -460,6 +458,27 @@ impl<'ctx> CodegenContext<'ctx> {
         }
     }
 
+    fn register_symbol<'a, 'b>(
+        &mut self,
+        id: &Identifier<'b>,
+        value: Symbol,
+        location: &'a Location<'b>,
+    ) -> CodegenResult<'b, ()> {
+        if let Some(existing) = self.symbols.get(id.0) {
+            let is_same_type = std::mem::discriminant(existing) == std::mem::discriminant(&value);
+
+            if !is_same_type {
+                return Err(CodegenError::SymbolRedefinition(
+                    location.clone(),
+                    id.clone(),
+                ));
+            }
+        }
+
+        self.symbols.insert(id.0.to_string(), value);
+        Ok(())
+    }
+
     fn emit_token<'a, 'b>(
         &mut self,
         pc: Option<ProgramCounter>,
@@ -470,42 +489,33 @@ impl<'ctx> CodegenContext<'ctx> {
         match token {
             Token::Label(id) => {
                 let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
-                self.register_symbol(id.0.to_string(), Symbol::Label(pc));
-                Ok(None)
+                self.register_symbol(id, Symbol::Label(pc), location)
+                    .map(|_| None)
             }
             Token::VariableDefinition(id, val, ty) => {
-                // First, check if the symbol being defined is the same type of a potentially already existing symbol
                 if let Some(existing) = self.symbols.get(id.0) {
-                    match existing {
-                        Symbol::Variable(existing_type, _) => {
-                            if existing_type != ty {
-                                return Err(CodegenError::SymbolRedefinition(
-                                    location.clone(),
-                                    id.clone(),
-                                ));
-                            }
-
-                            // If the existing symbol is a constant we shouldn't be redefining it
-                            if let VariableType::Constant = ty {
-                                return Err(CodegenError::ConstantReassignment(
-                                    location.clone(),
-                                    id.clone(),
-                                ));
-                            }
-                        }
-                        _ => {
-                            // The existing symbol isn't even a variable
-                            return Err(CodegenError::SymbolRedefinition(
-                                location.clone(),
-                                id.clone(),
-                            ));
-                        }
+                    if let (Symbol::Constant(_), VariableType::Constant) = (existing, ty) {
+                        // If the existing and the new symbol are constants we shouldn't be redefining them
+                        // If the new symbol isn't a constant we'll fail later on during registration because the symbol types don't match
+                        return Err(CodegenError::ConstantReassignment(
+                            location.clone(),
+                            id.clone(),
+                        ));
                     }
                 }
 
                 let eval = self.evaluate(val, error_on_failure)?.unwrap();
-                self.register_symbol(id.0.to_string(), Symbol::Variable(ty.clone(), eval));
-                Ok(None)
+
+                let result = match ty {
+                    VariableType::Variable => {
+                        self.register_symbol(id, Symbol::Variable(eval), location)
+                    }
+                    VariableType::Constant => {
+                        self.register_symbol(id, Symbol::Constant(eval), location)
+                    }
+                };
+
+                result.map(|_| None)
             }
             Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
             Token::Data(exprs, data_length) => {
@@ -637,9 +647,7 @@ mod tests {
 
     #[test]
     fn cannot_redefine_variable_types() -> TestResult {
-        let err = test_codegen(".const foo=49152\n.var foo=foo + 5")
-            .err()
-            .unwrap();
+        let err = test_codegen(".const foo=49152\nfoo: nop").err().unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:2:1: error: cannot redefine symbol: foo"
