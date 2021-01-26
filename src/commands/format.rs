@@ -109,8 +109,12 @@ fn format_token(token: &Token, opts: &Options) -> String {
         Token::IdentifierName(id) => {
             format!("{}", id)
         }
-        Token::VariableDefinition(id, val) => {
-            format!(".var {} = {}", id, val.data)
+        Token::VariableDefinition(id, val, ty) => {
+            let ty = match ty {
+                VariableType::Variable => ".var",
+                VariableType::Constant => ".const",
+            };
+            format!("{} {} = {}", ty, id, val.data)
         }
         Token::Data(expr, size) => {
             let expr = expr

@@ -326,23 +326,45 @@ fn data(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
-fn variable_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+fn varconst<'a, 'b>(
+    input: LocatedSpan<'a>,
+    tag: &'b str,
+    ty: VariableType,
+) -> IResult<'a, Located<'a, Token<'a>>> {
     let location = Location::from(&input);
 
     map(
         tuple((
-            ws(preceded(tag_no_case(".var"), ws(identifier_name))),
+            ws(preceded(tag_no_case(tag), ws(identifier_name))),
             ws(preceded(char('='), ws(expression))),
         )),
         move |(id, expr)| {
             let id = id.data.as_identifier().clone();
-            Located::from(location.clone(), Token::VariableDefinition(id, expr))
+            Located::from(
+                location.clone(),
+                Token::VariableDefinition(id, expr, ty.clone()),
+            )
         },
     )(input)
 }
 
+fn variable_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+    varconst(input, ".var", VariableType::Variable)
+}
+
+fn const_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+    varconst(input, ".const", VariableType::Constant)
+}
+
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
-    alt((instruction, variable_definition, label, data, error))(input)
+    alt((
+        instruction,
+        variable_definition,
+        const_definition,
+        label,
+        data,
+        error,
+    ))(input)
 }
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
@@ -532,6 +554,7 @@ mod test {
     #[test]
     fn parse_variable_definitions() {
         check(".var foo=123", ".VAR foo = 123");
+        check(".const foo=123", ".CONST foo = 123");
     }
 
     #[test]

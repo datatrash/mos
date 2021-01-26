@@ -18,6 +18,10 @@ pub enum CodegenError<'a> {
     UnknownIdentifier(Location<'a>, Identifier<'a>),
     #[error("branch too far")]
     BranchTooFar(Location<'a>),
+    #[error("cannot reassign constant: {1}")]
+    ConstantReassignment(Location<'a>, Identifier<'a>),
+    #[error("cannot redefine symbol: {1}")]
+    SymbolRedefinition(Location<'a>, Identifier<'a>),
 }
 
 impl<'a> From<CodegenError<'a>> for MosError {
@@ -25,6 +29,8 @@ impl<'a> From<CodegenError<'a>> for MosError {
         let location = match &error {
             CodegenError::UnknownIdentifier(location, _) => location,
             CodegenError::BranchTooFar(location) => location,
+            CodegenError::ConstantReassignment(location, _) => location,
+            CodegenError::SymbolRedefinition(location, _) => location,
         };
         MosError::Codegen {
             location: location.into(),
@@ -47,7 +53,7 @@ impl Default for CodegenOptions {
 
 pub enum Symbol {
     Label(ProgramCounter),
-    Variable(usize),
+    Variable(VariableType, usize),
 }
 
 pub struct SegmentMap<'a> {
@@ -146,7 +152,7 @@ impl<'ctx> CodegenContext<'ctx> {
                     .get(label_name.0)
                     .map(|s| match s {
                         Symbol::Label(pc) => Some(pc.as_usize()),
-                        Symbol::Variable(val) => Some(*val),
+                        Symbol::Variable(_, val) => Some(*val),
                     })
                     .flatten();
 
@@ -467,9 +473,38 @@ impl<'ctx> CodegenContext<'ctx> {
                 self.register_symbol(id.0.to_string(), Symbol::Label(pc));
                 Ok(None)
             }
-            Token::VariableDefinition(id, val) => {
+            Token::VariableDefinition(id, val, ty) => {
+                // First, check if the symbol being defined is the same type of a potentially already existing symbol
+                if let Some(existing) = self.symbols.get(id.0) {
+                    match existing {
+                        Symbol::Variable(existing_type, _) => {
+                            if existing_type != ty {
+                                return Err(CodegenError::SymbolRedefinition(
+                                    location.clone(),
+                                    id.clone(),
+                                ));
+                            }
+
+                            // If the existing symbol is a constant we shouldn't be redefining it
+                            if let VariableType::Constant = ty {
+                                return Err(CodegenError::ConstantReassignment(
+                                    location.clone(),
+                                    id.clone(),
+                                ));
+                            }
+                        }
+                        _ => {
+                            // The existing symbol isn't even a variable
+                            return Err(CodegenError::SymbolRedefinition(
+                                location.clone(),
+                                id.clone(),
+                            ));
+                        }
+                    }
+                }
+
                 let eval = self.evaluate(val, error_on_failure)?.unwrap();
-                self.register_symbol(id.0.to_string(), Symbol::Variable(eval));
+                self.register_symbol(id.0.to_string(), Symbol::Variable(ty.clone(), eval));
                 Ok(None)
             }
             Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
@@ -578,6 +613,37 @@ mod tests {
     fn can_redefine_variables() -> TestResult {
         let ctx = test_codegen(".var foo=49152\n.var foo=foo + 5\nlda #<foo")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0x05]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_constants() -> TestResult {
+        let ctx = test_codegen(".const foo=49152\nlda #>foo")?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0xc0]);
+        Ok(())
+    }
+
+    #[test]
+    fn cannot_redefine_constants() -> TestResult {
+        let err = test_codegen(".const foo=49152\n.const foo=foo + 5")
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:2:1: error: cannot reassign constant: foo"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cannot_redefine_variable_types() -> TestResult {
+        let err = test_codegen(".const foo=49152\n.var foo=foo + 5")
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:2:1: error: cannot redefine symbol: foo"
+        );
         Ok(())
     }
 

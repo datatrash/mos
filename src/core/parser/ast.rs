@@ -153,12 +153,18 @@ pub enum Expression<'a> {
     Ws(Vec<Comment>, Box<Located<'a, Expression<'a>>>, Vec<Comment>),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum VariableType {
+    Variable,
+    Constant,
+}
+
 #[derive(Debug, Clone)]
 pub enum Token<'a> {
     Label(Identifier<'a>),
     Instruction(Instruction<'a>),
     IdentifierName(Identifier<'a>),
-    VariableDefinition(Identifier<'a>, Located<'a, Expression<'a>>),
+    VariableDefinition(Identifier<'a>, Located<'a, Expression<'a>>, VariableType),
     Operand(Operand<'a>),
     RegisterSuffix(Register),
     Ws(Vec<Comment>, Box<Located<'a, Token<'a>>>, Vec<Comment>),
@@ -325,8 +331,12 @@ impl<'a> Display for Token<'a> {
             Token::IdentifierName(id) => {
                 write!(f, "{}", id.0)
             }
-            Token::VariableDefinition(id, val) => {
-                write!(f, ".VAR {} = {}", id, val.data)
+            Token::VariableDefinition(id, val, ty) => {
+                let ty = match ty {
+                    VariableType::Variable => ".VAR",
+                    VariableType::Constant => ".CONST",
+                };
+                write!(f, "{} {} = {}", ty, id, val.data)
             }
             Token::Operand(o) => {
                 let suffix = match &o.suffix {
