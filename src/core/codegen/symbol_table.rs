@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 use crate::core::codegen::{CodegenError, CodegenResult};
@@ -15,17 +16,21 @@ pub(super) enum Symbol {
 pub(super) struct SymbolTable {
     root: Scope,
     current: Vec<String>,
+    anonymous_scope_counter: usize,
 }
 
+#[derive(Debug)]
 struct Scope {
     table: HashMap<String, Symbol>,
+    parent: Option<Vec<String>>,
     children: HashMap<String, Scope>,
 }
 
 impl Scope {
-    fn new() -> Self {
+    fn new(parent: Option<Vec<String>>) -> Self {
         Self {
             table: HashMap::new(),
+            parent,
             children: HashMap::new(),
         }
     }
@@ -34,12 +39,13 @@ impl Scope {
 impl SymbolTable {
     pub(super) fn new() -> Self {
         Self {
-            root: Scope::new(),
+            root: Scope::new(None),
             current: vec![],
+            anonymous_scope_counter: 0,
         }
     }
 
-    pub(super) fn register<'a, 'b>(
+    pub(super) fn register<'a>(
         &mut self,
         id: &Identifier<'a>,
         value: Symbol,
@@ -63,14 +69,21 @@ impl SymbolTable {
     }
 
     pub(super) fn lookup(&self, path: &[&str]) -> Option<&Symbol> {
+        if path.is_empty() {
+            return None;
+        }
+
         let mut scope = self.current_scope();
 
         let (id, path_ids) = path.split_last().unwrap();
         for path in path_ids {
             match *path {
-                "super" => {
-                    scope = self.current_parent_scope();
-                }
+                "super" => match &scope.parent {
+                    Some(p) => scope = self.scope(p),
+                    None => {
+                        // Already at the root scope
+                    }
+                },
                 id => match scope.children.get(id) {
                     Some(s) => scope = s,
                     None => {
@@ -80,7 +93,18 @@ impl SymbolTable {
             }
         }
 
-        scope.table.get(&id.to_string())
+        loop {
+            if let Some(symbol) = scope.table.get(&id.to_string()) {
+                return Some(symbol);
+            }
+
+            match &scope.parent {
+                Some(p) => scope = self.scope(p),
+                None => {
+                    return None;
+                }
+            }
+        }
     }
 
     pub(super) fn value(&self, path: &[&str]) -> Option<usize> {
@@ -94,20 +118,12 @@ impl SymbolTable {
     }
 
     fn current_scope(&self) -> &Scope {
-        let mut t = &self.root;
-        for child in &self.current {
-            t = t.children.get(child).unwrap();
-        }
-        t
+        self.scope(&self.current)
     }
 
-    fn current_parent_scope(&self) -> &Scope {
-        if self.current.is_empty() {
-            return &self.root;
-        }
-
+    fn scope(&self, path: &[String]) -> &Scope {
         let mut t = &self.root;
-        for child in self.current.split_last().unwrap().1 {
+        for child in path {
             t = t.children.get(child).unwrap();
         }
         t
@@ -121,13 +137,27 @@ impl SymbolTable {
         t
     }
 
-    fn add_child_scope(&mut self, name: &str) {
-        self.current_scope_mut()
-            .children
-            .insert(name.to_string(), Scope::new());
+    pub(super) fn add_child_scope(&mut self, name: Option<&str>) -> String {
+        let name = match name {
+            Some(n) => n.to_string(),
+            None => {
+                self.anonymous_scope_counter += 1;
+                format!("$$scope_{}", self.anonymous_scope_counter)
+            }
+        };
+        let parent = self.current.clone();
+        match self.current_scope_mut().children.entry(name.clone()) {
+            Entry::Occupied(o) => {
+                panic!("Trying to add child scope that already exists: {}", o.key());
+            }
+            Entry::Vacant(v) => {
+                v.insert(Scope::new(Some(parent)));
+                name
+            }
+        }
     }
 
-    fn enter(&mut self, name: &str) {
+    pub(super) fn enter(&mut self, name: &str) {
         assert!(
             self.current_scope().children.contains_key(name),
             format!("Can't enter unknown scope: {}", name)
@@ -135,7 +165,7 @@ impl SymbolTable {
         self.current.push(name.to_string());
     }
 
-    fn leave(&mut self) {
+    pub(super) fn leave(&mut self) {
         assert!(!self.current.is_empty(), "Can't pop root scope");
         self.current.pop();
     }
@@ -154,11 +184,12 @@ mod tests {
         let mut st = SymbolTable::new();
         reg(&mut st, "A", 1)?;
         reg(&mut st, "B", 2)?;
-        st.add_child_scope("foo");
-        st.enter("foo");
+        let scope = st.add_child_scope(Some("foo"));
+        st.enter(&scope);
         reg(&mut st, "A", 100)?;
 
         assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(100)));
+        assert_eq!(st.lookup(&["B"]), Some(&Symbol::Constant(2)));
         assert_eq!(st.lookup(&["super", "A"]), Some(&Symbol::Constant(1)));
         assert_eq!(
             st.lookup(&["super", "foo", "A"]),
@@ -171,13 +202,30 @@ mod tests {
         assert_eq!(st.lookup(&["super", "A"]), Some(&Symbol::Constant(1)));
 
         assert_eq!(st.lookup(&["foo2", "A"]), None);
-        st.add_child_scope("foo2");
-        st.enter("foo2");
+        let scope = st.add_child_scope(Some("foo2"));
+        st.enter(&scope);
         reg(&mut st, "A", 200)?;
         assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(200)));
         st.leave();
         assert_eq!(st.lookup(&["foo2", "A"]), Some(&Symbol::Constant(200)));
 
+        Ok(())
+    }
+
+    #[test]
+    fn can_have_multiple_unnamed_scopes_side_by_side() -> TestResult {
+        let mut st = SymbolTable::new();
+        reg(&mut st, "A", 1)?;
+        let scope = st.add_child_scope(None);
+        st.enter(&scope);
+        reg(&mut st, "A", 100)?;
+        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(100)));
+        st.leave();
+        let scope = st.add_child_scope(None);
+        st.enter(&scope);
+        reg(&mut st, "A", 200)?;
+        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(200)));
+        st.leave();
         Ok(())
     }
 

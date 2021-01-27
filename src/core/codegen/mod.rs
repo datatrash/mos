@@ -102,7 +102,8 @@ pub struct CodegenContext<'ctx> {
 
 pub enum Emittable<'a> {
     Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
-    Nested(Vec<Emittable<'a>>),
+    /// (Name of the scope, the emittables in the scope)
+    Nested(String, Vec<Emittable<'a>>),
 }
 
 impl<'ctx> CodegenContext<'ctx> {
@@ -523,21 +524,26 @@ impl<'ctx> CodegenContext<'ctx> {
                     }
                     .flatten()
                 }
-                Emittable::Nested(inner) => {
+                Emittable::Nested(scope_name, inner) => {
+                    self.symbols.enter(&scope_name);
                     let inner = self.emit_emittables(inner, error_on_failure);
+                    self.symbols.leave();
                     match inner.is_empty() {
                         true => None,
-                        false => Some(Emittable::Nested(inner)),
+                        false => Some(Emittable::Nested(scope_name, inner)),
                     }
                 }
             })
             .collect()
     }
 
-    fn to_emittables<'a>(&self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
+    fn generate_emittables<'a>(&mut self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
         ast.into_iter()
             .map(|lt| match lt.data {
-                Token::Braces(inner) => Emittable::Nested(self.to_emittables(inner)),
+                Token::Braces(inner) => {
+                    let scope_name = self.symbols.add_child_scope(None);
+                    Emittable::Nested(scope_name, self.generate_emittables(inner))
+                }
                 _ => Emittable::Single(None, lt.location, lt.data),
             })
             .collect::<Vec<_>>()
@@ -555,7 +561,7 @@ pub fn codegen<'ctx>(
         .map(|t| t.strip_whitespace())
         .collect::<Vec<_>>();
 
-    let mut to_process = ctx.to_emittables(ast);
+    let mut to_process = ctx.generate_emittables(ast);
 
     // Apply passes
 
@@ -645,7 +651,7 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn can_use_scopes() -> TestResult {
         let ctx = test_codegen(
             r"
@@ -653,16 +659,17 @@ mod tests {
                 {
                     .var a = 2
                     lda #a
+                    lda #super.a
                 }
                 lda #a
             ",
         )?;
         assert_eq!(
             ctx.segments().current().range_data(),
-            vec![0xa9, 2, 0xa9, 1]
+            vec![0xa9, 2, 0xa9, 1, 0xa9, 1]
         );
         Ok(())
-    }*/
+    }
 
     #[test]
     fn can_use_constants() -> TestResult {

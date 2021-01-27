@@ -4,7 +4,7 @@ use std::rc::Rc;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest, value};
-use nom::multi::many0;
+use nom::multi::{many0, separated_list1};
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{branch::alt, character::complete::multispace0};
 
@@ -159,16 +159,19 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<Expression>> {
             '>' => Some(AddressModifier::HighByte),
             _ => panic!(),
         })),
-        identifier_name,
+        separated_list1(char('.'), identifier_name),
     ));
 
-    map(id, move |(modifier, identifier_name)| {
+    map(id, move |(modifier, identifier_path)| {
+        let path = identifier_path
+            .iter()
+            .map(|lt| lt.data.as_identifier().clone())
+            .collect::<Vec<_>>();
+        let path = IdentifierPath::new(&path);
+
         Located::from(
             location.clone(),
-            Expression::IdentifierValue(
-                IdentifierPath::new(&[identifier_name.data.as_identifier().clone()]),
-                modifier.flatten(),
-            ),
+            Expression::IdentifierValue(path, modifier.flatten()),
         )
     })(input)
 }
@@ -578,6 +581,12 @@ mod test {
             "lda  %11101   +   [  $ff  * 12367 ] / foo  ",
             "LDA %11101 + [$ff * 12367] / foo",
         );
+    }
+
+    #[test]
+    fn parse_identifier_paths() {
+        check("lda a", "LDA a");
+        check("lda super.a", "LDA super.a");
     }
 
     #[test]
