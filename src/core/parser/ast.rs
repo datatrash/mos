@@ -111,6 +111,7 @@ pub struct Operand<'a> {
 pub enum NumberType {
     Hex,
     Dec,
+    Bin,
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +294,7 @@ impl<'a> Display for Expression<'a> {
             }
             Expression::Number(val, ty) => match ty {
                 NumberType::Hex => write!(f, "${:x}", val),
+                NumberType::Bin => write!(f, "%{:b}", val),
                 NumberType::Dec => write!(f, "{}", val),
             },
             Expression::CurrentProgramCounter => write!(f, "*"),

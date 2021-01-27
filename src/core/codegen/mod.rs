@@ -589,8 +589,11 @@ mod tests {
 
     #[test]
     fn basic() -> TestResult {
-        let ctx = test_codegen("lda #123")?;
-        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 123]);
+        let ctx = test_codegen("lda #123\nlda #$40\nlda #%10010")?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xa9, 123, 0xa9, 64, 0xa9, 18]
+        );
         Ok(())
     }
 

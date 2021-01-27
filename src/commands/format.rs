@@ -50,6 +50,7 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
     match token {
         Expression::Number(val, ty) => match ty {
             NumberType::Hex => format!("${:x}", val),
+            NumberType::Bin => format!("%{:b}", val),
             NumberType::Dec => format!("{}", val),
         },
         Expression::IdentifierValue(id, modifier) => {
