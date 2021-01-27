@@ -24,6 +24,8 @@ pub enum CodegenError<'a> {
     ConstantReassignment(Location<'a>, Identifier<'a>),
     #[error("cannot redefine symbol: {1}")]
     SymbolRedefinition(Location<'a>, Identifier<'a>),
+    #[error("operand size mismatch")]
+    OperandSizeMismatch(Location<'a>),
 }
 
 impl<'a> From<CodegenError<'a>> for MosError {
@@ -33,6 +35,7 @@ impl<'a> From<CodegenError<'a>> for MosError {
             CodegenError::BranchTooFar(location) => location,
             CodegenError::ConstantReassignment(location, _) => location,
             CodegenError::SymbolRedefinition(location, _) => location,
+            CodegenError::OperandSizeMismatch(location) => location,
         };
         MosError::Codegen {
             location: location.into(),
@@ -373,7 +376,13 @@ impl<'ctx> CodegenContext<'ctx> {
                                 break;
                             }
                         }
-                        result.unwrap_or_else(|| panic!("Could not determine correct opcode, no matching opcodes for operand value: {}", val))
+
+                        match result {
+                            Some(r) => r,
+                            None => {
+                                return Err(CodegenError::OperandSizeMismatch(location.clone()))
+                            }
+                        }
                     }
                     None => {
                         // Couldn't evaluate yet, so find maximum operand length and use that opcode
@@ -616,6 +625,16 @@ mod tests {
     fn basic_with_braces() -> TestResult {
         let ctx = test_codegen("{ lda #123 }")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 123]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_detect_operand_size_mismatch() -> TestResult {
+        let err = test_codegen("lda (foo,x)\nfoo: nop").err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:1:1: error: operand size mismatch"
+        );
         Ok(())
     }
 
