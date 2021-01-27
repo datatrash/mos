@@ -80,34 +80,57 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
     }
 }
 
-fn format_token(token: &Token, opts: &Options) -> String {
+fn indent_str(indent: usize) -> String {
+    let mut str = "".to_string();
+    for _ in 0..indent * 4 {
+        str += " "
+    }
+    str
+}
+
+fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
     match token {
         Token::Braces(tokens) => {
             let mut tokens = tokens
                 .iter()
-                .map(|t| format_token(&t.data, opts))
+                .map(|t| format_token(&t.data, opts, indent + 1))
                 .collect::<Vec<_>>()
-                .join("\n");
+                .join(LINE_ENDING)
+                .trim_end() // if the scope ends with a newline due to for instance a 'rts', we trim it off here
+                .to_string();
             if !tokens.is_empty() {
-                tokens = format!("\n{}\n", tokens);
+                tokens = format!("{le}{t}{le}", le = LINE_ENDING, t = tokens);
             }
-            format!("{{{}}}", tokens)
+
+            // Scopes always end with an extra newline
+            format!(
+                "{ind}{{{t}{ind}}}{le}",
+                ind = indent_str(indent + 1),
+                t = tokens,
+                le = LINE_ENDING
+            )
         }
         Token::Instruction(i) => {
             let mnem = opts.mnemonics.casing.format(&i.mnemonic.to_string());
-            let operand = i.operand.as_ref().map(|o| format_token(&o.data, opts));
+            let operand = i
+                .operand
+                .as_ref()
+                .map(|o| format_token(&o.data, opts, indent));
 
-            match operand {
-                Some(operand) => format!("{} {}", mnem, operand),
-                None => mnem,
-            }
+            let operand = operand.unwrap_or_else(|| "".to_string());
+            let extra_newline = match &i.mnemonic {
+                Mnemonic::Rts => LINE_ENDING,
+                _ => "",
+            };
+            let ind = indent_str(indent + 1);
+            format!("{}{} {}{}", ind, mnem, operand, extra_newline)
         }
         Token::Operand(o) => {
             let expr = format_expression(&o.expr.data, opts);
             let suffix = o
                 .suffix
                 .as_ref()
-                .map(|o| format_token(&o.data, opts))
+                .map(|o| format_token(&o.data, opts, indent))
                 .unwrap_or_else(|| "".to_string());
 
             match &o.addressing_mode {
@@ -135,13 +158,15 @@ fn format_token(token: &Token, opts: &Options) -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             match size {
-                1 => format!(".byte {}", expr),
-                2 => format!(".word {}", expr),
-                4 => format!(".dword {}", expr),
+                1 => format!("{}.byte {}", indent_str(indent + 1), expr),
+                2 => format!("{}.word {}", indent_str(indent + 1), expr),
+                4 => format!("{}.dword {}", indent_str(indent + 1), expr),
                 _ => panic!(),
             }
         }
-        Token::Ws(lhs, inner, rhs) => format_ws(lhs, format_token(&inner.data, opts), rhs, opts),
+        Token::Ws(lhs, inner, rhs) => {
+            format_ws(lhs, format_token(&inner.data, opts, indent), rhs, opts)
+        }
         Token::Label(id) => format!("{}:", id.0),
         Token::RegisterSuffix(reg) => match reg {
             Register::X => ", x".to_string(),
@@ -176,46 +201,13 @@ fn format_ws(lhs: &[Comment], inner: String, rhs: &[Comment], _opts: &Options) -
 }
 
 fn format<'a>(ast: &[Located<'a, Token<'a>>], opts: &Options) -> String {
-    let mut str = "".to_string();
-
-    let mut prev_token: Option<&Token> = None;
-    for lt in ast {
-        let token = &lt.data;
-        if let Some(pt) = prev_token {
-            let require_newline = match (pt, token) {
-                (Token::Instruction(_), Token::Instruction(_)) => false,
-                (Token::Label(_), Token::Instruction(_)) => false,
-                (Token::Instruction(_), _) => true,
-                _ => false,
-            };
-
-            if require_newline {
-                str += LINE_ENDING;
-            }
-        }
-
-        let t = format_token(token, opts);
-
-        let indent = match token {
-            Token::Instruction(_) | Token::Data(_, _) => 4,
-            _ => 0,
-        };
-
-        for _ in 0..indent {
-            str += " "
-        }
-        str += &t;
-        str += LINE_ENDING;
-
-        prev_token = Some(token);
-    }
-
-    // Remove last line ending
-    for _ in 0..LINE_ENDING.len() {
-        str.pop();
-    }
-
-    str
+    ast.iter()
+        .map(|lt| {
+            let token = &lt.data;
+            format_token(token, opts, 0)
+        })
+        .collect::<Vec<_>>()
+        .join(LINE_ENDING)
 }
 
 pub fn format_app() -> App<'static> {
