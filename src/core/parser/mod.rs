@@ -280,7 +280,7 @@ fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
 
 fn error(input: LocatedSpan) -> IResult<Located<Token>> {
     map(
-        take_till1(|c| c == ')' || c == '\n' || c == '\r'),
+        take_till1(|c| c == ')' || c == '}' || c == '\n' || c == '\r'),
         |span: LocatedSpan| {
             let err = ParseError::UnexpectedError {
                 location: Location::from(&span),
@@ -356,8 +356,22 @@ fn const_definition(input: LocatedSpan) -> IResult<Located<Token>> {
     varconst(input, ".const", VariableType::Constant)
 }
 
+fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        delimited(
+            terminated(char('{'), emptiness()),
+            many0(terminated(ws(statement), emptiness())),
+            preceded(emptiness(), char('}')),
+        ),
+        move |inner| Located::from(location.clone(), Token::Braces(inner)),
+    )(input)
+}
+
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((
+        braces,
         instruction,
         variable_definition,
         const_definition,
@@ -367,20 +381,23 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     ))(input)
 }
 
-fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
-    let emptiness = || {
+fn emptiness<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<()> {
+    value(
+        (),
         many0(alt((
             // spaces
             value((), space1),
             // newlines
             value((), tuple((opt(char('\r')), char('\n')))),
-        )))
-    };
+        ))),
+    )
+}
 
+fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
     preceded(
         emptiness(),
         terminated(
-            many0(map(pair(ws(statement), emptiness()), |(expr, _)| expr)),
+            many0(terminated(ws(statement), emptiness())),
             preceded(expect(not(anychar), "expected EOF"), rest),
         ),
     )(input)
@@ -566,6 +583,23 @@ mod test {
     #[test]
     fn can_handle_leading_trailing_whitespace() {
         check("   \nlda #123\n\n   ", "LDA #123");
+    }
+
+    #[test]
+    fn parse_braces() {
+        check("{ }", "{}");
+        check("{ lda #123 }", "{\nLDA #123\n}");
+        check(
+            r"
+        {
+            {
+                lda #123
+                lda #234
+            }
+        }            
+        ",
+            "{\n{\nLDA #123\nLDA #234\n}\n}",
+        );
     }
 
     #[test]

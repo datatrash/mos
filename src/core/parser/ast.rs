@@ -162,6 +162,7 @@ pub enum VariableType {
 
 #[derive(Debug, Clone)]
 pub enum Token<'a> {
+    Braces(Vec<Located<'a, Token<'a>>>),
     Label(Identifier<'a>),
     Instruction(Instruction<'a>),
     IdentifierName(Identifier<'a>),
@@ -321,6 +322,17 @@ impl<'a> Display for Expression<'a> {
 impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
+            Token::Braces(tokens) => {
+                let mut tokens = tokens
+                    .iter()
+                    .map(|t| format!("{}", t.data))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !tokens.is_empty() {
+                    tokens = format!("\n{}\n", tokens);
+                }
+                write!(f, "{{{}}}", tokens)
+            }
             Token::Label(id) => {
                 write!(f, "{}:", id.0)
             }

@@ -82,6 +82,17 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
 
 fn format_token(token: &Token, opts: &Options) -> String {
     match token {
+        Token::Braces(tokens) => {
+            let mut tokens = tokens
+                .iter()
+                .map(|t| format_token(&t.data, opts))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !tokens.is_empty() {
+                tokens = format!("\n{}\n", tokens);
+            }
+            format!("{{{}}}", tokens)
+        }
         Token::Instruction(i) => {
             let mnem = opts.mnemonics.casing.format(&i.mnemonic.to_string());
             let operand = i.operand.as_ref().map(|o| format_token(&o.data, opts));

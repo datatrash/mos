@@ -101,6 +101,12 @@ impl<'a> SegmentMap<'a> {
 pub struct CodegenContext<'ctx> {
     segments: SegmentMap<'ctx>,
     symbols: HashMap<String, Symbol>,
+    errors: Vec<CodegenError<'ctx>>,
+}
+
+pub enum Emittable<'a> {
+    Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
+    Nested(Vec<Emittable<'a>>),
 }
 
 impl<'ctx> CodegenContext<'ctx> {
@@ -112,6 +118,7 @@ impl<'ctx> CodegenContext<'ctx> {
         Self {
             segments,
             symbols: HashMap::new(),
+            errors: vec![],
         }
     }
 
@@ -479,7 +486,7 @@ impl<'ctx> CodegenContext<'ctx> {
         Ok(())
     }
 
-    fn emit_token<'a, 'b>(
+    fn emit_single<'a, 'b>(
         &mut self,
         pc: Option<ProgramCounter>,
         token: &'a Token<'b>,
@@ -524,10 +531,53 @@ impl<'ctx> CodegenContext<'ctx> {
             _ => Ok(None),
         }
     }
+
+    fn emit_emittables(
+        &mut self,
+        emittables: Vec<Emittable<'ctx>>,
+        error_on_failure: bool,
+    ) -> Vec<Emittable<'ctx>> {
+        emittables
+            .into_iter()
+            .filter_map(|e| match e {
+                Emittable::Single(pc, location, token) => {
+                    match self.emit_single(pc, &token, &location, error_on_failure) {
+                        Ok(pc) => {
+                            pc.map(|pc| {
+                                // try to emit later
+                                Some(Emittable::Single(Some(pc), location, token))
+                            })
+                        }
+                        Err(e) => {
+                            self.errors.push(e);
+                            None
+                        }
+                    }
+                    .flatten()
+                }
+                Emittable::Nested(inner) => {
+                    let inner = self.emit_emittables(inner, error_on_failure);
+                    match inner.is_empty() {
+                        true => None,
+                        false => Some(Emittable::Nested(inner)),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    fn to_emittables<'a>(&self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
+        ast.into_iter()
+            .map(|lt| match lt.data {
+                Token::Braces(inner) => Emittable::Nested(self.to_emittables(inner)),
+                _ => Emittable::Single(None, lt.location, lt.data),
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
-pub fn codegen<'ctx, 'a>(
-    ast: Vec<Located<'a, Token<'a>>>,
+pub fn codegen<'ctx>(
+    ast: Vec<Located<'ctx, Token<'ctx>>>,
     options: CodegenOptions,
 ) -> MosResult<CodegenContext<'ctx>> {
     let mut ctx = CodegenContext::new(options);
@@ -537,32 +587,16 @@ pub fn codegen<'ctx, 'a>(
         .map(|t| t.strip_whitespace())
         .collect::<Vec<_>>();
 
-    let mut to_process: Vec<(Option<ProgramCounter>, Located<Token>)> = ast
-        .into_iter()
-        .map(|token| (None, token))
-        .collect::<Vec<_>>();
+    let mut to_process = ctx.to_emittables(ast);
 
     // Apply passes
 
     // On the first pass, any error is not a failure since we may encounter unresolved labels and such
     // After the first pass, all labels should be present so any error will be a failure then
     let mut error_on_failure = false;
-    let mut errors: Vec<CodegenError> = vec![];
     while !to_process.is_empty() {
         let to_process_len = to_process.len();
-        let mut next_to_process = vec![];
-        for (pc, lt) in to_process {
-            match ctx.emit_token(pc, &lt.data, &lt.location, error_on_failure) {
-                Ok(pc) => {
-                    if let Some(pc) = pc {
-                        next_to_process.push((Some(pc), lt));
-                    }
-                }
-                Err(error) => {
-                    errors.push(error);
-                }
-            };
-        }
+        let next_to_process = ctx.emit_emittables(to_process, error_on_failure);
 
         // If we haven't processed any tokens then the tokens that are left could not be resolved.
         if next_to_process.len() == to_process_len {
@@ -572,10 +606,10 @@ pub fn codegen<'ctx, 'a>(
         to_process = next_to_process;
     }
 
-    if errors.is_empty() {
+    if ctx.errors.is_empty() {
         Ok(ctx)
     } else {
-        Err(errors.into())
+        Err(ctx.errors.into())
     }
 }
 
@@ -600,6 +634,13 @@ mod tests {
     #[test]
     fn basic_with_comments() -> TestResult {
         let ctx = test_codegen("lda /*hello*/ #123")?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 123]);
+        Ok(())
+    }
+
+    #[test]
+    fn basic_with_braces() -> TestResult {
+        let ctx = test_codegen("{ lda #123 }")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 123]);
         Ok(())
     }
@@ -635,6 +676,25 @@ mod tests {
         assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0x05]);
         Ok(())
     }
+
+    /*#[test]
+    fn can_use_scopes() -> TestResult {
+        let ctx = test_codegen(
+            r"
+                .var a = 1
+                {
+                    .var a = 2
+                    lda #a
+                }
+                lda #a
+            ",
+        )?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xa9, 2, 0xa9, 1]
+        );
+        Ok(())
+    }*/
 
     #[test]
     fn can_use_constants() -> TestResult {
@@ -684,6 +744,25 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn can_access_forward_declared_labels_within_scope() -> TestResult {
+        let ctx = test_codegen("{ jmp my_label\nmy_label: nop }")?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0x4c, 0x03, 0xc0, 0xea]
+        );
+        Ok(())
+    }
+
+    /*#[test]
+    fn cannot_access_forward_declared_labels_within_nested_scope() -> TestResult {
+        let err = test_codegen("jmp my_label\n{ my_label: nop }")
+            .err()
+            .unwrap();
+        assert_eq!(err.to_string(), "whoop");
+        Ok(())
+    }*/
 
     #[test]
     fn accessing_forwarded_labels_will_default_to_absolute_addressing() -> TestResult {
