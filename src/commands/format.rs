@@ -208,6 +208,8 @@ fn format<'a>(ast: &[Located<'a, Token<'a>>], opts: &Options) -> String {
         })
         .collect::<Vec<_>>()
         .join(LINE_ENDING)
+        .trim_end()
+        .to_string()
 }
 
 pub fn format_app() -> App<'static> {
