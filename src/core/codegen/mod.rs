@@ -730,14 +730,17 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn cannot_access_forward_declared_labels_within_nested_scope() -> TestResult {
         let err = test_codegen("jmp my_label\n{ my_label: nop }")
             .err()
             .unwrap();
-        assert_eq!(err.to_string(), "whoop");
+        assert_eq!(
+            err.to_string(),
+            "test.asm:1:5: error: unknown identifier: my_label"
+        );
         Ok(())
-    }*/
+    }
 
     #[test]
     fn accessing_forwarded_labels_will_default_to_absolute_addressing() -> TestResult {
