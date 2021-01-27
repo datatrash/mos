@@ -606,8 +606,15 @@ mod tests {
 
     #[test]
     fn expressions() -> TestResult {
-        let ctx =
-            test_codegen("lda #1 + 1\nlda #1 - 1\nlda #2 * 4\nlda #8 / 2\nlda #1 + 5 * 4 + 3")?;
+        let ctx = test_codegen(
+            r"
+            lda #1 + 1
+            lda #1 - 1
+            lda #2 * 4
+            lda #8 / 2
+            lda #1 + 5 * 4 + 3
+            ",
+        )?;
         assert_eq!(
             ctx.segments().current().range_data(),
             vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]

@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
-use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest};
+use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest, value};
 use nom::multi::many0;
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{branch::alt, character::complete::multispace0};
@@ -368,12 +368,21 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
 }
 
 fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
-    terminated(
-        many0(map(
-            pair(ws(statement), many0(tuple((opt(char('\r')), char('\n'))))),
-            |(expr, _)| expr,
-        )),
-        preceded(expect(not(anychar), "expected EOF"), rest),
+    let emptiness = || {
+        many0(alt((
+            // spaces
+            value((), space1),
+            // newlines
+            value((), tuple((opt(char('\r')), char('\n')))),
+        )))
+    };
+
+    preceded(
+        emptiness(),
+        terminated(
+            many0(map(pair(ws(statement), emptiness()), |(expr, _)| expr)),
+            preceded(expect(not(anychar), "expected EOF"), rest),
+        ),
     )(input)
 }
 
@@ -552,6 +561,11 @@ mod test {
             "lda  %11101   +   [  $ff  * 12367 ] / foo  ",
             "LDA %11101 + [$ff * 12367] / foo",
         );
+    }
+
+    #[test]
+    fn can_handle_leading_trailing_whitespace() {
+        check("   \nlda #123\n\n   ", "LDA #123");
     }
 
     #[test]
