@@ -166,7 +166,7 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<Expression>> {
         Located::from(
             location.clone(),
             Expression::IdentifierValue(
-                identifier_name.data.as_identifier().clone(),
+                IdentifierPath::new(&[identifier_name.data.as_identifier().clone()]),
                 modifier.flatten(),
             ),
         )

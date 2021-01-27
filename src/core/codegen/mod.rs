@@ -5,17 +5,19 @@ use std::collections::HashMap;
 use smallvec::{smallvec, SmallVec};
 
 use crate::core::codegen::segment::{ProgramCounter, Segment};
+use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
 
 mod segment;
+mod symbol_table;
 
 pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum CodegenError<'a> {
     #[error("unknown identifier: {1}")]
-    UnknownIdentifier(Location<'a>, Identifier<'a>),
+    UnknownIdentifier(Location<'a>, IdentifierPath<'a>),
     #[error("branch too far")]
     BranchTooFar(Location<'a>),
     #[error("cannot reassign constant: {1}")]
@@ -49,12 +51,6 @@ impl Default for CodegenOptions {
             pc: ProgramCounter::new(0xc000),
         }
     }
-}
-
-pub enum Symbol {
-    Label(ProgramCounter),
-    Variable(usize),
-    Constant(usize),
 }
 
 pub struct SegmentMap<'a> {
@@ -100,7 +96,7 @@ impl<'a> SegmentMap<'a> {
 
 pub struct CodegenContext<'ctx> {
     segments: SegmentMap<'ctx>,
-    symbols: HashMap<String, Symbol>,
+    symbols: SymbolTable,
     errors: Vec<CodegenError<'ctx>>,
 }
 
@@ -117,7 +113,7 @@ impl<'ctx> CodegenContext<'ctx> {
 
         Self {
             segments,
-            symbols: HashMap::new(),
+            symbols: SymbolTable::new(),
             errors: vec![],
         }
     }
@@ -150,16 +146,8 @@ impl<'ctx> CodegenContext<'ctx> {
                     _ => Ok(None),
                 }
             }
-            Expression::IdentifierValue(label_name, modifier) => {
-                let symbol_value = self
-                    .symbols
-                    .get(label_name.0)
-                    .map(|s| match s {
-                        Symbol::Label(pc) => Some(pc.as_usize()),
-                        Symbol::Variable(val) => Some(*val),
-                        Symbol::Constant(val) => Some(*val),
-                    })
-                    .flatten();
+            Expression::IdentifierValue(path, modifier) => {
+                let symbol_value = self.symbols.value(&path.to_str_vec());
 
                 match (symbol_value, modifier, error_on_failure) {
                     (Some(val), None, _) => Ok(Some(val)),
@@ -170,7 +158,7 @@ impl<'ctx> CodegenContext<'ctx> {
                     (None, _, false) => Ok(None),
                     (None, _, true) => Err(CodegenError::UnknownIdentifier(
                         lt.location.clone(),
-                        label_name.clone(),
+                        path.clone(),
                     )),
                 }
             }
@@ -465,27 +453,6 @@ impl<'ctx> CodegenContext<'ctx> {
         }
     }
 
-    fn register_symbol<'a, 'b>(
-        &mut self,
-        id: &Identifier<'b>,
-        value: Symbol,
-        location: &'a Location<'b>,
-    ) -> CodegenResult<'b, ()> {
-        if let Some(existing) = self.symbols.get(id.0) {
-            let is_same_type = std::mem::discriminant(existing) == std::mem::discriminant(&value);
-
-            if !is_same_type {
-                return Err(CodegenError::SymbolRedefinition(
-                    location.clone(),
-                    id.clone(),
-                ));
-            }
-        }
-
-        self.symbols.insert(id.0.to_string(), value);
-        Ok(())
-    }
-
     fn emit_single<'a, 'b>(
         &mut self,
         pc: Option<ProgramCounter>,
@@ -496,11 +463,12 @@ impl<'ctx> CodegenContext<'ctx> {
         match token {
             Token::Label(id) => {
                 let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
-                self.register_symbol(id, Symbol::Label(pc), location)
+                self.symbols
+                    .register(id, Symbol::Label(pc), location)
                     .map(|_| None)
             }
             Token::VariableDefinition(id, val, ty) => {
-                if let Some(existing) = self.symbols.get(id.0) {
+                if let Some(existing) = self.symbols.lookup(&[id.0]) {
                     if let (Symbol::Constant(_), VariableType::Constant) = (existing, ty) {
                         // If the existing and the new symbol are constants we shouldn't be redefining them
                         // If the new symbol isn't a constant we'll fail later on during registration because the symbol types don't match
@@ -515,10 +483,10 @@ impl<'ctx> CodegenContext<'ctx> {
 
                 let result = match ty {
                     VariableType::Variable => {
-                        self.register_symbol(id, Symbol::Variable(eval), location)
+                        self.symbols.register(id, Symbol::Variable(eval), location)
                     }
                     VariableType::Constant => {
-                        self.register_symbol(id, Symbol::Constant(eval), location)
+                        self.symbols.register(id, Symbol::Constant(eval), location)
                     }
                 };
 

@@ -53,12 +53,12 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
             NumberType::Bin => format!("%{:b}", val),
             NumberType::Dec => format!("{}", val),
         },
-        Expression::IdentifierValue(id, modifier) => {
+        Expression::IdentifierValue(path, modifier) => {
             let modifier = match modifier {
                 Some(m) => m.to_string(),
                 None => "".to_string(),
             };
-            format!("{}{}", modifier, id.0)
+            format!("{}{}", modifier, path)
         }
         Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
         Expression::CurrentProgramCounter => "*".to_string(),

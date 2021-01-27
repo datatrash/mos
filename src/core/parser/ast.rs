@@ -129,9 +129,33 @@ impl Display for AddressModifier {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct IdentifierPath<'a>(Vec<Identifier<'a>>);
+
+impl<'a> IdentifierPath<'a> {
+    pub fn new(ids: &[Identifier<'a>]) -> Self {
+        Self(ids.to_vec())
+    }
+
+    pub fn to_str_vec(&self) -> Vec<&str> {
+        self.0.iter().map(|i| i.0).collect()
+    }
+}
+
+impl<'a> Display for IdentifierPath<'a> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.0.iter().map(|i| i.0).collect::<Vec<_>>().join(".")
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Expression<'a> {
-    IdentifierValue(Identifier<'a>, Option<AddressModifier>),
+    /// The full identifier path, which modifier it uses
+    IdentifierValue(IdentifierPath<'a>, Option<AddressModifier>),
     Number(usize, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     CurrentProgramCounter,
@@ -286,12 +310,12 @@ impl Display for Comment {
 impl<'a> Display for Expression<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Expression::IdentifierValue(id, modifier) => {
+            Expression::IdentifierValue(path, modifier) => {
                 let modifier = match modifier {
                     Some(m) => m.to_string(),
                     None => "".to_string(),
                 };
-                write!(f, "{}{}", modifier, id.0)
+                write!(f, "{}{}", modifier, path)
             }
             Expression::Number(val, ty) => match ty {
                 NumberType::Hex => write!(f, "${:x}", val),
