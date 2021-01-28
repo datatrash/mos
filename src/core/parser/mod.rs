@@ -359,6 +359,15 @@ fn const_definition(input: LocatedSpan) -> IResult<Located<Token>> {
     varconst(input, ".const", VariableType::Constant)
 }
 
+fn pc_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        ws(preceded(char('*'), ws(preceded(char('='), ws(expression))))),
+        move |expr| Located::from(location.clone(), Token::ProgramCounterDefinition(expr)),
+    )(input)
+}
+
 fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
@@ -378,6 +387,7 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
         instruction,
         variable_definition,
         const_definition,
+        pc_definition,
         label,
         data,
         error,
@@ -631,6 +641,11 @@ mod test {
     fn parse_current_pc() {
         check("lda *", "LDA *");
         check("lda * - 3", "LDA * - 3");
+    }
+
+    #[test]
+    fn set_current_pc() {
+        check("* = $1000", "* = $1000");
     }
 
     #[test]

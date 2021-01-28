@@ -151,6 +151,10 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             };
             format!("{} {} = {}", ty, id, val.data)
         }
+        Token::ProgramCounterDefinition(val) => {
+            let ind = indent_str(indent + 1);
+            format!("{}* = {}", ind, val.data)
+        }
         Token::Data(expr, size) => {
             let expr = expr
                 .iter()

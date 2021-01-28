@@ -1,3 +1,4 @@
+    * = $1000
     {
         lda data
         sta $d020, x

@@ -42,11 +42,14 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
         let ast = parser::parse(input_name, source.as_str())?;
 
-        let generated_code = codegen(ast, CodegenOptions::default())?;
+        let generated_code = codegen(ast, CodegenOptions { pc: 0x2000.into() })?;
         let segment = generated_code.segments().current();
         let mut out = fs::File::create(target_dir.join(output_path))?;
-        out.write_all(&segment.range().start.to_le_bytes())?;
-        out.write_all(&segment.range_data())?;
+        if let Some(range) = segment.range() {
+            let start = range.start;
+            out.write_all(&start.to_le_bytes())?;
+            out.write_all(&segment.range_data())?;
+        }
     }
 
     Ok(())
@@ -54,11 +57,8 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use anyhow::Result;
-
     use crate::commands::{build_app, build_command};
+    use anyhow::Result;
 
     #[test]
     fn can_invoke_build() -> Result<()> {
@@ -73,10 +73,12 @@ mod tests {
         ]);
         build_command(&args)?;
 
-        assert_eq!(
-            Path::exists(Path::new(&format!("{}/target/valid.prg", root))),
-            true
-        );
+        let out_path = &format!("{}/target/valid.prg", root);
+        let out_bytes = std::fs::read(out_path)?;
+        let prg_path = &format!("{}/test/cli/build/valid.prg", root);
+        let prg_bytes = std::fs::read(prg_path)?;
+        assert_eq!(out_bytes, prg_bytes);
+
         Ok(())
     }
 }

@@ -502,6 +502,13 @@ impl<'ctx> CodegenContext<'ctx> {
 
                 result.map(|_| None)
             }
+            Token::ProgramCounterDefinition(val) => {
+                let eval = self.evaluate(val, error_on_failure)?.unwrap();
+                self.segments
+                    .current_mut()
+                    .set_current_pc(ProgramCounter::new(eval as u16));
+                Ok(None)
+            }
             Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
             Token::Data(exprs, data_length) => {
                 self.emit_data(pc, exprs, *data_length, error_on_failure)
@@ -726,6 +733,17 @@ mod tests {
             ctx.segments().current().range_data(),
             vec![0xad, 0x03, 0xc0, 0xad, 0x03, 0xc0]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn can_set_current_pc() -> TestResult {
+        let ctx = test_codegen("* = $1234\nnop")?;
+        assert_eq!(
+            ctx.segments().current().range(),
+            &Some(0x1234u16..0x1235u16)
+        );
+        assert_eq!(ctx.segments().current().range_data(), vec![0xea]);
         Ok(())
     }
 

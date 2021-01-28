@@ -191,6 +191,7 @@ pub enum Token<'a> {
     Instruction(Instruction<'a>),
     IdentifierName(Identifier<'a>),
     VariableDefinition(Identifier<'a>, Located<'a, Expression<'a>>, VariableType),
+    ProgramCounterDefinition(Located<'a, Expression<'a>>),
     Operand(Operand<'a>),
     RegisterSuffix(Register),
     Ws(Vec<Comment>, Box<Located<'a, Token<'a>>>, Vec<Comment>),
@@ -375,6 +376,9 @@ impl<'a> Display for Token<'a> {
                     VariableType::Constant => ".CONST",
                 };
                 write!(f, "{} {} = {}", ty, id, val.data)
+            }
+            Token::ProgramCounterDefinition(val) => {
+                write!(f, "* = {}", val.data)
             }
             Token::Operand(o) => {
                 let suffix = match &o.suffix {

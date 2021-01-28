@@ -37,7 +37,7 @@ impl From<&ProgramCounter> for usize {
 
 pub struct Segment {
     data: [u8; 65536],
-    range: Range<u16>,
+    range: Option<Range<u16>>,
     pc: ProgramCounter,
 }
 
@@ -46,10 +46,7 @@ impl Segment {
         let initial_pc = initial_pc.into();
         Self {
             data: [0; 65536],
-            range: Range {
-                start: initial_pc.0,
-                end: initial_pc.0,
-            },
+            range: None,
             pc: initial_pc,
         }
     }
@@ -59,8 +56,14 @@ impl Segment {
     }
 
     pub(crate) fn set(&mut self, bytes: &[u8]) -> ProgramCounter {
-        if self.pc.0 < self.range.start {
-            self.range.start = self.pc.0;
+        if self.range.is_none() {
+            self.range = Some(self.pc.0..self.pc.0);
+        }
+
+        let range = self.range.as_mut().unwrap();
+
+        if self.pc.0 < range.start {
+            range.start = self.pc.0;
         }
 
         let index = self.pc.0 as usize;
@@ -72,8 +75,8 @@ impl Segment {
 
         self.pc.0 += length as u16;
 
-        if self.pc.0 > self.range.end {
-            self.range.end = self.pc.0;
+        if self.pc.0 > range.end {
+            range.end = self.pc.0;
         }
 
         self.pc
@@ -87,15 +90,20 @@ impl Segment {
         }]
     }
 
-    pub(crate) fn range(&self) -> &Range<u16> {
+    pub(crate) fn range(&self) -> &Option<Range<u16>> {
         &self.range
     }
 
     pub(crate) fn range_data(&self) -> &[u8] {
-        &self.data[Range {
-            start: self.range.start as usize,
-            end: self.range.end as usize,
-        }]
+        match &self.range {
+            Some(range) => {
+                &self.data[Range {
+                    start: range.start as usize,
+                    end: range.end as usize,
+                }]
+            }
+            None => &[],
+        }
     }
 
     pub(crate) fn current_pc(&self) -> ProgramCounter {
@@ -115,7 +123,7 @@ mod tests {
         assert_eq!(seg.current_pc(), new_pc);
         assert_eq!(seg.data(0xc000..0xc003), &[1, 2, 3]);
         assert_eq!(seg.range_data(), &[1, 2, 3]);
-        assert_eq!(seg.range(), &(0xc000..0xc003));
+        assert_eq!(seg.range(), &Some(0xc000..0xc003));
 
         seg.set_current_pc(0x2000);
         let new_pc = seg.set(&[4]);
@@ -123,6 +131,6 @@ mod tests {
         assert_eq!(seg.current_pc(), new_pc);
         assert_eq!(seg.data(0xc000..0xc003), &[1, 2, 3]);
         assert_eq!(seg.data(0x2000..0x2001), &[4]);
-        assert_eq!(seg.range(), &(0x2000..0xc003));
+        assert_eq!(seg.range(), &Some(0x2000..0xc003));
     }
 }
