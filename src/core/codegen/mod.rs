@@ -20,8 +20,6 @@ pub enum CodegenError<'a> {
     UnknownIdentifier(Location<'a>, IdentifierPath<'a>),
     #[error("branch too far")]
     BranchTooFar(Location<'a>),
-    #[error("cannot reassign constant: {1}")]
-    ConstantReassignment(Location<'a>, Identifier<'a>),
     #[error("cannot redefine symbol: {1}")]
     SymbolRedefinition(Location<'a>, Identifier<'a>),
     #[error("operand size mismatch")]
@@ -33,7 +31,6 @@ impl<'a> From<CodegenError<'a>> for MosError {
         let location = match &error {
             CodegenError::UnknownIdentifier(location, _) => location,
             CodegenError::BranchTooFar(location) => location,
-            CodegenError::ConstantReassignment(location, _) => location,
             CodegenError::SymbolRedefinition(location, _) => location,
             CodegenError::OperandSizeMismatch(location) => location,
         };
@@ -474,29 +471,20 @@ impl<'ctx> CodegenContext<'ctx> {
             Token::Label(id) => {
                 let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
                 self.symbols
-                    .register(id, Symbol::Label(pc), location)
+                    .register(id, Symbol::Label(pc), location, false)
                     .map(|_| None)
             }
             Token::VariableDefinition(id, val, ty) => {
-                if let Some(existing) = self.symbols.lookup(&[id.0]) {
-                    if let (Symbol::Constant(_), VariableType::Constant) = (existing, ty) {
-                        // If the existing and the new symbol are constants we shouldn't be redefining them
-                        // If the new symbol isn't a constant we'll fail later on during registration because the symbol types don't match
-                        return Err(CodegenError::ConstantReassignment(
-                            location.clone(),
-                            id.clone(),
-                        ));
-                    }
-                }
-
                 let eval = self.evaluate(val, error_on_failure)?.unwrap();
 
                 let result = match ty {
                     VariableType::Variable => {
-                        self.symbols.register(id, Symbol::Variable(eval), location)
+                        self.symbols
+                            .register(id, Symbol::Variable(eval), location, true)
                     }
                     VariableType::Constant => {
-                        self.symbols.register(id, Symbol::Constant(eval), location)
+                        self.symbols
+                            .register(id, Symbol::Constant(eval), location, false)
                     }
                 };
 
@@ -711,7 +699,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             err.to_string(),
-            "test.asm:2:1: error: cannot reassign constant: foo"
+            "test.asm:2:1: error: cannot redefine symbol: foo"
         );
         Ok(())
     }

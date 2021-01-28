@@ -50,11 +50,12 @@ impl SymbolTable {
         id: &Identifier<'a>,
         value: Symbol,
         location: &Location<'a>,
+        allow_same_type_redefinition: bool,
     ) -> CodegenResult<'a, ()> {
-        if let Some(existing) = self.lookup(&[id.0]) {
+        if let Some(existing) = self.lookup_in_current_scope(&[id.0]) {
             let is_same_type = std::mem::discriminant(existing) == std::mem::discriminant(&value);
 
-            if !is_same_type {
+            if !allow_same_type_redefinition || !is_same_type {
                 return Err(CodegenError::SymbolRedefinition(
                     location.clone(),
                     id.clone(),
@@ -68,7 +69,10 @@ impl SymbolTable {
         Ok(())
     }
 
-    pub(super) fn lookup(&self, path: &[&str]) -> Option<&Symbol> {
+    // Look up a symbol in the symbol table.
+    // If `check_target_scope_only` is set, the lookup will not bubble up to parent scopes if the
+    // symbol is not found.
+    fn lookup_internal(&self, path: &[&str], check_target_scope_only: bool) -> Option<&Symbol> {
         if path.is_empty() {
             return None;
         }
@@ -98,6 +102,11 @@ impl SymbolTable {
                 return Some(symbol);
             }
 
+            if check_target_scope_only {
+                // Didn't find it in the current scope, so bail out
+                return None;
+            }
+
             match &scope.parent {
                 Some(p) => scope = self.scope(p),
                 None => {
@@ -105,6 +114,14 @@ impl SymbolTable {
                 }
             }
         }
+    }
+
+    pub(super) fn lookup(&self, path: &[&str]) -> Option<&Symbol> {
+        self.lookup_internal(path, false)
+    }
+
+    pub(super) fn lookup_in_current_scope(&self, path: &[&str]) -> Option<&Symbol> {
+        self.lookup_internal(path, true)
     }
 
     pub(super) fn value(&self, path: &[&str]) -> Option<usize> {
@@ -230,7 +247,7 @@ mod tests {
     }
 
     fn reg(st: &mut SymbolTable, id: &'static str, val: usize) -> TestResult {
-        st.register(&Identifier(id), Symbol::Constant(val), &loc())
+        st.register(&Identifier(id), Symbol::Constant(val), &loc(), false)
     }
 
     fn loc() -> Location<'static> {
