@@ -8,11 +8,7 @@ use fs_err::{read_to_string, OpenOptions};
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::*;
 use crate::errors::MosResult;
-
-#[cfg(windows)]
-const LINE_ENDING: &str = "\r\n";
-#[cfg(not(windows))]
-const LINE_ENDING: &str = "\n";
+use crate::LINE_ENDING;
 
 enum Casing {
     Uppercase,

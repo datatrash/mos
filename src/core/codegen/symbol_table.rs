@@ -5,6 +5,7 @@ use crate::core::codegen::{CodegenError, CodegenResult};
 use crate::core::parser::{Identifier, Location};
 
 use super::segment::ProgramCounter;
+use crate::LINE_ENDING;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Symbol {
@@ -13,7 +14,7 @@ pub(super) enum Symbol {
     Constant(usize),
 }
 
-pub(super) struct SymbolTable {
+pub struct SymbolTable {
     root: Scope,
     current: Vec<String>,
     anonymous_scope_counter: usize,
@@ -33,6 +34,30 @@ impl Scope {
             parent,
             children: HashMap::new(),
         }
+    }
+
+    fn to_vice_symbols(&self, path_prefix: Option<&str>) -> String {
+        let mut symbols = self
+            .table
+            .iter()
+            .filter_map(|(path, symbol)| match symbol {
+                Symbol::Label(pc) => {
+                    let full_path = match path_prefix {
+                        Some(prefix) => format!("{}.{}", prefix, path),
+                        None => path.to_string(),
+                    };
+                    Some(format!("al C:{:X} .{}", pc.as_usize(), full_path))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(LINE_ENDING);
+
+        for (child, scope) in &self.children {
+            symbols = vec![symbols, scope.to_vice_symbols(Some(child))].join(LINE_ENDING);
+        }
+
+        symbols
     }
 }
 
@@ -186,6 +211,10 @@ impl SymbolTable {
         assert!(!self.current.is_empty(), "Can't pop root scope");
         self.current.pop();
     }
+
+    pub fn to_vice_symbols(&self) -> String {
+        self.root.to_vice_symbols(None)
+    }
 }
 
 #[cfg(test)]
@@ -243,6 +272,30 @@ mod tests {
         reg(&mut st, "A", 200)?;
         assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(200)));
         st.leave();
+        Ok(())
+    }
+
+    #[test]
+    fn can_generate_vice_symbols() -> TestResult {
+        let mut st = SymbolTable::new();
+        st.register(
+            &Identifier("foo"),
+            Symbol::Label(0x1234.into()),
+            &loc(),
+            false,
+        )?;
+        let scope = st.add_child_scope(Some("scope"));
+        st.enter(&scope);
+        st.register(
+            &Identifier("foo"),
+            Symbol::Label(0xCAFE.into()),
+            &loc(),
+            false,
+        )?;
+        assert_eq!(
+            st.to_vice_symbols().lines().collect::<Vec<_>>(),
+            &["al C:1234 .foo", "al C:CAFE .scope.foo"]
+        );
         Ok(())
     }
 

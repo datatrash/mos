@@ -7,6 +7,11 @@ mod commands;
 mod core;
 mod errors;
 
+#[cfg(windows)]
+pub const LINE_ENDING: &str = "\r\n";
+#[cfg(not(windows))]
+pub const LINE_ENDING: &str = "\n";
+
 fn get_app() -> App<'static> {
     App::new("mos")
         .version(git_version::git_version!())

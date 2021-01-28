@@ -23,6 +23,12 @@ pub fn build_app() -> App<'static> {
                 .long("target-dir")
                 .default_value("."),
         )
+        .arg(
+            Arg::new("vice-symbols")
+                .about("Generate VICE symbols")
+                .long("vice-symbols")
+                .takes_value(false),
+        )
 }
 
 pub fn build_command(args: &ArgMatches) -> MosResult<()> {
@@ -33,6 +39,10 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
         let input_path = PathBuf::from(input_name);
         let output_path = PathBuf::from(format!(
             "{}.prg",
+            input_path.file_stem().unwrap().to_string_lossy()
+        ));
+        let symbol_path = PathBuf::from(format!(
+            "{}.vs",
             input_path.file_stem().unwrap().to_string_lossy()
         ));
 
@@ -49,6 +59,11 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             let start = range.start;
             out.write_all(&start.to_le_bytes())?;
             out.write_all(&segment.range_data())?;
+        }
+
+        if args.is_present("vice-symbols") {
+            let mut out = fs::File::create(target_dir.join(symbol_path))?;
+            out.write_all(generated_code.symbol_table().to_vice_symbols().as_bytes())?;
         }
     }
 
@@ -70,6 +85,7 @@ mod tests {
             input,
             "--target-dir",
             &format!("{}/target", root),
+            "--vice-symbols",
         ]);
         build_command(&args)?;
 
@@ -78,6 +94,11 @@ mod tests {
         let prg_path = &format!("{}/test/cli/build/valid.prg", root);
         let prg_bytes = std::fs::read(prg_path)?;
         assert_eq!(out_bytes, prg_bytes);
+
+        let vs_path = &format!("{}/target/valid.vs", root);
+        let vs_bytes = std::fs::read_to_string(vs_path)?;
+        let vs_lines = vs_bytes.lines().collect::<Vec<_>>();
+        assert_eq!(vs_lines, vec!["al C:2007 .data"]);
 
         Ok(())
     }

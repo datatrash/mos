@@ -119,6 +119,10 @@ impl<'ctx> CodegenContext<'ctx> {
         }
     }
 
+    pub fn symbol_table(&self) -> &SymbolTable {
+        &self.symbols
+    }
+
     pub fn segments(&self) -> &SegmentMap {
         &self.segments
     }
