@@ -2,6 +2,8 @@ use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
+use itertools::Itertools;
+
 use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::ParseError;
@@ -448,6 +450,7 @@ impl<'a> Display for Token<'a> {
                 let items = cfg
                     .items()
                     .iter()
+                    .sorted_by(|a, b| a.0.cmp(b.0))
                     .map(|(k, v)| format!("{}={}", k, v.data))
                     .collect::<Vec<_>>()
                     .join(",")

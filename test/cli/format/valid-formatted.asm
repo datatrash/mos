@@ -1,3 +1,8 @@
+.define segment {
+    name = default
+    start = $0400
+}
+
     * = $1000
     {
         lda data

@@ -4,6 +4,7 @@ use std::io::Write;
 
 use clap::{App, Arg, ArgMatches};
 use fs_err::{read_to_string, OpenOptions};
+use itertools::Itertools;
 
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::*;
@@ -45,7 +46,13 @@ impl Default for Options {
 fn format_expression(token: &Expression, opts: &Options) -> String {
     match token {
         Expression::Number(val, ty) => match ty {
-            NumberType::Hex => format!("${:x}", val),
+            NumberType::Hex => {
+                if *val < 256 {
+                    format!("${:02x}", val)
+                } else {
+                    format!("${:04x}", val)
+                }
+            }
             NumberType::Bin => format!("%{:b}", val),
             NumberType::Dec => format!("{}", val),
         },
@@ -184,6 +191,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             let mut items = cfg
                 .items()
                 .iter()
+                .sorted_by(|a, b| a.0.cmp(b.0))
                 .map(|(k, v)| {
                     format!(
                         "{}{} = {}",
@@ -203,7 +211,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             // Scopes always end with an extra newline
             format!(
                 "{ind}{{{i}{ind}}}{le}",
-                ind = indent_str(indent + 1),
+                ind = indent_str(indent),
                 i = items,
                 le = LINE_ENDING
             )

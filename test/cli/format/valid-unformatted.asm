@@ -1,3 +1,6 @@
+.define segment { name=default
+start=$0400}
+
 *=$1000
   {lDa data
             { STa             $d020 ,  x }
