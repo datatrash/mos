@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
+use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::ParseError;
 
@@ -15,12 +16,21 @@ pub struct State<'a> {
 }
 
 impl<'a> State<'a> {
+    pub fn new(filename: &'a str) -> Self {
+        Self {
+            filename,
+            errors: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+}
+
+impl<'a> State<'a> {
     pub fn report_error(&self, error: ParseError<'a>) {
         self.errors.borrow_mut().push(error);
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Comment {
     CStyle(String),
     CppStyle(String),
@@ -79,19 +89,19 @@ impl<'a> From<&LocatedSpan<'a>> for Location<'a> {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Register {
     X,
     Y,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Instruction<'a> {
     pub mnemonic: Mnemonic,
     pub operand: Option<Box<Located<'a, Token<'a>>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AddressingMode {
     AbsoluteOrZP,
     Immediate,
@@ -100,21 +110,21 @@ pub enum AddressingMode {
     OuterIndirect,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Operand<'a> {
     pub expr: Box<Located<'a, Expression<'a>>>,
     pub addressing_mode: AddressingMode,
     pub suffix: Option<Box<Located<'a, Token<'a>>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NumberType {
     Hex,
     Dec,
     Bin,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AddressModifier {
     HighByte,
     LowByte,
@@ -152,7 +162,7 @@ impl<'a> Display for IdentifierPath<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression<'a> {
     /// The full identifier path, which modifier it uses
     IdentifierValue(IdentifierPath<'a>, Option<AddressModifier>),
@@ -184,7 +194,7 @@ pub enum VariableType {
     Constant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
     Braces(Vec<Located<'a, Token<'a>>>),
     Label(Identifier<'a>),
@@ -196,6 +206,13 @@ pub enum Token<'a> {
     RegisterSuffix(Register),
     Ws(Vec<Comment>, Box<Located<'a, Token<'a>>>, Vec<Comment>),
     Data(Vec<Located<'a, Expression<'a>>>, usize),
+    Expression(Expression<'a>),
+    Definition(
+        Box<Located<'a, Token<'a>>>,
+        Option<Box<Located<'a, Token<'a>>>>,
+    ),
+    Config(ConfigMap<'a>),
+    ConfigPair(Box<Located<'a, Token<'a>>>, Box<Located<'a, Token<'a>>>),
     Error,
 }
 
@@ -208,7 +225,7 @@ impl<'a> Token<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Located<'a, T: CanWrapWhitespace<'a>> {
     pub location: Location<'a>,
     pub data: T,
@@ -380,6 +397,7 @@ impl<'a> Display for Token<'a> {
             Token::ProgramCounterDefinition(val) => {
                 write!(f, "* = {}", val.data)
             }
+            Token::Expression(e) => write!(f, "{}", e),
             Token::Operand(o) => {
                 let suffix = match &o.suffix {
                     Some(s) => format!("{}", s.data),
@@ -419,6 +437,25 @@ impl<'a> Display for Token<'a> {
                     .join(", ");
                 write!(f, "{} {}", label, data)
             }
+            Token::Definition(id, cfg) => {
+                let cfg = cfg
+                    .as_ref()
+                    .map(|c| format!("{}", c.data))
+                    .unwrap_or_else(|| "".to_string());
+                write!(f, ".DEFINE {}{}", id.data, cfg)
+            }
+            Token::Config(cfg) => {
+                let items = cfg
+                    .items()
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v.data))
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .trim_end()
+                    .to_string();
+                write!(f, "[{}]", items)
+            }
+            Token::ConfigPair(_k, _v) => unimplemented!(),
             Token::Error => write!(f, "Error"),
         }
     }

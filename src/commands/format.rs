@@ -121,6 +121,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             let ind = indent_str(indent + 1);
             format!("{}{} {}{}", ind, mnem, operand, extra_newline)
         }
+        Token::Expression(e) => format_expression(e, opts),
         Token::Operand(o) => {
             let expr = format_expression(&o.expr.data, opts);
             let suffix = o
@@ -172,6 +173,42 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             Register::X => ", x".to_string(),
             Register::Y => ", y".to_string(),
         },
+        Token::Definition(id, cfg) => {
+            let cfg = cfg
+                .as_ref()
+                .map(|c| format_token(&c.data, opts, 0))
+                .unwrap_or_else(|| "".to_string());
+            format!(".define {} {}", format_token(&id.data, opts, 0), cfg)
+        }
+        Token::Config(cfg) => {
+            let mut items = cfg
+                .items()
+                .iter()
+                .map(|(k, v)| {
+                    format!(
+                        "{}{} = {}",
+                        indent_str(indent + 1),
+                        k,
+                        format_token(&v.data, opts, 0)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(LINE_ENDING)
+                .trim_end()
+                .to_string();
+            if !items.is_empty() {
+                items = format!("{le}{i}{le}", le = LINE_ENDING, i = items);
+            }
+
+            // Scopes always end with an extra newline
+            format!(
+                "{ind}{{{i}{ind}}}{le}",
+                ind = indent_str(indent + 1),
+                i = items,
+                le = LINE_ENDING
+            )
+        }
+        Token::ConfigPair(_k, _v) => unimplemented!(),
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
     }
 }

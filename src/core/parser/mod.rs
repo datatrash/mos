@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
@@ -15,16 +14,17 @@ use crate::core::parser::mnemonic::mnemonic;
 use crate::errors::{MosError, MosResult};
 
 mod ast;
+mod config_map;
 mod mnemonic;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum ParseError<'a> {
-    #[error("expected something, but got instead")]
+    #[error("{message}")]
     ExpectedError {
         location: Location<'a>,
         message: String,
     },
-    #[error("unexpected")]
+    #[error("{message}")]
     UnexpectedError {
         location: Location<'a>,
         message: String,
@@ -368,6 +368,26 @@ fn pc_definition(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
+fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        tuple((
+            ws(preceded(tag_no_case(".define"), ws(identifier_name))),
+            expect(
+                ws(config_map::config_map),
+                "unable to parse configuration object",
+            ),
+        )),
+        move |(id, cfg)| {
+            Located::from(
+                location.clone(),
+                Token::Definition(Box::new(id), cfg.map(Box::new)),
+            )
+        },
+    )(input)
+}
+
 fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
@@ -388,6 +408,7 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
         variable_definition,
         const_definition,
         pc_definition,
+        config_definition,
         label,
         data,
         error,
@@ -563,14 +584,9 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
 }
 
 pub fn parse<'a>(filename: &'a str, source: &'a str) -> MosResult<Vec<Located<'a, Token<'a>>>> {
-    let errors = Rc::new(RefCell::new(Vec::new()));
-    let input = LocatedSpan::new_extra(
-        source,
-        State {
-            filename,
-            errors: errors.clone(),
-        },
-    );
+    let state = State::new(filename);
+    let errors = state.errors.clone();
+    let input = LocatedSpan::new_extra(source, state);
     let (_, expr) = all_consuming(source_file)(input).expect("parser cannot fail");
 
     let errors = Rc::try_unwrap(errors).ok().unwrap().into_inner();
@@ -635,6 +651,16 @@ mod test {
     fn parse_variable_definitions() {
         check(".var foo=123", ".VAR foo = 123");
         check(".const foo=123", ".CONST foo = 123");
+    }
+
+    #[test]
+    fn parse_config_definitions() {
+        check(
+            r".define segment {
+            name = hello
+            }",
+            ".DEFINE segment[name=hello]",
+        );
     }
 
     #[test]
