@@ -187,6 +187,7 @@ impl SymbolTable {
                 format!("$$scope_{}", self.anonymous_scope_counter)
             }
         };
+        log::trace!("Adding child scope: '{}'", name);
         let parent = self.current.clone();
         match self.current_scope_mut().children.entry(name.clone()) {
             Entry::Occupied(o) => {
@@ -200,14 +201,20 @@ impl SymbolTable {
     }
 
     pub(super) fn enter(&mut self, name: &str) {
+        log::trace!("Entering scope: '{}'", name);
         assert!(
             self.current_scope().children.contains_key(name),
-            format!("Can't enter unknown scope: {}", name)
+            format!(
+                "Can't enter unknown scope: '{}' from scope: {:?}",
+                name,
+                self.current_scope()
+            )
         );
         self.current.push(name.to_string());
     }
 
     pub(super) fn leave(&mut self) {
+        log::trace!("Leaving scope");
         assert!(!self.current.is_empty(), "Can't pop root scope");
         self.current.pop();
     }
@@ -235,6 +242,13 @@ mod tests {
         reg(&mut st, "A", 100)?;
 
         assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(100)));
+
+        let scope = st.add_child_scope(Some("bar"));
+        st.enter(&scope);
+        reg(&mut st, "A", 555)?;
+        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(555)));
+        st.leave();
+
         assert_eq!(st.lookup(&["B"]), Some(&Symbol::Constant(2)));
         assert_eq!(st.lookup(&["super", "A"]), Some(&Symbol::Constant(1)));
         assert_eq!(

@@ -1,6 +1,6 @@
 *=$1000
   {lDa data
-            STa             $d020 ,  x
+            { STa             $d020 ,  x }
         rtS
 }
 

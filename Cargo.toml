@@ -19,3 +19,6 @@ nom = "6"
 nom_locate = "3"
 smallvec = "1"
 thiserror = "1"
+
+[dev-dependencies]
+simple_logger = "1.11"

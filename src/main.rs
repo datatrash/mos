@@ -12,6 +12,20 @@ pub const LINE_ENDING: &str = "\r\n";
 #[cfg(not(windows))]
 pub const LINE_ENDING: &str = "\n";
 
+#[cfg(test)]
+pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::SimpleLogger>(
+    customizer: Option<F>,
+) {
+    use simple_logger::*;
+    let logger = SimpleLogger::new().with_level(log::LevelFilter::Off);
+    let logger = match customizer {
+        Some(c) => c(logger),
+        None => logger.with_module_level("mos", log::LevelFilter::Trace),
+    };
+
+    logger.init().unwrap();
+}
+
 fn get_app() -> App<'static> {
     App::new("mos")
         .version(git_version::git_version!())

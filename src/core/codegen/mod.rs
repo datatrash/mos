@@ -550,7 +550,10 @@ impl<'ctx> CodegenContext<'ctx> {
             .map(|lt| match lt.data {
                 Token::Braces(inner) => {
                     let scope_name = self.symbols.add_child_scope(None);
-                    Emittable::Nested(scope_name, self.generate_emittables(inner))
+                    self.symbols.enter(&scope_name);
+                    let e = Emittable::Nested(scope_name, self.generate_emittables(inner));
+                    self.symbols.leave();
+                    e
                 }
                 _ => Emittable::Single(None, lt.location, lt.data),
             })
