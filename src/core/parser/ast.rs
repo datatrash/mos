@@ -156,11 +156,7 @@ impl<'a> IdentifierPath<'a> {
 
 impl<'a> Display for IdentifierPath<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.0.iter().map(|i| i.0).collect::<Vec<_>>().join(".")
-        )
+        write!(f, "{}", self.0.iter().map(|i| i.0).collect_vec().join("."))
     }
 }
 
@@ -370,7 +366,7 @@ impl<'a> Display for Token<'a> {
                 let mut tokens = tokens
                     .iter()
                     .map(|t| format!("{}", t.data))
-                    .collect::<Vec<_>>()
+                    .collect_vec()
                     .join("\n");
                 if !tokens.is_empty() {
                     tokens = format!("\n{}\n", tokens);
@@ -435,7 +431,7 @@ impl<'a> Display for Token<'a> {
                 let data = tok
                     .iter()
                     .map(|t| format!("{}", t.data))
-                    .collect::<Vec<_>>()
+                    .collect_vec()
                     .join(", ");
                 write!(f, "{} {}", label, data)
             }
@@ -452,7 +448,7 @@ impl<'a> Display for Token<'a> {
                     .iter()
                     .sorted_by(|a, b| a.0.cmp(b.0))
                     .map(|(k, v)| format!("{}={}", k, v.data))
-                    .collect::<Vec<_>>()
+                    .collect_vec()
                     .join(",")
                     .trim_end()
                     .to_string();

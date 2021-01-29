@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 use crate::core::parser::OwnedLocation;
 
 pub type MosResult<T> = Result<T, MosError>;
@@ -51,7 +53,7 @@ impl MosError {
             MosError::Multiple(errors) => errors
                 .iter()
                 .map(|e| e.format(use_color))
-                .collect::<Vec<_>>()
+                .collect_vec()
                 .join("\n"),
         }
     }

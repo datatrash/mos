@@ -1,6 +1,8 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
+use itertools::Itertools;
+
 use crate::core::codegen::{CodegenError, CodegenResult};
 use crate::core::parser::{Identifier, Location};
 use crate::LINE_ENDING;
@@ -50,7 +52,7 @@ impl Scope {
                 }
                 _ => None,
             })
-            .collect::<Vec<_>>()
+            .collect_vec()
             .join(LINE_ENDING);
 
         for (child, scope) in &self.children {
@@ -226,6 +228,8 @@ impl SymbolTable {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
     use crate::core::codegen::CodegenResult;
     use crate::core::parser::{Identifier, Location};
@@ -313,7 +317,7 @@ mod tests {
             false,
         )?;
         assert_eq!(
-            st.to_vice_symbols().lines().collect::<Vec<_>>(),
+            st.to_vice_symbols().lines().collect_vec(),
             &["al C:1234 .foo", "al C:CAFE .scope.foo"]
         );
         Ok(())

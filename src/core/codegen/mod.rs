@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 
 use crate::core::codegen::segment::{ProgramCounter, Segment};
@@ -567,7 +568,7 @@ impl<'ctx> CodegenContext<'ctx> {
                     Emittable::Single(None, lt.location, lt.data)
                 }
             })
-            .collect::<Vec<_>>()
+            .collect_vec()
     }
 }
 
@@ -577,10 +578,7 @@ pub fn codegen<'ctx>(
 ) -> MosResult<CodegenContext<'ctx>> {
     let mut ctx = CodegenContext::new(options);
 
-    let ast = ast
-        .into_iter()
-        .map(|t| t.strip_whitespace())
-        .collect::<Vec<_>>();
+    let ast = ast.into_iter().map(|t| t.strip_whitespace()).collect_vec();
 
     let mut to_process = ctx.generate_emittables(ast);
 

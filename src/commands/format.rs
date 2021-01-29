@@ -97,7 +97,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             let mut tokens = tokens
                 .iter()
                 .map(|t| format_token(&t.data, opts, indent + 1))
-                .collect::<Vec<_>>()
+                .collect_vec()
                 .join(LINE_ENDING)
                 .trim_end() // if the scope ends with a newline due to for instance a 'rts', we trim it off here
                 .to_string();
@@ -163,7 +163,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             let expr = expr
                 .iter()
                 .map(|t| format_expression(&t.data, opts))
-                .collect::<Vec<_>>()
+                .collect_vec()
                 .join(", ");
             match size {
                 1 => format!("{}.byte {}", indent_str(indent + 1), expr),
@@ -200,7 +200,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                         format_token(&v.data, opts, 0)
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect_vec()
                 .join(LINE_ENDING)
                 .trim_end()
                 .to_string();
@@ -222,16 +222,8 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
 }
 
 fn format_ws(lhs: &[Comment], inner: String, rhs: &[Comment], _opts: &Options) -> String {
-    let lhs = lhs
-        .iter()
-        .map(|l| format!("{}", l))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let rhs = rhs
-        .iter()
-        .map(|l| format!("{}", l))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let lhs = lhs.iter().map(|l| format!("{}", l)).collect_vec().join(" ");
+    let rhs = rhs.iter().map(|l| format!("{}", l)).collect_vec().join(" ");
     let lhs_spacing = if lhs.is_empty() {
         "".to_string()
     } else {
@@ -251,7 +243,7 @@ fn format<'a>(ast: &[Located<'a, Token<'a>>], opts: &Options) -> String {
             let token = &lt.data;
             format_token(token, opts, 0)
         })
-        .collect::<Vec<_>>()
+        .collect_vec()
         .join(LINE_ENDING)
         .trim_end()
         .to_string()
@@ -267,7 +259,7 @@ pub fn format_app() -> App<'static> {
 }
 
 pub fn format_command(args: &ArgMatches) -> MosResult<()> {
-    let input_names = args.values_of("input").unwrap().collect::<Vec<_>>();
+    let input_names = args.values_of("input").unwrap().collect_vec();
 
     for input_name in input_names {
         let source = read_to_string(input_name)?;

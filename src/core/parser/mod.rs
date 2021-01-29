@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use itertools::Itertools;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest, value};
@@ -113,7 +114,7 @@ fn whitespace_or_comment<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Vec<Com
                 Some(Comment::CppStyle(span.fragment().to_owned().into()))
             }),
         ))),
-        |comments| comments.into_iter().flatten().collect::<Vec<_>>(),
+        |comments| comments.into_iter().flatten().collect_vec(),
     )
 }
 
@@ -166,7 +167,7 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<Expression>> {
         let path = identifier_path
             .iter()
             .map(|lt| lt.data.as_identifier().clone())
-            .collect::<Vec<_>>();
+            .collect_vec();
         let path = IdentifierPath::new(&path);
 
         Located::from(

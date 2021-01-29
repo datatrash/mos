@@ -76,6 +76,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use crate::get_app;
 
     #[test]
@@ -85,10 +87,7 @@ mod tests {
 
         match args.subcommand() {
             Some(("build", args)) => {
-                assert_eq!(
-                    args.values_of("input").unwrap().collect::<Vec<_>>(),
-                    ["test.asm"]
-                );
+                assert_eq!(args.values_of("input").unwrap().collect_vec(), ["test.asm"]);
             }
             _ => panic!(),
         }
@@ -101,10 +100,7 @@ mod tests {
 
         match args.subcommand() {
             Some(("format", args)) => {
-                assert_eq!(
-                    args.values_of("input").unwrap().collect::<Vec<_>>(),
-                    ["test.asm"]
-                );
+                assert_eq!(args.values_of("input").unwrap().collect_vec(), ["test.asm"]);
             }
             _ => panic!(),
         }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use clap::{App, Arg, ArgMatches};
 use fs_err as fs;
+use itertools::Itertools;
 
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser;
@@ -32,7 +33,7 @@ pub fn build_app() -> App<'static> {
 }
 
 pub fn build_command(args: &ArgMatches) -> MosResult<()> {
-    let input_names = args.values_of("input").unwrap().collect::<Vec<_>>();
+    let input_names = args.values_of("input").unwrap().collect_vec();
     let target_dir = PathBuf::from(args.value_of("target-dir").unwrap());
 
     for input_name in input_names {
@@ -72,8 +73,10 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{build_app, build_command};
     use anyhow::Result;
+    use itertools::Itertools;
+
+    use crate::commands::{build_app, build_command};
 
     #[test]
     fn can_invoke_build() -> Result<()> {
@@ -97,7 +100,7 @@ mod tests {
 
         let vs_path = &format!("{}/target/valid.vs", root);
         let vs_bytes = std::fs::read_to_string(vs_path)?;
-        let vs_lines = vs_bytes.lines().collect::<Vec<_>>();
+        let vs_lines = vs_bytes.lines().collect_vec();
         assert_eq!(vs_lines, vec!["al C:2007 .data"]);
 
         Ok(())
