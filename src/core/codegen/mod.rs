@@ -546,16 +546,26 @@ impl<'ctx> CodegenContext<'ctx> {
     }
 
     fn generate_emittables<'a>(&mut self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
+        let mut active_label = None;
         ast.into_iter()
             .map(|lt| match lt.data {
                 Token::Braces(inner) => {
-                    let scope_name = self.symbols.add_child_scope(None);
+                    let scope_name = self.symbols.add_child_scope(active_label);
                     self.symbols.enter(&scope_name);
                     let e = Emittable::Nested(scope_name, self.generate_emittables(inner));
                     self.symbols.leave();
                     e
                 }
-                _ => Emittable::Single(None, lt.location, lt.data),
+                _ => {
+                    // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
+                    // used to set the name of the braces' scope. If it is not followed by braces we unset the active label to make sure
+                    // any nested scope doesn't accidentally get the labels' name.
+                    match &lt.data {
+                        Token::Label(id) => active_label = Some(id.0),
+                        _ => active_label = None,
+                    };
+                    Emittable::Single(None, lt.location, lt.data)
+                }
             })
             .collect::<Vec<_>>()
     }
@@ -688,6 +698,26 @@ mod tests {
         assert_eq!(
             ctx.segments().current().range_data(),
             vec![0xa9, 2, 0xa9, 1, 0xa9, 1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_named_scopes() -> TestResult {
+        let ctx = test_codegen(
+            r"
+                foo: {
+                    .var a = 1
+                    nop
+                    bar: { .var a = 2 }
+                }
+                lda #foo.a
+                lda #foo.bar.a
+            ",
+        )?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xea, 0xa9, 1, 0xa9, 2]
         );
         Ok(())
     }

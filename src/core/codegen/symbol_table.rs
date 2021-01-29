@@ -3,9 +3,9 @@ use std::collections::HashMap;
 
 use crate::core::codegen::{CodegenError, CodegenResult};
 use crate::core::parser::{Identifier, Location};
+use crate::LINE_ENDING;
 
 use super::segment::ProgramCounter;
-use crate::LINE_ENDING;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Symbol {
@@ -257,6 +257,12 @@ mod tests {
         );
 
         st.leave();
+
+        assert_eq!(
+            st.lookup(&["foo", "bar", "A"]),
+            Some(&Symbol::Constant(555))
+        );
+
         assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(1)));
         assert_eq!(st.lookup(&["foo", "A"]), Some(&Symbol::Constant(100)));
         assert_eq!(st.lookup(&["super", "A"]), Some(&Symbol::Constant(1)));
