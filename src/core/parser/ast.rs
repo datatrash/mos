@@ -224,7 +224,7 @@ impl<'a> Token<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Located<'a, T: CanWrapWhitespace<'a>> {
+pub struct Located<'a, T> {
     pub location: Location<'a>,
     pub data: T,
 }
@@ -236,7 +236,7 @@ pub trait CanWrapWhitespace<'a> {
         Self: Sized;
 }
 
-impl<'a, T: CanWrapWhitespace<'a>> Located<'a, T> {
+impl<'a, T> Located<'a, T> {
     pub fn from<L: Into<Location<'a>>>(location: L, data: T) -> Self {
         Self {
             location: location.into(),
@@ -244,7 +244,10 @@ impl<'a, T: CanWrapWhitespace<'a>> Located<'a, T> {
         }
     }
 
-    pub fn strip_whitespace(self) -> Self {
+    pub fn strip_whitespace(self) -> Self
+    where
+        T: CanWrapWhitespace<'a>,
+    {
         Self {
             data: self.data.strip_whitespace(),
             ..self

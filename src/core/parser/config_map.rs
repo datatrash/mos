@@ -2,7 +2,6 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::str::FromStr;
 
 use nom::combinator::map;
 use nom::multi::many0;
@@ -44,10 +43,12 @@ impl<'a> ConfigMap<'a> {
         &self.items
     }
 
-    pub fn identifier(&self, key: &str) -> MosResult<Option<&Identifier>> {
+    pub fn identifier(&self, key: &str) -> MosResult<Option<Located<'a, Identifier<'a>>>> {
         match self.items.get(key) {
             Some(lt) => match &lt.data {
-                Token::IdentifierName(id) => Ok(Some(id)),
+                Token::IdentifierName(id) => {
+                    Ok(Some(Located::from(lt.location.clone(), id.clone())))
+                }
                 _ => Err(ParseError::UnexpectedError {
                     location: lt.location.clone(),
                     message: "expected identifier".to_string(),
@@ -58,30 +59,12 @@ impl<'a> ConfigMap<'a> {
         }
     }
 
-    pub fn bool(&self, key: &str) -> MosResult<Option<bool>> {
-        let e = |lt: &Located<Token>| {
-            Err(ParseError::UnexpectedError {
-                location: lt.location.clone(),
-                message: "expected boolean".to_string(),
-            }
-            .into())
-        };
+    pub fn expression(&self, key: &str) -> MosResult<Option<Located<'a, Expression<'a>>>> {
         match self.items.get(key) {
             Some(lt) => match &lt.data {
-                Token::IdentifierName(id) => match bool::from_str(id.0) {
-                    Ok(b) => Ok(Some(b)),
-                    Err(_) => e(lt),
-                },
-                _ => e(lt),
-            },
-            _ => Ok(None),
-        }
-    }
-
-    pub fn expression(&self, key: &str) -> MosResult<Option<&Expression>> {
-        match self.items.get(key) {
-            Some(lt) => match &lt.data {
-                Token::Expression(expr) => Ok(Some(expr)),
+                Token::Expression(expr) => {
+                    Ok(Some(Located::from(lt.location.clone(), expr.clone())))
+                }
                 _ => Err(ParseError::UnexpectedError {
                     location: lt.location.clone(),
                     message: "expected expression".to_string(),
@@ -162,27 +145,28 @@ mod tests {
             r"{
             num = 123
             id = v
-            bool = true
             nested =  {
                 nested_id   = nested_v
             }
         }",
         );
         assert_eq!(
-            cfg.expression("num")?,
-            Some(&Expression::Number(123, NumberType::Dec))
+            cfg.expression("num")?.unwrap().data,
+            Expression::Number(123, NumberType::Dec)
         );
-        assert_eq!(cfg.identifier("id")?, Some(&Identifier("v")));
-        assert_eq!(cfg.bool("bool")?, Some(true));
+        assert_eq!(cfg.identifier("id")?.unwrap().data, Identifier("v"));
         assert_eq!(
-            cfg.nested("nested")?.unwrap().identifier("nested_id")?,
-            Some(&Identifier("nested_v"))
+            cfg.nested("nested")?
+                .unwrap()
+                .identifier("nested_id")?
+                .unwrap()
+                .data,
+            Identifier("nested_v")
         );
 
-        assert_eq!(cfg.bool("num").is_err(), true);
         assert_eq!(cfg.expression("nested").is_err(), true);
         assert_eq!(cfg.identifier("num").is_err(), true);
-        assert_eq!(cfg.nested("bool").is_err(), true);
+        assert_eq!(cfg.nested("num").is_err(), true);
 
         Ok(())
     }

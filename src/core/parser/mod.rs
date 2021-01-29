@@ -9,6 +9,7 @@ use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{branch::alt, character::complete::multispace0};
 
 pub use ast::*;
+pub use config_map::*;
 pub use mnemonic::*;
 
 use crate::core::parser::mnemonic::mnemonic;

@@ -25,6 +25,8 @@ pub enum CodegenError<'a> {
     SymbolRedefinition(Location<'a>, Identifier<'a>),
     #[error("operand size mismatch")]
     OperandSizeMismatch(Location<'a>),
+    #[error("invalid definition: {1}: {2}")]
+    InvalidDefinition(Location<'a>, Identifier<'a>, &'a str),
 }
 
 impl<'a> From<CodegenError<'a>> for MosError {
@@ -34,6 +36,7 @@ impl<'a> From<CodegenError<'a>> for MosError {
             CodegenError::BranchTooFar(location) => location,
             CodegenError::SymbolRedefinition(location, _) => location,
             CodegenError::OperandSizeMismatch(location) => location,
+            CodegenError::InvalidDefinition(location, _, _) => location,
         };
         MosError::Codegen {
             location: location.into(),
@@ -54,12 +57,12 @@ impl Default for CodegenOptions {
     }
 }
 
-pub struct SegmentMap<'a> {
-    segments: HashMap<&'a str, Segment>,
-    current: Option<&'a str>,
+pub struct SegmentMap {
+    segments: HashMap<String, Segment>,
+    current: Option<String>,
 }
 
-impl<'a> SegmentMap<'a> {
+impl SegmentMap {
     fn new() -> Self {
         Self {
             segments: HashMap::new(),
@@ -67,8 +70,9 @@ impl<'a> SegmentMap<'a> {
         }
     }
 
-    fn insert<'b: 'a>(&mut self, name: &'b str, segment: Segment) {
-        self.segments.insert(name, segment);
+    fn insert<N: Into<String>>(&mut self, name: N, segment: Segment) {
+        let name = name.into();
+        self.segments.insert(name.clone(), segment);
         if self.current.is_none() {
             self.current = Some(name);
         }
@@ -86,35 +90,44 @@ impl<'a> SegmentMap<'a> {
             .unwrap_or_else(|| panic!("Segment not found: {}", name))
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
     pub(crate) fn current(&self) -> &Segment {
-        self.get(self.current.expect("No current segment"))
+        self.get(self.current.as_ref().expect("No current segment"))
     }
 
     fn current_mut(&mut self) -> &mut Segment {
-        self.get_mut(self.current.expect("No current segment"))
+        let name = self.current.as_ref().expect("No current segment").clone();
+        self.get_mut(&name)
     }
 }
 
-pub struct CodegenContext<'ctx> {
-    segments: SegmentMap<'ctx>,
+pub struct CodegenContext {
+    options: CodegenOptions,
+    segments: SegmentMap,
     symbols: SymbolTable,
-    errors: Vec<CodegenError<'ctx>>,
+    errors: Vec<MosError>,
 }
 
 pub enum Emittable<'a> {
     Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
+    Segment(SegmentDefinition<'a>),
 }
 
-impl<'ctx> CodegenContext<'ctx> {
-    fn new(options: CodegenOptions) -> Self {
-        let mut segments = SegmentMap::new();
-        let default_segment = Segment::new(options.pc);
-        segments.insert("Default", default_segment);
+pub struct SegmentDefinition<'a> {
+    name: Located<'a, Identifier<'a>>,
+    start: Located<'a, Expression<'a>>,
+}
 
+impl CodegenContext {
+    fn new(options: CodegenOptions) -> Self {
         Self {
-            segments,
+            options,
+            segments: SegmentMap::new(),
             symbols: SymbolTable::new(),
             errors: vec![],
         }
@@ -510,15 +523,62 @@ impl<'ctx> CodegenContext<'ctx> {
         }
     }
 
-    fn emit_emittables(
+    fn evaluate_or_error<F: FnOnce() -> MosError>(
         &mut self,
-        emittables: Vec<Emittable<'ctx>>,
+        expr: &Located<Expression>,
         error_on_failure: bool,
-    ) -> Vec<Emittable<'ctx>> {
+        err: F,
+    ) -> Option<usize> {
+        match self.evaluate(expr, error_on_failure) {
+            Ok(Some(val)) => Some(val),
+            _ => {
+                if error_on_failure {
+                    self.errors.push(err());
+                }
+                None
+            }
+        }
+    }
+
+    fn emit_emittables<'a>(
+        &mut self,
+        emittables: Vec<Emittable<'a>>,
+        error_on_failure: bool,
+    ) -> Vec<Emittable<'a>> {
         emittables
             .into_iter()
             .filter_map(|e| match e {
+                Emittable::Segment(def) => {
+                    let start = self.evaluate_or_error(&def.start, error_on_failure, || {
+                        CodegenError::InvalidDefinition(
+                            def.start.location.clone(),
+                            Identifier("start"),
+                            "Could not determine start address for segment",
+                        )
+                        .into()
+                    });
+
+                    match start {
+                        Some(start) => {
+                            let name = def.name.data.0;
+                            let segment = Segment::new(ProgramCounter::new(start as u16));
+                            self.segments.insert(name, segment);
+                            None
+                        }
+                        None => {
+                            // try again later
+                            Some(Emittable::Segment(def))
+                        }
+                    }
+                }
                 Emittable::Single(pc, location, token) => {
+                    if self.segments.is_empty() {
+                        // We want to start emitting, but we don't have a segment yet.
+                        log::trace!("Creating default segment");
+                        self.segments
+                            .insert("default", Segment::new(self.options.pc));
+                    }
+
                     match self.emit_single(pc, &token, &location, error_on_failure) {
                         Ok(pc) => {
                             pc.map(|pc| {
@@ -527,7 +587,7 @@ impl<'ctx> CodegenContext<'ctx> {
                             })
                         }
                         Err(e) => {
-                            self.errors.push(e);
+                            self.errors.push(e.into());
                             None
                         }
                     }
@@ -546,16 +606,76 @@ impl<'ctx> CodegenContext<'ctx> {
             .collect()
     }
 
+    fn require_cfg_value<'a, T>(
+        &mut self,
+        key: &str,
+        cfg_location: &Location,
+        value: MosResult<Option<Located<'a, T>>>,
+    ) -> Option<Located<'a, T>> {
+        match value {
+            Ok(Some(val)) => Some(val),
+            Ok(None) => {
+                self.errors.push(
+                    CodegenError::InvalidDefinition(
+                        cfg_location.clone(),
+                        Identifier(key),
+                        "missing value",
+                    )
+                    .into(),
+                );
+                None
+            }
+            Err(e) => {
+                self.errors.push(e);
+                None
+            }
+        }
+    }
+
+    fn emit_segment<'a>(
+        &mut self,
+        cfg: ConfigMap<'a>,
+        location: Location,
+    ) -> Option<Emittable<'a>> {
+        let name = self.require_cfg_value("name", &location, cfg.identifier("name"));
+        let start = self.require_cfg_value("start", &location, cfg.expression("start"));
+
+        match (name, start) {
+            (Some(name), Some(start)) => {
+                Some(Emittable::Segment(SegmentDefinition { name, start }))
+            }
+            _ => None,
+        }
+    }
+
     fn generate_emittables<'a>(&mut self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
         let mut active_label = None;
         ast.into_iter()
-            .map(|lt| match lt.data {
+            .filter_map(|lt| match lt.data {
+                Token::Definition(id, cfg) => {
+                    let id = match id.data {
+                        Token::IdentifierName(id) => id.0,
+                        _ => panic!("Definition does not have an identifier"),
+                    };
+
+                    let cfg = cfg.expect("Found empty definition");
+                    let cfg_location = cfg.location;
+                    let cfg = match cfg.data {
+                        Token::Config(cfg) => cfg,
+                        _ => panic!("Definition does not contain a configmap"),
+                    };
+
+                    match id {
+                        "segment" => self.emit_segment(cfg, cfg_location),
+                        _ => panic!("Unknown definition type: {}", id),
+                    }
+                }
                 Token::Braces(inner) => {
                     let scope_name = self.symbols.add_child_scope(active_label);
                     self.symbols.enter(&scope_name);
                     let e = Emittable::Nested(scope_name, self.generate_emittables(inner));
                     self.symbols.leave();
-                    e
+                    Some(e)
                 }
                 _ => {
                     // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
@@ -565,17 +685,17 @@ impl<'ctx> CodegenContext<'ctx> {
                         Token::Label(id) => active_label = Some(id.0),
                         _ => active_label = None,
                     };
-                    Emittable::Single(None, lt.location, lt.data)
+                    Some(Emittable::Single(None, lt.location, lt.data))
                 }
             })
             .collect_vec()
     }
 }
 
-pub fn codegen<'ctx>(
-    ast: Vec<Located<'ctx, Token<'ctx>>>,
+pub fn codegen<'a>(
+    ast: Vec<Located<'a, Token<'a>>>,
     options: CodegenOptions,
-) -> MosResult<CodegenContext<'ctx>> {
+) -> MosResult<CodegenContext> {
     let mut ctx = CodegenContext::new(options);
 
     let ast = ast.into_iter().map(|t| t.strip_whitespace()).collect_vec();
@@ -1061,7 +1181,7 @@ mod tests {
         assert_eq!(ctx.segments().current().range_data(), data);
     }
 
-    fn test_codegen(code: &'static str) -> MosResult<CodegenContext<'static>> {
+    fn test_codegen(code: &'static str) -> MosResult<CodegenContext> {
         let ast = parse("test.asm", &code)?;
         codegen(ast, CodegenOptions::default())
     }
