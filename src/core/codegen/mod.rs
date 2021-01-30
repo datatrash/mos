@@ -118,9 +118,20 @@ pub enum Emittable<'a> {
     Segment(SegmentDefinition<'a>),
 }
 
-pub struct SegmentDefinition<'a> {
-    name: Located<'a, Identifier<'a>>,
-    start: Located<'a, Expression<'a>>,
+pub struct SegmentDefinition<'a>(ConfigMap<'a>);
+
+impl<'a> SegmentDefinition<'a> {
+    pub fn from_config_map(cfg: ConfigMap<'a>) -> Self {
+        Self(cfg)
+    }
+
+    pub fn name<'b>(&'b self) -> Located<'b, &Identifier<'b>> {
+        self.0.identifier("name")
+    }
+
+    pub fn start<'b>(&'b self) -> Located<'b, &Expression<'b>> {
+        self.0.expression("start")
+    }
 }
 
 impl CodegenContext {
@@ -525,11 +536,12 @@ impl CodegenContext {
 
     fn evaluate_or_error<F: FnOnce() -> MosError>(
         &mut self,
-        expr: &Located<Expression>,
+        expr: &Located<&Expression>,
         error_on_failure: bool,
         err: F,
     ) -> Option<usize> {
-        match self.evaluate(expr, error_on_failure) {
+        let expr = &Located::from(expr.location.clone(), expr.data.clone());
+        match self.evaluate(&expr, error_on_failure) {
             Ok(Some(val)) => Some(val),
             _ => {
                 if error_on_failure {
@@ -549,9 +561,10 @@ impl CodegenContext {
             .into_iter()
             .filter_map(|e| match e {
                 Emittable::Segment(def) => {
-                    let start = self.evaluate_or_error(&def.start, error_on_failure, || {
+                    let start = def.start();
+                    let start = self.evaluate_or_error(&start, error_on_failure, || {
                         CodegenError::InvalidDefinition(
-                            def.start.location.clone(),
+                            start.location.clone(),
                             Identifier("start"),
                             "Could not determine start address for segment",
                         )
@@ -560,7 +573,7 @@ impl CodegenContext {
 
                     match start {
                         Some(start) => {
-                            let name = def.name.data.0;
+                            let name = def.name().data.0;
                             let segment = Segment::new(ProgramCounter::new(start as u16));
                             self.segments.insert(name, segment);
                             None
@@ -632,20 +645,8 @@ impl CodegenContext {
         }
     }
 
-    fn emit_segment<'a>(
-        &mut self,
-        cfg: ConfigMap<'a>,
-        location: Location,
-    ) -> Option<Emittable<'a>> {
-        let name = self.require_cfg_value("name", &location, cfg.identifier("name"));
-        let start = self.require_cfg_value("start", &location, cfg.expression("start"));
-
-        match (name, start) {
-            (Some(name), Some(start)) => {
-                Some(Emittable::Segment(SegmentDefinition { name, start }))
-            }
-            _ => None,
-        }
+    fn emit_segment<'a>(&mut self, cfg: ConfigMap<'a>) -> Option<Emittable<'a>> {
+        Some(Emittable::Segment(SegmentDefinition::from_config_map(cfg)))
     }
 
     fn generate_emittables<'a>(&mut self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
@@ -659,14 +660,13 @@ impl CodegenContext {
                     };
 
                     let cfg = cfg.expect("Found empty definition");
-                    let cfg_location = cfg.location;
                     let cfg = match cfg.data {
                         Token::Config(cfg) => cfg,
                         _ => panic!("Definition does not contain a configmap"),
                     };
 
                     match id {
-                        "segment" => self.emit_segment(cfg, cfg_location),
+                        "segment" => self.emit_segment(cfg),
                         _ => panic!("Unknown definition type: {}", id),
                     }
                 }

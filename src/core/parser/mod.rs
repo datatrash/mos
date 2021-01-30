@@ -372,6 +372,7 @@ fn pc_definition(input: LocatedSpan) -> IResult<Located<Token>> {
 
 fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
+    let errors = input.extra.errors.clone();
 
     map(
         tuple((
@@ -382,6 +383,24 @@ fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
             ),
         )),
         move |(id, cfg)| {
+            // Did we get a valid config map?
+            if let Some(config_map) = &cfg {
+                // Yes, so extract it from the token
+                let config_map = match &config_map.data {
+                    Token::Config(cfg) => cfg,
+                    _ => panic!(),
+                };
+
+                // And perform some sanity checks
+                #[allow(clippy::single_match)]
+                match id.data.as_identifier().0.to_lowercase().as_str() {
+                    "segment" => {
+                        config_map.require(&["name", "start"], location.clone(), errors.clone());
+                    }
+                    _ => (),
+                }
+            }
+
             Located::from(
                 location.clone(),
                 Token::Definition(Box::new(id), cfg.map(Box::new)),
@@ -656,12 +675,18 @@ mod test {
     }
 
     #[test]
-    fn parse_config_definitions() {
+    fn parse_segment_definitions() {
+        check_err(
+            ".define segment {}",
+            "test.asm:1:1: error: required field: name\ntest.asm:1:1: error: required field: start",
+        );
+
         check(
             r".define segment {
             name = hello
+            start = 4096
             }",
-            ".DEFINE segment[name=hello]",
+            ".DEFINE segment[name=hello,start=4096]",
         );
     }
 

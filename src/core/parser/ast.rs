@@ -447,10 +447,10 @@ impl<'a> Display for Token<'a> {
             }
             Token::Config(cfg) => {
                 let items = cfg
-                    .items()
+                    .keys()
                     .iter()
-                    .sorted_by(|a, b| a.0.cmp(b.0))
-                    .map(|(k, v)| format!("{}={}", k, v.data))
+                    .sorted()
+                    .map(|key| format!("{}={}", key, cfg.value(key).data))
                     .collect_vec()
                     .join(",")
                     .trim_end()

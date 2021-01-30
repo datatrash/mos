@@ -189,15 +189,15 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
         }
         Token::Config(cfg) => {
             let mut items = cfg
-                .items()
+                .keys()
                 .iter()
-                .sorted_by(|a, b| a.0.cmp(b.0))
-                .map(|(k, v)| {
+                .sorted()
+                .map(|key| {
                     format!(
                         "{}{} = {}",
                         indent_str(indent + 1),
-                        k,
-                        format_token(&v.data, opts, 0)
+                        key,
+                        format_token(&cfg.value(key).data, opts, 0)
                     )
                 })
                 .collect_vec()
