@@ -860,6 +860,22 @@ mod tests {
     }
 
     #[test]
+    fn segments_have_required_fields() -> TestResult {
+        let err = test_codegen(".define segment {}").err().unwrap();
+        assert_eq!(
+            err.to_string()
+                .contains("test.asm:1:17: error: required field: name"),
+            true
+        );
+        assert_eq!(
+            err.to_string()
+                .contains("test.asm:1:17: error: required field: start"),
+            true
+        );
+        Ok(())
+    }
+
+    #[test]
     fn can_use_constants() -> TestResult {
         let ctx = test_codegen(".const foo=49152\nlda #>foo")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0xc0]);

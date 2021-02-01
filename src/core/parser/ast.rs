@@ -229,6 +229,14 @@ impl<'a> Token<'a> {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn as_config_map(&self) -> &ConfigMap<'a> {
+        match self {
+            Token::Config(cfg) => cfg,
+            _ => panic!(),
+        }
+    }
+
     pub(crate) fn into_config_map(self) -> ConfigMap<'a> {
         match self {
             Token::Config(cfg) => cfg,
