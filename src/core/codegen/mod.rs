@@ -1,11 +1,12 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 
-use crate::core::codegen::segment::{ProgramCounter, Segment};
+use crate::core::codegen::segment::{ProgramCounter, Segment, SegmentOptions, SEGMENT_OPTIONS};
 use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
@@ -76,6 +77,10 @@ impl SegmentMap {
         if self.current.is_none() {
             self.current = Some(name);
         }
+    }
+
+    fn try_get(&self, name: &str) -> Option<&Segment> {
+        self.segments.get(name)
     }
 
     fn get(&self, name: &str) -> &Segment {
@@ -525,14 +530,13 @@ impl CodegenContext {
         error_on_failure: bool,
         error_msg: &str,
     ) -> Option<usize> {
-        let val = cfg.expression(identifier);
-        let expr = &Located::from(val.location.clone(), val.data.clone());
+        let expr = cfg.value(identifier).map(|val| val.as_expression().clone());
         match self.evaluate(&expr, error_on_failure) {
             Ok(Some(val)) => Some(val),
             _ => {
                 if error_on_failure {
                     let err = CodegenError::InvalidDefinition(
-                        val.location.clone(),
+                        expr.location.clone(),
                         Identifier(identifier),
                         error_msg,
                     )
@@ -562,8 +566,18 @@ impl CodegenContext {
 
                     match start {
                         Some(start) => {
-                            let name = cfg.identifier("name").data.0;
-                            let segment = Segment::new(ProgramCounter::new(start as u16));
+                            let name = cfg.value("name").data.as_identifier().0;
+                            let write = match cfg.try_value("write") {
+                                Some(val) => {
+                                    bool::from_str(val.data.as_identifier().0).unwrap_or(true)
+                                }
+                                None => true,
+                            };
+                            let options = SegmentOptions {
+                                initial_pc: start.into(),
+                                write,
+                            };
+                            let segment = Segment::new(options);
                             self.segments.insert(name, segment);
                             None
                         }
@@ -577,8 +591,11 @@ impl CodegenContext {
                     if self.segments.is_empty() {
                         // We want to start emitting, but we don't have a segment yet.
                         log::trace!("Creating default segment");
-                        self.segments
-                            .insert("default", Segment::new(self.options.pc));
+                        let options = SegmentOptions {
+                            initial_pc: self.options.pc,
+                            ..Default::default()
+                        };
+                        self.segments.insert("default", Segment::new(options));
                     }
 
                     match self.emit_single(pc, &token, &location, error_on_failure) {
@@ -640,11 +657,22 @@ impl CodegenContext {
             .filter_map(|lt| match lt.data {
                 Token::Definition(id, cfg) => {
                     let id = id.data.as_identifier().0;
-                    let cfg = cfg.expect("Found empty definition").data.into_config_map();
+                    let cfg = cfg.expect("Found empty definition");
+                    let cfg_location = cfg.location.clone();
+                    let cfg = cfg.data.into_config_map();
 
                     active_label = None;
                     match id {
-                        "segment" => Some(Emittable::Segment(cfg)),
+                        "segment" => {
+                            // Perform some sanity checks
+                            let errors = cfg.require(&SEGMENT_OPTIONS, cfg_location);
+                            if errors.is_empty() {
+                                Some(Emittable::Segment(cfg))
+                            } else {
+                                self.errors.extend(errors);
+                                None
+                            }
+                        }
                         _ => panic!("Unknown definition type: {}", id),
                     }
                 }
@@ -817,6 +845,17 @@ mod tests {
             ctx.segments().current().range_data(),
             vec![0xea, 0xa9, 1, 0xa9, 2]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn can_define_segments() -> TestResult {
+        let ctx =
+            test_codegen(".define segment {\nname = foo\nstart = 49152\nwrite = false\n}\nnop")?;
+        assert_eq!(ctx.segments().get("foo").range(), &Some(0xc000..0xc001));
+        assert_eq!(ctx.segments().get("foo").range_data(), vec![0xea]);
+        assert_eq!(ctx.segments().get("foo").options().write, false);
+        assert_eq!(ctx.segments().try_get("default").is_none(), true);
         Ok(())
     }
 

@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-
-use std::cell::RefCell;
 use std::collections::HashMap;
 
 use nom::combinator::map;
@@ -37,66 +34,26 @@ impl<'a> ConfigMap<'a> {
     }
 
     pub fn value<'b>(&'b self, key: &'b str) -> &'b Located<Token> {
-        self.items.get(key).unwrap()
+        self.try_value(key).unwrap()
     }
 
-    pub fn require<'b>(
-        &self,
-        keys: &[&str],
-        location: Location<'b>,
-        errors: Rc<RefCell<Vec<ParseError<'b>>>>,
-    ) {
-        for key in keys {
-            if !self.items.contains_key(key) {
-                let e = ParseError::ExpectedError {
-                    location: location.clone(),
-                    message: format!("required field: {}", key),
-                };
-                errors.borrow_mut().push(e);
-            }
-        }
+    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&'b Located<Token>> {
+        self.items.get(key)
     }
 
-    pub fn identifier(&self, key: &str) -> Located<&Identifier> {
-        self.try_identifier(key)
-            .unwrap_or_else(|| panic!("Expected required field: {}", key))
-    }
-
-    pub fn try_identifier(&self, key: &str) -> Option<Located<&Identifier>> {
-        let lt = self.items.get(key);
-        lt.map(|lt| match &lt.data {
-            Token::IdentifierName(id) => Some(Located::from(lt.location.clone(), id)),
-            _ => None,
-        })
-        .flatten()
-    }
-
-    pub fn expression(&self, key: &str) -> Located<&Expression> {
-        self.try_expression(key)
-            .unwrap_or_else(|| panic!("Expected required field: {}", key))
-    }
-
-    pub fn try_expression(&self, key: &str) -> Option<Located<&Expression>> {
-        let lt = self.items.get(key);
-        lt.map(|lt| match &lt.data {
-            Token::Expression(expr) => Some(Located::from(lt.location.clone(), expr)),
-            _ => None,
-        })
-        .flatten()
-    }
-
-    pub fn nested(&self, key: &str) -> Located<&ConfigMap> {
-        self.try_nested(key)
-            .unwrap_or_else(|| panic!("Expected required field: {}", key))
-    }
-
-    pub fn try_nested(&self, key: &str) -> Option<Located<&ConfigMap>> {
-        let lt = self.items.get(key);
-        lt.map(|lt| match &lt.data {
-            Token::Config(cfg) => Some(Located::from(lt.location.clone(), cfg)),
-            _ => None,
-        })
-        .flatten()
+    pub fn require<'b>(&self, keys: &[&str], location: Location<'b>) -> Vec<MosError> {
+        keys.iter()
+            .filter_map(|key| match self.items.contains_key(key) {
+                true => None,
+                false => Some(
+                    ParseError::ExpectedError {
+                        location: location.clone(),
+                        message: format!("required field: {}", key),
+                    }
+                    .into(),
+                ),
+            })
+            .collect_vec()
     }
 }
 
@@ -161,18 +118,21 @@ mod tests {
         }",
         );
         assert_eq!(
-            cfg.expression("num").data,
+            cfg.value("num").data.as_expression(),
             &Expression::Number(123, NumberType::Dec)
         );
-        assert_eq!(cfg.identifier("id").data, &Identifier("v"));
+        assert_eq!(cfg.value("id").data.as_identifier(), &Identifier("v"));
         assert_eq!(
-            cfg.nested("nested").data.identifier("nested_id").data,
+            cfg.value("nested")
+                .data
+                .as_config_map()
+                .value("nested_id")
+                .data
+                .as_identifier(),
             &Identifier("nested_v")
         );
 
-        assert_eq!(cfg.try_expression("nested").is_none(), true);
-        assert_eq!(cfg.try_identifier("num").is_none(), true);
-        assert_eq!(cfg.try_nested("num").is_none(), true);
+        assert_eq!(cfg.try_value("foo").is_none(), true);
 
         Ok(())
     }

@@ -222,6 +222,13 @@ impl<'a> Token<'a> {
         }
     }
 
+    pub(crate) fn as_expression(&self) -> &Expression<'a> {
+        match self {
+            Token::Expression(expr) => expr,
+            _ => panic!(),
+        }
+    }
+
     pub(crate) fn into_config_map(self) -> ConfigMap<'a> {
         match self {
             Token::Config(cfg) => cfg,
@@ -244,6 +251,10 @@ pub trait CanWrapWhitespace<'a> {
 }
 
 impl<'a, T> Located<'a, T> {
+    pub fn map<U, F: Fn(&T) -> U>(&self, map_fn: F) -> Located<'a, U> {
+        Located::from(self.location.clone(), map_fn(&self.data))
+    }
+
     pub fn from<L: Into<Location<'a>>>(location: L, data: T) -> Self {
         Self {
             location: location.into(),
