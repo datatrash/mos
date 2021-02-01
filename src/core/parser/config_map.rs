@@ -24,10 +24,7 @@ impl<'a> ConfigMap<'a> {
                     _ => panic!(),
                 };
 
-                let k = match k {
-                    Token::IdentifierName(id) => id.0,
-                    _ => panic!(),
-                };
+                let k = k.as_identifier().0;
                 (k, *v)
             })
             .collect();

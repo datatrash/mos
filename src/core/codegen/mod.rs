@@ -639,17 +639,10 @@ impl CodegenContext {
         ast.into_iter()
             .filter_map(|lt| match lt.data {
                 Token::Definition(id, cfg) => {
-                    let id = match id.data {
-                        Token::IdentifierName(id) => id.0,
-                        _ => panic!("Definition does not have an identifier"),
-                    };
+                    let id = id.data.as_identifier().0;
+                    let cfg = cfg.expect("Found empty definition").data.into_config_map();
 
-                    let cfg = cfg.expect("Found empty definition");
-                    let cfg = match cfg.data {
-                        Token::Config(cfg) => cfg,
-                        _ => panic!("Definition does not contain a configmap"),
-                    };
-
+                    active_label = None;
                     match id {
                         "segment" => Some(Emittable::Segment(cfg)),
                         _ => panic!("Unknown definition type: {}", id),
@@ -660,6 +653,8 @@ impl CodegenContext {
                     self.symbols.enter(&scope_name);
                     let e = Emittable::Nested(scope_name, self.generate_emittables(inner));
                     self.symbols.leave();
+
+                    active_label = None;
                     Some(e)
                 }
                 _ => {
