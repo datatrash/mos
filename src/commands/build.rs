@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::{App, Arg, ArgMatches};
 use fs_err as fs;
@@ -8,6 +9,22 @@ use itertools::Itertools;
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser;
 use crate::errors::MosResult;
+
+#[derive(PartialEq, Debug)]
+pub enum SymbolType {
+    Vice,
+}
+
+impl FromStr for SymbolType {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "vice" => Ok(SymbolType::Vice),
+            _ => Err("no match"),
+        }
+    }
+}
 
 pub fn build_app() -> App<'static> {
     App::new("build")
@@ -25,10 +42,11 @@ pub fn build_app() -> App<'static> {
                 .default_value("."),
         )
         .arg(
-            Arg::new("vice-symbols")
-                .about("Generate VICE symbols")
-                .long("vice-symbols")
-                .takes_value(false),
+            Arg::new("symbols")
+                .possible_values(&["vice"])
+                .case_insensitive(true)
+                .about("Generate symbols")
+                .long("symbols"),
         )
 }
 
@@ -67,7 +85,10 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             out.write_all(&segment.range_data())?;
         }
 
-        if args.is_present("vice-symbols") {
+        if args
+            .values_of_t::<SymbolType>("symbols")?
+            .contains(&SymbolType::Vice)
+        {
             let mut out = fs::File::create(target_dir.join(symbol_path))?;
             out.write_all(generated_code.symbol_table().to_vice_symbols().as_bytes())?;
         }
@@ -93,7 +114,8 @@ mod tests {
             input,
             "--target-dir",
             &format!("{}/target", root),
-            "--vice-symbols",
+            "--symbols",
+            "vice",
         ]);
         build_command(&args)?;
 

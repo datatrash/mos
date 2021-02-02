@@ -16,6 +16,7 @@ pub enum MosError {
         message: String,
     },
     Io(#[from] std::io::Error),
+    Clap(#[from] clap::Error),
     Unknown,
     Multiple(Vec<MosError>),
 }
@@ -49,6 +50,7 @@ impl MosError {
                 )
             }
             MosError::Io(err) => format!("{}", err),
+            MosError::Clap(err) => format!("{}", err),
             MosError::Unknown => "unknown error".to_string(),
             MosError::Multiple(errors) => errors
                 .iter()
