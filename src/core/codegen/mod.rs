@@ -103,6 +103,10 @@ impl SegmentMap {
         self.get(self.current.as_ref().expect("No current segment"))
     }
 
+    pub(crate) fn set_current(&mut self, name: &str) {
+        self.current = Some(name.into());
+    }
+
     fn current_mut(&mut self) -> &mut Segment {
         let name = self.current.as_ref().expect("No current segment").clone();
         self.get_mut(&name)
@@ -120,7 +124,8 @@ pub enum Emittable<'a> {
     Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
-    Segment(ConfigMap<'a>),
+    SegmentDefinition(ConfigMap<'a>),
+    Segment(String, Location<'a>),
 }
 
 impl CodegenContext {
@@ -556,7 +561,7 @@ impl CodegenContext {
         emittables
             .into_iter()
             .filter_map(|e| match e {
-                Emittable::Segment(cfg) => {
+                Emittable::SegmentDefinition(cfg) => {
                     let start = self.evaluate_or_error(
                         "start",
                         &cfg,
@@ -583,7 +588,29 @@ impl CodegenContext {
                         }
                         None => {
                             // try again later
-                            Some(Emittable::Segment(cfg))
+                            Some(Emittable::SegmentDefinition(cfg))
+                        }
+                    }
+                }
+                Emittable::Segment(segment_name, location) => {
+                    match self.segments.try_get(&segment_name) {
+                        Some(_) => {
+                            self.segments.set_current(&segment_name);
+                            None
+                        }
+                        None => {
+                            if error_on_failure {
+                                self.errors.push(
+                                    CodegenError::UnknownIdentifier(
+                                        location.clone(),
+                                        IdentifierPath::new(&[Identifier(&segment_name)]),
+                                    )
+                                    .into(),
+                                );
+                                None
+                            } else {
+                                Some(Emittable::Segment(segment_name, location))
+                            }
                         }
                     }
                 }
@@ -667,7 +694,7 @@ impl CodegenContext {
                             // Perform some sanity checks
                             let errors = cfg.require(&SEGMENT_OPTIONS, cfg_location);
                             if errors.is_empty() {
-                                Some(Emittable::Segment(cfg))
+                                Some(Emittable::SegmentDefinition(cfg))
                             } else {
                                 self.errors.extend(errors);
                                 None
@@ -675,6 +702,10 @@ impl CodegenContext {
                         }
                         _ => panic!("Unknown definition type: {}", id),
                     }
+                }
+                Token::Segment(id) => {
+                    let segment_name = id.data.as_identifier().0;
+                    Some(Emittable::Segment(segment_name.into(), id.location.clone()))
                 }
                 Token::Braces(inner) => {
                     let scope_name = self.symbols.add_child_scope(active_label);
@@ -856,6 +887,34 @@ mod tests {
         assert_eq!(ctx.segments().get("foo").range_data(), vec![0xea]);
         assert_eq!(ctx.segments().get("foo").options().write, false);
         assert_eq!(ctx.segments().try_get("default").is_none(), true);
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_segments() -> TestResult {
+        let ctx = test_codegen(
+            r"
+                .define segment { name = a start = $1000 }
+                .define segment { name = b start = $2000 }
+                nop
+                .segment b
+                rol
+                .segment a
+                asl
+                ",
+        )?;
+        assert_eq!(ctx.segments().get("a").range_data(), vec![0xea, 0x0a]);
+        assert_eq!(ctx.segments().get("b").range_data(), vec![0x2a]);
+        Ok(())
+    }
+
+    #[test]
+    fn cannot_use_unknown_segments() -> TestResult {
+        let err = test_codegen(".segment foo").err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:1:10: error: unknown identifier: foo"
+        );
         Ok(())
     }
 

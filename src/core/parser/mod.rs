@@ -403,6 +403,15 @@ fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
+fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        preceded(tag_no_case(".segment"), ws(identifier_name)),
+        move |id| Located::from(location.clone(), Token::Segment(Box::new(id))),
+    )(input)
+}
+
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((
         braces,
@@ -413,6 +422,7 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
         config_definition,
         label,
         data,
+        segment,
         error,
     ))(input)
 }
@@ -664,6 +674,11 @@ mod test {
             }",
             ".DEFINE segment[name=hello,start=4096]",
         );
+    }
+
+    #[test]
+    fn use_segment() {
+        check(".segment foo", ".SEGMENT foo");
     }
 
     #[test]

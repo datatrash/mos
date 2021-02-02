@@ -211,6 +211,7 @@ pub enum Token<'a> {
     ),
     Config(ConfigMap<'a>),
     ConfigPair(Box<Located<'a, Token<'a>>>, Box<Located<'a, Token<'a>>>),
+    Segment(Box<Located<'a, Token<'a>>>),
     Error,
 }
 
@@ -470,6 +471,9 @@ impl<'a> Display for Token<'a> {
                     .map(|c| format!("{}", c.data))
                     .unwrap_or_else(|| "".to_string());
                 write!(f, ".DEFINE {}{}", id.data, cfg)
+            }
+            Token::Segment(id) => {
+                write!(f, ".SEGMENT {}", id.data)
             }
             Token::Config(cfg) => {
                 let items = cfg
