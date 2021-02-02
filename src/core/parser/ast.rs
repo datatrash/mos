@@ -211,7 +211,10 @@ pub enum Token<'a> {
     ),
     Config(ConfigMap<'a>),
     ConfigPair(Box<Located<'a, Token<'a>>>, Box<Located<'a, Token<'a>>>),
-    Segment(Box<Located<'a, Token<'a>>>),
+    Segment(
+        Box<Located<'a, Token<'a>>>,
+        Option<Box<Located<'a, Token<'a>>>>,
+    ),
     Error,
 }
 
@@ -241,6 +244,13 @@ impl<'a> Token<'a> {
     pub(crate) fn into_config_map(self) -> ConfigMap<'a> {
         match self {
             Token::Config(cfg) => cfg,
+            _ => panic!(),
+        }
+    }
+
+    pub(crate) fn into_braces(self) -> Vec<Located<'a, Token<'a>>> {
+        match self {
+            Token::Braces(inner) => inner,
             _ => panic!(),
         }
     }
@@ -472,8 +482,12 @@ impl<'a> Display for Token<'a> {
                     .unwrap_or_else(|| "".to_string());
                 write!(f, ".DEFINE {}{}", id.data, cfg)
             }
-            Token::Segment(id) => {
-                write!(f, ".SEGMENT {}", id.data)
+            Token::Segment(id, inner) => {
+                let inner = match inner {
+                    Some(i) => format!(" {}", i.data),
+                    None => "".to_string(),
+                };
+                write!(f, ".SEGMENT {}{}", id.data, inner)
             }
             Token::Config(cfg) => {
                 let items = cfg

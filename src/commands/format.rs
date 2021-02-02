@@ -187,8 +187,12 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                 .unwrap_or_else(|| "".to_string());
             format!(".define {} {}", format_token(&id.data, opts, 0), cfg)
         }
-        Token::Segment(id) => {
-            format!(".segment {}", id.data)
+        Token::Segment(id, inner) => {
+            let inner = match inner {
+                Some(i) => format!(" {}", i.data),
+                None => "".to_string(),
+            };
+            format!(".segment {}{}", id.data, inner)
         }
         Token::Config(cfg) => {
             let mut items = cfg

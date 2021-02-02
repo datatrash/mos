@@ -407,8 +407,11 @@ fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map(
-        preceded(tag_no_case(".segment"), ws(identifier_name)),
-        move |id| Located::from(location.clone(), Token::Segment(Box::new(id))),
+        preceded(
+            tag_no_case(".segment"),
+            tuple((ws(identifier_name), opt(map(braces, Box::new)))),
+        ),
+        move |(id, inner)| Located::from(location.clone(), Token::Segment(Box::new(id), inner)),
     )(input)
 }
 
@@ -679,6 +682,7 @@ mod test {
     #[test]
     fn use_segment() {
         check(".segment foo", ".SEGMENT foo");
+        check(".segment foo { nop }", ".SEGMENT foo {\nNOP\n}");
     }
 
     #[test]

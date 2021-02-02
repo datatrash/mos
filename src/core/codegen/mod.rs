@@ -103,8 +103,12 @@ impl SegmentMap {
         self.get(self.current.as_ref().expect("No current segment"))
     }
 
-    pub(crate) fn set_current(&mut self, name: &str) {
-        self.current = Some(name.into());
+    pub(crate) fn current_segment_name(&self) -> Option<String> {
+        self.current.as_ref().cloned()
+    }
+
+    pub(crate) fn set_current(&mut self, name: Option<String>) {
+        self.current = name;
     }
 
     fn current_mut(&mut self) -> &mut Segment {
@@ -125,7 +129,7 @@ pub enum Emittable<'a> {
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
-    Segment(String, Location<'a>),
+    Segment(String, Location<'a>, Vec<Emittable<'a>>),
 }
 
 impl CodegenContext {
@@ -592,28 +596,6 @@ impl CodegenContext {
                         }
                     }
                 }
-                Emittable::Segment(segment_name, location) => {
-                    match self.segments.try_get(&segment_name) {
-                        Some(_) => {
-                            self.segments.set_current(&segment_name);
-                            None
-                        }
-                        None => {
-                            if error_on_failure {
-                                self.errors.push(
-                                    CodegenError::UnknownIdentifier(
-                                        location.clone(),
-                                        IdentifierPath::new(&[Identifier(&segment_name)]),
-                                    )
-                                    .into(),
-                                );
-                                None
-                            } else {
-                                Some(Emittable::Segment(segment_name, location))
-                            }
-                        }
-                    }
-                }
                 Emittable::Single(pc, location, token) => {
                     if self.segments.is_empty() {
                         // We want to start emitting, but we don't have a segment yet.
@@ -646,6 +628,45 @@ impl CodegenContext {
                     match inner.is_empty() {
                         true => None,
                         false => Some(Emittable::Nested(scope_name, inner)),
+                    }
+                }
+                Emittable::Segment(segment_name, location, inner) => {
+                    let prev_segment = self.segments.current_segment_name();
+                    match self.segments.try_get(&segment_name) {
+                        Some(_) => {
+                            self.segments.set_current(Some(segment_name.clone()));
+                            match inner.is_empty() {
+                                true => {
+                                    // This segment is set without an inner scope
+                                    None
+                                }
+                                false => {
+                                    // We have an inner scope, so reset the old segment afterwards
+                                    let inner = self.emit_emittables(inner, error_on_failure);
+                                    self.segments.set_current(prev_segment);
+                                    match inner.is_empty() {
+                                        true => None,
+                                        false => {
+                                            Some(Emittable::Segment(segment_name, location, inner))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            if error_on_failure {
+                                self.errors.push(
+                                    CodegenError::UnknownIdentifier(
+                                        location.clone(),
+                                        IdentifierPath::new(&[Identifier(&segment_name)]),
+                                    )
+                                    .into(),
+                                );
+                                None
+                            } else {
+                                Some(Emittable::Segment(segment_name, location, inner))
+                            }
+                        }
                     }
                 }
             })
@@ -703,9 +724,16 @@ impl CodegenContext {
                         _ => panic!("Unknown definition type: {}", id),
                     }
                 }
-                Token::Segment(id) => {
+                Token::Segment(id, braces) => {
                     let segment_name = id.data.as_identifier().0;
-                    Some(Emittable::Segment(segment_name.into(), id.location.clone()))
+                    let inner = braces
+                        .map(|b| b.data.into_braces())
+                        .unwrap_or_else(Vec::new);
+                    Some(Emittable::Segment(
+                        segment_name.into(),
+                        id.location.clone(),
+                        self.generate_emittables(inner),
+                    ))
                 }
                 Token::Braces(inner) => {
                     let scope_name = self.symbols.add_child_scope(active_label);
@@ -900,6 +928,22 @@ mod tests {
                 .segment b
                 rol
                 .segment a
+                asl
+                ",
+        )?;
+        assert_eq!(ctx.segments().get("a").range_data(), vec![0xea, 0x0a]);
+        assert_eq!(ctx.segments().get("b").range_data(), vec![0x2a]);
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_scoped_segments() -> TestResult {
+        let ctx = test_codegen(
+            r"
+                .define segment { name = a start = $1000 }
+                .define segment { name = b start = $2000 }
+                nop
+                .segment b { rol }
                 asl
                 ",
         )?;
