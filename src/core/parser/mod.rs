@@ -531,52 +531,36 @@ fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
     )))(input)
 }
 
-enum Operation {
-    Add,
-    Sub,
-    Mul,
-    Div,
-}
-
 fn fold_expressions<'a>(
     initial: Located<'a, Expression<'a>>,
-    remainder: Vec<(Operation, Located<'a, Expression<'a>>)>,
+    remainder: Vec<(BinaryOp, Located<'a, Expression<'a>>)>,
 ) -> Located<'a, Expression<'a>> {
     remainder.into_iter().fold(initial, |acc, pair| {
-        let (oper, expr) = pair;
+        let (op, expr) = pair;
 
-        match oper {
-            Operation::Add => Located::from(
-                acc.location.clone(),
-                Expression::BinaryAdd(Box::new(acc), Box::new(expr)),
-            ),
-            Operation::Sub => Located::from(
-                acc.location.clone(),
-                Expression::BinarySub(Box::new(acc), Box::new(expr)),
-            ),
-            Operation::Mul => Located::from(
-                acc.location.clone(),
-                Expression::BinaryMul(Box::new(acc), Box::new(expr)),
-            ),
-            Operation::Div => Located::from(
-                acc.location.clone(),
-                Expression::BinaryDiv(Box::new(acc), Box::new(expr)),
-            ),
-        }
+        Located::from(
+            acc.location.clone(),
+            Expression::BinaryExpression(BinaryExpression {
+                op,
+                lhs: Box::new(acc),
+                rhs: Box::new(expr),
+            }),
+        )
     })
 }
 
 fn expression_term(input: LocatedSpan) -> IResult<Located<Expression>> {
     let (input, initial) = expression_factor(input)?;
-    let (input, remainder) = many0(alt((
-        |input| {
-            let (input, mul) = preceded(tag("*"), expression_factor)(input)?;
-            Ok((input, (Operation::Mul, mul)))
-        },
-        |input| {
-            let (input, div) = preceded(tag("/"), expression_factor)(input)?;
-            Ok((input, (Operation::Div, div)))
-        },
+
+    let (input, remainder) = many0(tuple((
+        alt((
+            map(tag("*"), |_| BinaryOp::Mul),
+            map(tag("/"), |_| BinaryOp::Div),
+            map(tag("<<"), |_| BinaryOp::Shl),
+            map(tag(">>"), |_| BinaryOp::Shr),
+            map(tag("^"), |_| BinaryOp::Xor),
+        )),
+        expression_factor,
     )))(input)?;
 
     Ok((input, fold_expressions(initial, remainder)))
@@ -584,15 +568,19 @@ fn expression_term(input: LocatedSpan) -> IResult<Located<Expression>> {
 
 pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
     let (input, initial) = expression_term(input)?;
-    let (input, remainder) = many0(alt((
-        |input| {
-            let (input, add) = preceded(tag("+"), expression_term)(input)?;
-            Ok((input, (Operation::Add, add)))
-        },
-        |input| {
-            let (input, sub) = preceded(tag("-"), expression_term)(input)?;
-            Ok((input, (Operation::Sub, sub)))
-        },
+
+    let (input, remainder) = many0(tuple((
+        alt((
+            map(tag("+"), |_| BinaryOp::Add),
+            map(tag("-"), |_| BinaryOp::Sub),
+            map(tag("=="), |_| BinaryOp::Eq),
+            map(tag("!="), |_| BinaryOp::Ne),
+            map(tag(">="), |_| BinaryOp::GtEq),
+            map(tag("<="), |_| BinaryOp::LtEq),
+            map(tag(">"), |_| BinaryOp::Gt),
+            map(tag("<"), |_| BinaryOp::Lt),
+        )),
+        expression_term,
     )))(input)?;
 
     Ok((input, fold_expressions(initial, remainder)))
@@ -622,6 +610,19 @@ mod test {
             "lda  %11101   +   [  $ff  * 12367 ] / foo  ",
             "LDA %11101 + [$ff * 12367] / foo",
         );
+        check("lda #1 ^ 4", "LDA #1 ^ 4");
+        check("lda #1 << 4", "LDA #1 << 4");
+        check("lda #1 >> 4", "LDA #1 >> 4");
+    }
+
+    #[test]
+    fn parse_equality() {
+        check("lda #1 == 2", "LDA #1 == 2");
+        check("lda #1 != 2", "LDA #1 != 2");
+        check("lda #1 < 2", "LDA #1 < 2");
+        check("lda #1 > 2", "LDA #1 > 2");
+        check("lda #1 <= 2", "LDA #1 <= 2");
+        check("lda #1 >= 2", "LDA #1 >= 2");
     }
 
     #[test]

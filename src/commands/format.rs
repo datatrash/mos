@@ -65,17 +65,8 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
         }
         Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
         Expression::CurrentProgramCounter => "*".to_string(),
-        Expression::BinaryAdd(lhs, rhs) => {
-            format!("{} + {}", lhs.data, rhs.data)
-        }
-        Expression::BinarySub(lhs, rhs) => {
-            format!("{} - {}", lhs.data, rhs.data)
-        }
-        Expression::BinaryMul(lhs, rhs) => {
-            format!("{} * {}", lhs.data, rhs.data)
-        }
-        Expression::BinaryDiv(lhs, rhs) => {
-            format!("{} / {}", lhs.data, rhs.data)
+        Expression::BinaryExpression(expr) => {
+            format!("{} {} {}", expr.lhs.data, expr.op, expr.rhs.data)
         }
         Expression::Ws(lhs, inner, rhs) => {
             format_ws(lhs, format_expression(&inner.data, opts), rhs, opts)

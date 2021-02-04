@@ -160,17 +160,29 @@ impl CodegenContext {
             Expression::CurrentProgramCounter => {
                 Ok(Some(self.segments.current().current_pc().into()))
             }
-            Expression::BinaryAdd(lhs, rhs)
-            | Expression::BinarySub(lhs, rhs)
-            | Expression::BinaryMul(lhs, rhs)
-            | Expression::BinaryDiv(lhs, rhs) => {
-                let lhs = self.evaluate(lhs, error_on_failure)?;
-                let rhs = self.evaluate(rhs, error_on_failure)?;
-                match (&lt.data, lhs, rhs) {
-                    (Expression::BinaryAdd(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs + rhs)),
-                    (Expression::BinarySub(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs - rhs)),
-                    (Expression::BinaryMul(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs * rhs)),
-                    (Expression::BinaryDiv(_, _), Some(lhs), Some(rhs)) => Ok(Some(lhs / rhs)),
+            Expression::BinaryExpression(expr) => {
+                let lhs = self.evaluate(&expr.lhs, error_on_failure)?;
+                let rhs = self.evaluate(&expr.rhs, error_on_failure)?;
+                let op = &expr.op;
+                match (lhs, rhs) {
+                    (Some(lhs), Some(rhs)) => {
+                        let result: usize = match op {
+                            BinaryOp::Add => lhs + rhs,
+                            BinaryOp::Sub => lhs - rhs,
+                            BinaryOp::Mul => lhs * rhs,
+                            BinaryOp::Div => lhs / rhs,
+                            BinaryOp::Shl => lhs << rhs,
+                            BinaryOp::Shr => lhs >> rhs,
+                            BinaryOp::Xor => lhs ^ rhs,
+                            BinaryOp::Eq => (lhs == rhs) as usize,
+                            BinaryOp::Ne => (lhs != rhs) as usize,
+                            BinaryOp::Gt => (lhs > rhs) as usize,
+                            BinaryOp::GtEq => (lhs >= rhs) as usize,
+                            BinaryOp::Lt => (lhs < rhs) as usize,
+                            BinaryOp::LtEq => (lhs <= rhs) as usize,
+                        };
+                        Ok(Some(result))
+                    }
                     _ => Ok(None),
                 }
             }
@@ -844,11 +856,25 @@ mod tests {
             lda #2 * 4
             lda #8 / 2
             lda #1 + 5 * 4 + 3
+            lda #7 == 7
+            lda #7 != 7
+            lda #7 == 8
+            lda #7 != 8
+            lda #1 << 2
+            lda #4 >> 1
+            lda #0 ^ 255
+            lda #2 > 2
+            lda #2 >= 2
+            lda #2 < 2
+            lda #2 <= 2
             ",
         )?;
         assert_eq!(
             ctx.segments().current().range_data(),
-            vec![0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24]
+            vec![
+                0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24, 0xa9, 1, 0xa9, 0, 0xa9, 0, 0xa9, 1,
+                0xa9, 4, 0xa9, 2, 0xa9, 255, 0xa9, 0, 0xa9, 1, 0xa9, 0, 0xa9, 1
+            ]
         );
         Ok(())
     }

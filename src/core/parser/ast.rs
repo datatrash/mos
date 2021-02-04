@@ -161,28 +161,57 @@ impl<'a> Display for IdentifierPath<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Shl,
+    Shr,
+    Xor,
+    Eq,
+    Ne,
+    Gt,
+    GtEq,
+    Lt,
+    LtEq,
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match &self {
+            BinaryOp::Add => write!(f, "+"),
+            BinaryOp::Sub => write!(f, "-"),
+            BinaryOp::Mul => write!(f, "*"),
+            BinaryOp::Div => write!(f, "/"),
+            BinaryOp::Shl => write!(f, "<<"),
+            BinaryOp::Shr => write!(f, ">>"),
+            BinaryOp::Xor => write!(f, "^"),
+            BinaryOp::Eq => write!(f, "=="),
+            BinaryOp::Ne => write!(f, "!="),
+            BinaryOp::Gt => write!(f, ">"),
+            BinaryOp::GtEq => write!(f, ">="),
+            BinaryOp::Lt => write!(f, "<"),
+            BinaryOp::LtEq => write!(f, "<="),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinaryExpression<'a> {
+    pub op: BinaryOp,
+    pub lhs: Box<Located<'a, Expression<'a>>>,
+    pub rhs: Box<Located<'a, Expression<'a>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression<'a> {
     /// The full identifier path, which modifier it uses
     IdentifierValue(IdentifierPath<'a>, Option<AddressModifier>),
     Number(usize, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     CurrentProgramCounter,
-    BinaryAdd(
-        Box<Located<'a, Expression<'a>>>,
-        Box<Located<'a, Expression<'a>>>,
-    ),
-    BinarySub(
-        Box<Located<'a, Expression<'a>>>,
-        Box<Located<'a, Expression<'a>>>,
-    ),
-    BinaryMul(
-        Box<Located<'a, Expression<'a>>>,
-        Box<Located<'a, Expression<'a>>>,
-    ),
-    BinaryDiv(
-        Box<Located<'a, Expression<'a>>>,
-        Box<Located<'a, Expression<'a>>>,
-    ),
+    BinaryExpression(BinaryExpression<'a>),
     Ws(Vec<Comment>, Box<Located<'a, Expression<'a>>>, Vec<Comment>),
 }
 
@@ -332,10 +361,14 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
 impl<'a> CanWrapWhitespace<'a> for Expression<'a> {
     fn strip_whitespace(self) -> Self {
         match self {
-            Expression::BinaryAdd(lhs, rhs) => Expression::BinaryAdd(sb(lhs), sb(rhs)),
-            Expression::BinarySub(lhs, rhs) => Expression::BinarySub(sb(lhs), sb(rhs)),
-            Expression::BinaryMul(lhs, rhs) => Expression::BinaryMul(sb(lhs), sb(rhs)),
-            Expression::BinaryDiv(lhs, rhs) => Expression::BinaryDiv(sb(lhs), sb(rhs)),
+            Expression::BinaryExpression(expr) => {
+                let e = BinaryExpression {
+                    op: expr.op,
+                    lhs: sb(expr.lhs),
+                    rhs: sb(expr.rhs),
+                };
+                Expression::BinaryExpression(e)
+            }
             Expression::ExprParens(inner) => Expression::ExprParens(sb(inner)),
             Expression::Ws(_, inner, _) => inner.data,
             _ => self,
@@ -382,17 +415,8 @@ impl<'a> Display for Expression<'a> {
             Expression::ExprParens(inner) => {
                 write!(f, "[{}]", inner.data)
             }
-            Expression::BinaryAdd(lhs, rhs) => {
-                write!(f, "{} + {}", lhs.data, rhs.data)
-            }
-            Expression::BinarySub(lhs, rhs) => {
-                write!(f, "{} - {}", lhs.data, rhs.data)
-            }
-            Expression::BinaryMul(lhs, rhs) => {
-                write!(f, "{} * {}", lhs.data, rhs.data)
-            }
-            Expression::BinaryDiv(lhs, rhs) => {
-                write!(f, "{} / {}", lhs.data, rhs.data)
+            Expression::BinaryExpression(expr) => {
+                write!(f, "{} {} {}", expr.lhs.data, expr.op, expr.rhs.data)
             }
             Expression::Ws(l, inner, r) => format_ws(f, l, inner, r),
         }
