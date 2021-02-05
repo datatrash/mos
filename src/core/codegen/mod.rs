@@ -1138,7 +1138,7 @@ mod tests {
             .const bar=0
             .if foo || bar { nop }
             .if foo && bar { asl }
-            .if foo || !bar { rol }
+            .if foo && !bar { rol }
             ",
         )?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xea, 0x2a]);
