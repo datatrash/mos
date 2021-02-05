@@ -1146,6 +1146,16 @@ mod tests {
     }
 
     #[test]
+    fn unary_negative_and_not() -> TestResult {
+        let ctx = test_codegen(".var foo = 1\nlda #-foo\nlda #!foo")?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xa9, 0xff, 0xa9, 0xfe]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn can_access_current_pc() -> TestResult {
         let ctx = test_codegen("lda * + 3\nlda *")?;
         assert_eq!(
