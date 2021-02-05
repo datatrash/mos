@@ -28,6 +28,7 @@ pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::Simpl
 
 fn get_app() -> App<'static> {
     App::new("mos")
+        .about("https://mos.datatra.sh")
         .version(git_version::git_version!())
         .global_setting(AppSettings::ColoredHelp)
         .global_setting(AppSettings::ArgRequiredElseHelp)

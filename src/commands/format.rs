@@ -285,7 +285,7 @@ fn format<'a>(ast: &[Located<'a, Token<'a>>], opts: &Options) -> String {
 }
 
 pub fn format_app() -> App<'static> {
-    App::new("format").about("Source code formatter").arg(
+    App::new("format").about("Formats input file(s)").arg(
         Arg::new("input")
             .about("Sets the input file(s) to use")
             .required(true)

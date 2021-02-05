@@ -28,7 +28,7 @@ impl FromStr for SymbolType {
 
 pub fn build_app() -> App<'static> {
     App::new("build")
-        .about("Build")
+        .about("Assembles input file(s)")
         .arg(
             Arg::new("input")
                 .about("Sets the input file to use")
@@ -43,10 +43,10 @@ pub fn build_app() -> App<'static> {
         )
         .arg(
             Arg::new("symbols")
-                .possible_values(&["vice"])
-                .case_insensitive(true)
                 .about("Generate symbols")
-                .long("symbols"),
+                .case_insensitive(true)
+                .long("symbols")
+                .possible_values(&["vice"]),
         )
 }
 
@@ -86,7 +86,8 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
         }
 
         if args
-            .values_of_t::<SymbolType>("symbols")?
+            .values_of_t::<SymbolType>("symbols")
+            .unwrap_or_else(|_| vec![])
             .contains(&SymbolType::Vice)
         {
             let mut out = fs::File::create(target_dir.join(symbol_path))?;
