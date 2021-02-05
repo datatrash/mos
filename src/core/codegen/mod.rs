@@ -160,7 +160,7 @@ impl CodegenContext {
         &self,
         lt: &Located<'a, Expression<'a>>,
         error_on_failure: bool,
-    ) -> CodegenResult<'a, Option<usize>> {
+    ) -> CodegenResult<'a, Option<i64>> {
         match &lt.data {
             Expression::Number(n, _) => Ok(Some(*n)),
             Expression::CurrentProgramCounter => {
@@ -172,7 +172,7 @@ impl CodegenContext {
                 let op = &expr.op;
                 match (lhs, rhs) {
                     (Some(lhs), Some(rhs)) => {
-                        let result: usize = match op {
+                        let result: i64 = match op {
                             BinaryOp::Add => lhs + rhs,
                             BinaryOp::Sub => lhs - rhs,
                             BinaryOp::Mul => lhs * rhs,
@@ -180,12 +180,12 @@ impl CodegenContext {
                             BinaryOp::Shl => lhs << rhs,
                             BinaryOp::Shr => lhs >> rhs,
                             BinaryOp::Xor => lhs ^ rhs,
-                            BinaryOp::Eq => (lhs == rhs) as usize,
-                            BinaryOp::Ne => (lhs != rhs) as usize,
-                            BinaryOp::Gt => (lhs > rhs) as usize,
-                            BinaryOp::GtEq => (lhs >= rhs) as usize,
-                            BinaryOp::Lt => (lhs < rhs) as usize,
-                            BinaryOp::LtEq => (lhs <= rhs) as usize,
+                            BinaryOp::Eq => (lhs == rhs) as i64,
+                            BinaryOp::Ne => (lhs != rhs) as i64,
+                            BinaryOp::Gt => (lhs > rhs) as i64,
+                            BinaryOp::GtEq => (lhs >= rhs) as i64,
+                            BinaryOp::Lt => (lhs < rhs) as i64,
+                            BinaryOp::LtEq => (lhs <= rhs) as i64,
                         };
                         Ok(Some(result))
                     }
@@ -218,7 +218,7 @@ impl CodegenContext {
         i: &'a Instruction<'b>,
         location: &'a Location<'b>,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, (&'a AddressingMode, Option<usize>, Option<Register>)> {
+    ) -> CodegenResult<'b, (&'a AddressingMode, Option<i64>, Option<Register>)> {
         match i.operand.as_deref() {
             Some(Located {
                 data: Token::Operand(operand),
@@ -250,7 +250,7 @@ impl CodegenContext {
                                 if offset < 0 {
                                     offset += 256;
                                 }
-                                let val = offset as usize;
+                                let val = offset as i64;
                                 Ok((&operand.addressing_mode, Some(val), register_suffix))
                             } else {
                                 Err(CodegenError::BranchTooFar(location.clone()))
@@ -556,7 +556,7 @@ impl CodegenContext {
         cfg: &ConfigMap,
         error_on_failure: bool,
         error_msg: &str,
-    ) -> Option<usize> {
+    ) -> Option<i64> {
         let expr = cfg.value(identifier).map(|val| val.as_expression().clone());
         match self.evaluate(&expr, error_on_failure) {
             Ok(Some(val)) => Some(val),

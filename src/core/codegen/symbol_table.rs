@@ -12,8 +12,8 @@ use super::segment::ProgramCounter;
 #[derive(Debug, PartialEq)]
 pub(super) enum Symbol {
     Label(ProgramCounter),
-    Variable(usize),
-    Constant(usize),
+    Variable(i64),
+    Constant(i64),
 }
 
 pub struct SymbolTable {
@@ -151,10 +151,10 @@ impl SymbolTable {
         self.lookup_internal(path, true)
     }
 
-    pub(super) fn value(&self, path: &[&str]) -> Option<usize> {
+    pub(super) fn value(&self, path: &[&str]) -> Option<i64> {
         self.lookup(path)
             .map(|s| match s {
-                Symbol::Label(pc) => Some(pc.as_usize()),
+                Symbol::Label(pc) => Some(pc.as_i64()),
                 Symbol::Variable(val) => Some(*val),
                 Symbol::Constant(val) => Some(*val),
             })
@@ -323,7 +323,7 @@ mod tests {
         Ok(())
     }
 
-    fn reg(st: &mut SymbolTable, id: &'static str, val: usize) -> TestResult {
+    fn reg(st: &mut SymbolTable, id: &'static str, val: i64) -> TestResult {
         st.register(&Identifier(id), Symbol::Constant(val), &loc(), false)
     }
 

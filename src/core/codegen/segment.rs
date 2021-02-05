@@ -17,6 +17,10 @@ impl ProgramCounter {
     pub fn as_usize(&self) -> usize {
         self.0 as usize
     }
+
+    pub fn as_i64(&self) -> i64 {
+        self.0 as i64
+    }
 }
 
 impl From<usize> for ProgramCounter {
@@ -37,6 +41,12 @@ impl From<i32> for ProgramCounter {
     }
 }
 
+impl From<i64> for ProgramCounter {
+    fn from(pc: i64) -> Self {
+        Self(pc as u16)
+    }
+}
+
 impl From<ProgramCounter> for usize {
     fn from(pc: ProgramCounter) -> Self {
         pc.0 as usize
@@ -46,6 +56,18 @@ impl From<ProgramCounter> for usize {
 impl From<&ProgramCounter> for usize {
     fn from(pc: &ProgramCounter) -> Self {
         pc.0 as usize
+    }
+}
+
+impl From<ProgramCounter> for i64 {
+    fn from(pc: ProgramCounter) -> Self {
+        pc.0 as i64
+    }
+}
+
+impl From<&ProgramCounter> for i64 {
+    fn from(pc: &ProgramCounter) -> Self {
+        pc.0 as i64
     }
 }
 

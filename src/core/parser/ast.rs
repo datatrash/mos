@@ -208,7 +208,7 @@ pub struct BinaryExpression<'a> {
 pub enum Expression<'a> {
     /// The full identifier path, which modifier it uses
     IdentifierValue(IdentifierPath<'a>, Option<AddressModifier>),
-    Number(usize, NumberType),
+    Number(i64, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     CurrentProgramCounter,
     BinaryExpression(BinaryExpression<'a>),

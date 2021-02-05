@@ -488,7 +488,7 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
             map_opt(
                 expect(hex_digit1, "expected hexadecimal value"),
                 move |input| {
-                    let res = input.map(|i| usize::from_str_radix(i.fragment(), 16).ok());
+                    let res = input.map(|i| i64::from_str_radix(i.fragment(), 16).ok());
                     res.map(|val| {
                         Located::from(
                             hex_location.clone(),
@@ -501,7 +501,7 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
         preceded(
             char('%'),
             map_opt(expect(is_a("01"), "expected binary value"), move |input| {
-                let res = input.map(|i| usize::from_str_radix(i.fragment(), 2).ok());
+                let res = input.map(|i| i64::from_str_radix(i.fragment(), 2).ok());
                 res.map(|val| {
                     Located::from(
                         bin_location.clone(),
@@ -510,15 +510,23 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
                 })
             }),
         ),
-        map_opt(digit1, move |input: LocatedSpan| {
-            let res = Some(usize::from_str_radix(input.fragment(), 10).ok());
-            res.map(|val| {
-                Located::from(
-                    dec_location.clone(),
-                    Expression::Number(val.unwrap(), NumberType::Dec),
-                )
-            })
-        }),
+        map_opt(
+            tuple((opt(char('-')), digit1)),
+            move |(neg, input): (Option<char>, LocatedSpan)| {
+                let is_neg = neg.is_some();
+                let res = Some(i64::from_str_radix(input.fragment(), 10).ok());
+                res.map(|val| {
+                    let mut val = val.unwrap();
+                    if is_neg {
+                        val = -val
+                    };
+                    Located::from(
+                        dec_location.clone(),
+                        Expression::Number(val, NumberType::Dec),
+                    )
+                })
+            },
+        ),
     ))(input)
 }
 
@@ -631,8 +639,8 @@ mod test {
     #[test]
     fn parse_expression() {
         check(
-            "lda  %11101   +   [  $ff  * 12367 ] / foo  ",
-            "LDA %11101 + [$ff * 12367] / foo",
+            "lda  %11101   +   [  $ff  * -12367 ] / foo  ",
+            "LDA %11101 + [$ff * -12367] / foo",
         );
         check("lda #1 ^ 4", "LDA #1 ^ 4");
         check("lda #1 << 4", "LDA #1 << 4");
