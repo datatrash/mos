@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use itertools::Itertools;
 
+use crate::commands::SymbolType;
 use crate::core::codegen::{CodegenError, CodegenResult};
 use crate::core::parser::{Identifier, Location};
 use crate::LINE_ENDING;
@@ -38,7 +39,7 @@ impl Scope {
         }
     }
 
-    fn to_vice_symbols(&self, path_prefix: Option<&str>) -> String {
+    fn to_symbols(&self, ty: SymbolType, path_prefix: Option<&str>) -> String {
         let mut symbols = self
             .table
             .iter()
@@ -56,7 +57,7 @@ impl Scope {
             .join(LINE_ENDING);
 
         for (child, scope) in &self.children {
-            symbols = vec![symbols, scope.to_vice_symbols(Some(child))].join(LINE_ENDING);
+            symbols = vec![symbols, scope.to_symbols(ty, Some(child))].join(LINE_ENDING);
         }
 
         symbols
@@ -221,8 +222,8 @@ impl SymbolTable {
         self.current.pop();
     }
 
-    pub fn to_vice_symbols(&self) -> String {
-        self.root.to_vice_symbols(None)
+    pub fn to_symbols(&self, ty: SymbolType) -> String {
+        self.root.to_symbols(ty, None)
     }
 }
 
@@ -230,6 +231,7 @@ impl SymbolTable {
 mod tests {
     use itertools::Itertools;
 
+    use crate::commands::SymbolType;
     use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
     use crate::core::codegen::CodegenResult;
     use crate::core::parser::{Identifier, Location};
@@ -317,7 +319,7 @@ mod tests {
             false,
         )?;
         assert_eq!(
-            st.to_vice_symbols().lines().collect_vec(),
+            st.to_symbols(SymbolType::Vice).lines().collect_vec(),
             &["al C:1234 .foo", "al C:CAFE .scope.foo"]
         );
         Ok(())

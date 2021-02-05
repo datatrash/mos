@@ -10,7 +10,7 @@ use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser;
 use crate::errors::MosResult;
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum SymbolType {
     Vice,
 }
@@ -91,7 +91,12 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             .contains(&SymbolType::Vice)
         {
             let mut out = fs::File::create(target_dir.join(symbol_path))?;
-            out.write_all(generated_code.symbol_table().to_vice_symbols().as_bytes())?;
+            out.write_all(
+                generated_code
+                    .symbol_table()
+                    .to_symbols(SymbolType::Vice)
+                    .as_bytes(),
+            )?;
         }
     }
 
