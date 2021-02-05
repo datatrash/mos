@@ -175,6 +175,8 @@ pub enum BinaryOp {
     GtEq,
     Lt,
     LtEq,
+    And,
+    Or,
 }
 
 impl Display for BinaryOp {
@@ -193,6 +195,8 @@ impl Display for BinaryOp {
             BinaryOp::GtEq => write!(f, ">="),
             BinaryOp::Lt => write!(f, "<"),
             BinaryOp::LtEq => write!(f, "<="),
+            BinaryOp::And => write!(f, "&&"),
+            BinaryOp::Or => write!(f, "||"),
         }
     }
 }

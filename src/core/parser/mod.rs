@@ -611,6 +611,8 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
             map(tag("<="), |_| BinaryOp::LtEq),
             map(tag(">"), |_| BinaryOp::Gt),
             map(tag("<"), |_| BinaryOp::Lt),
+            map(tag("&&"), |_| BinaryOp::And),
+            map(tag("||"), |_| BinaryOp::Or),
         )),
         expression_term,
     )))(input)?;
@@ -645,6 +647,8 @@ mod test {
         check("lda #1 ^ 4", "LDA #1 ^ 4");
         check("lda #1 << 4", "LDA #1 << 4");
         check("lda #1 >> 4", "LDA #1 >> 4");
+        check("lda #1 || 2", "LDA #1 || 2");
+        check("lda #1 && 2", "LDA #1 && 2");
     }
 
     #[test]

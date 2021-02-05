@@ -186,6 +186,8 @@ impl CodegenContext {
                             BinaryOp::GtEq => (lhs >= rhs) as i64,
                             BinaryOp::Lt => (lhs < rhs) as i64,
                             BinaryOp::LtEq => (lhs <= rhs) as i64,
+                            BinaryOp::And => (lhs != 0 && rhs != 0) as i64,
+                            BinaryOp::Or => (lhs != 0 || rhs != 0) as i64,
                         };
                         Ok(Some(result))
                     }
@@ -1101,6 +1103,19 @@ mod tests {
     fn ifndef() -> TestResult {
         let ctx = test_codegen(".const foo=1\n.ifndef foo { nop }\n.ifndef bar { asl }")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0x0a]);
+        Ok(())
+    }
+
+    #[test]
+    fn if_or_and() -> TestResult {
+        let ctx = test_codegen(
+            r"
+            .const foo=1
+            .const bar=0
+            .if foo || bar { nop }
+            .if foo && bar { asl }",
+        )?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xea]);
         Ok(())
     }
 
