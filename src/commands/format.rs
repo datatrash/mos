@@ -43,9 +43,9 @@ impl Default for Options {
     }
 }
 
-fn format_expression(token: &Expression, opts: &Options) -> String {
+fn format_expression_factor(token: &ExpressionFactor, opts: &Options) -> String {
     match token {
-        Expression::Number(val, ty) => match ty {
+        ExpressionFactor::Number(val, ty) => match ty {
             NumberType::Hex => {
                 if *val < 256 {
                     format!("${:02x}", val)
@@ -56,15 +56,28 @@ fn format_expression(token: &Expression, opts: &Options) -> String {
             NumberType::Bin => format!("%{:b}", val),
             NumberType::Dec => format!("{}", val),
         },
-        Expression::IdentifierValue(path, modifier) => {
+        ExpressionFactor::IdentifierValue(path, modifier) => {
             let modifier = match modifier {
                 Some(m) => m.to_string(),
                 None => "".to_string(),
             };
             format!("{}{}", modifier, path)
         }
-        Expression::ExprParens(inner) => format!("[{}]", format_expression(&inner.data, opts)),
-        Expression::CurrentProgramCounter => "*".to_string(),
+        ExpressionFactor::ExprParens(inner) => {
+            format!("[{}]", format_expression(&inner.data, opts))
+        }
+        ExpressionFactor::CurrentProgramCounter => "*".to_string(),
+        ExpressionFactor::Ws(lhs, inner, rhs) => {
+            format_ws(lhs, format_expression_factor(&inner.data, opts), rhs, opts)
+        }
+    }
+}
+
+fn format_expression(token: &Expression, opts: &Options) -> String {
+    match token {
+        Expression::Factor(factor, flags) => {
+            format!("{}{}", flags, format_expression_factor(&factor.data, opts))
+        }
         Expression::BinaryExpression(expr) => {
             format!("{} {} {}", expr.lhs.data, expr.op, expr.rhs.data)
         }

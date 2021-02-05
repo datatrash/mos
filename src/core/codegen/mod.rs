@@ -156,15 +156,55 @@ impl CodegenContext {
         &self.segments
     }
 
+    fn evaluate_factor<'a>(
+        &self,
+        lt: &Located<'a, ExpressionFactor<'a>>,
+        error_on_failure: bool,
+    ) -> CodegenResult<'a, Option<i64>> {
+        match &lt.data {
+            ExpressionFactor::Number(n, _) => Ok(Some(*n)),
+            ExpressionFactor::CurrentProgramCounter => {
+                Ok(Some(self.segments.current().current_pc().into()))
+            }
+            ExpressionFactor::IdentifierValue(path, modifier) => {
+                let symbol_value = self.symbols.value(&path.to_str_vec());
+
+                match (symbol_value, modifier, error_on_failure) {
+                    (Some(val), None, _) => Ok(Some(val)),
+                    (Some(val), Some(modifier), _) => match modifier {
+                        AddressModifier::HighByte => Ok(Some((val >> 8) & 255)),
+                        AddressModifier::LowByte => Ok(Some(val & 255)),
+                    },
+                    (None, _, false) => Ok(None),
+                    (None, _, true) => Err(CodegenError::UnknownIdentifier(
+                        lt.location.clone(),
+                        path.clone(),
+                    )),
+                }
+            }
+            _ => panic!("Unsupported token: {:?}", lt.data),
+        }
+    }
+
     fn evaluate<'a>(
         &self,
         lt: &Located<'a, Expression<'a>>,
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<i64>> {
         match &lt.data {
-            Expression::Number(n, _) => Ok(Some(*n)),
-            Expression::CurrentProgramCounter => {
-                Ok(Some(self.segments.current().current_pc().into()))
+            Expression::Factor(factor, flags) => {
+                match self.evaluate_factor(factor, error_on_failure) {
+                    Ok(Some(mut val)) => {
+                        if flags.contains(ExpressionFactorFlags::NOT) {
+                            val = !val;
+                        }
+                        if flags.contains(ExpressionFactorFlags::NEG) {
+                            val = -val;
+                        }
+                        Ok(Some(val))
+                    }
+                    v => v,
+                }
             }
             Expression::BinaryExpression(expr) => {
                 let lhs = self.evaluate(&expr.lhs, error_on_failure)?;
@@ -192,22 +232,6 @@ impl CodegenContext {
                         Ok(Some(result))
                     }
                     _ => Ok(None),
-                }
-            }
-            Expression::IdentifierValue(path, modifier) => {
-                let symbol_value = self.symbols.value(&path.to_str_vec());
-
-                match (symbol_value, modifier, error_on_failure) {
-                    (Some(val), None, _) => Ok(Some(val)),
-                    (Some(val), Some(modifier), _) => match modifier {
-                        AddressModifier::HighByte => Ok(Some((val >> 8) & 255)),
-                        AddressModifier::LowByte => Ok(Some(val & 255)),
-                    },
-                    (None, _, false) => Ok(None),
-                    (None, _, true) => Err(CodegenError::UnknownIdentifier(
-                        lt.location.clone(),
-                        path.clone(),
-                    )),
                 }
             }
             _ => panic!("Unsupported token: {:?}", lt.data),
@@ -1113,9 +1137,11 @@ mod tests {
             .const foo=1
             .const bar=0
             .if foo || bar { nop }
-            .if foo && bar { asl }",
+            .if foo && bar { asl }
+            .if foo || !bar { rol }
+            ",
         )?;
-        assert_eq!(ctx.segments().current().range_data(), vec![0xea]);
+        assert_eq!(ctx.segments().current().range_data(), vec![0xea, 0x2a]);
         Ok(())
     }
 

@@ -152,7 +152,7 @@ fn identifier_name(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
-fn identifier_value(input: LocatedSpan) -> IResult<Located<Expression>> {
+fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
     let id = tuple((
@@ -173,7 +173,7 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<Expression>> {
 
         Located::from(
             location.clone(),
-            Expression::IdentifierValue(path, modifier.flatten()),
+            ExpressionFactor::IdentifierValue(path, modifier.flatten()),
         )
     })(input)
 }
@@ -476,7 +476,7 @@ fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
     )(input)
 }
 
-fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
+fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
     let hex_location = location.clone();
@@ -492,7 +492,7 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
                     res.map(|val| {
                         Located::from(
                             hex_location.clone(),
-                            Expression::Number(val.unwrap(), NumberType::Hex),
+                            ExpressionFactor::Number(val.unwrap(), NumberType::Hex),
                         )
                     })
                 },
@@ -505,7 +505,7 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
                 res.map(|val| {
                     Located::from(
                         bin_location.clone(),
-                        Expression::Number(val.unwrap(), NumberType::Bin),
+                        ExpressionFactor::Number(val.unwrap(), NumberType::Bin),
                     )
                 })
             }),
@@ -522,7 +522,7 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
                     };
                     Located::from(
                         dec_location.clone(),
-                        Expression::Number(val, NumberType::Dec),
+                        ExpressionFactor::Number(val, NumberType::Dec),
                     )
                 })
             },
@@ -530,7 +530,7 @@ fn number(input: LocatedSpan) -> IResult<Located<Expression>> {
     ))(input)
 }
 
-fn expression_parens(input: LocatedSpan) -> IResult<Located<Expression>> {
+fn expression_parens(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
     delimited(
@@ -538,7 +538,7 @@ fn expression_parens(input: LocatedSpan) -> IResult<Located<Expression>> {
         delimited(
             tag("["),
             map(expression, move |e| {
-                Located::from(location.clone(), Expression::ExprParens(Box::new(e)))
+                Located::from(location.clone(), ExpressionFactor::ExprParens(Box::new(e)))
             }),
             tag("]"),
         ),
@@ -546,21 +546,34 @@ fn expression_parens(input: LocatedSpan) -> IResult<Located<Expression>> {
     )(input)
 }
 
-fn current_pc(input: LocatedSpan) -> IResult<Located<Expression>> {
+fn current_pc(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
     ws(map(char('*'), move |_| {
-        Located::from(location.clone(), Expression::CurrentProgramCounter)
+        Located::from(location.clone(), ExpressionFactor::CurrentProgramCounter)
     }))(input)
 }
 
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
-    ws(alt((
-        number,
-        identifier_value,
-        current_pc,
-        expression_parens,
-    )))(input)
+    let location = Location::from(&input);
+
+    ws(map(
+        tuple((
+            opt(char('!')),
+            opt(char('-')),
+            alt((number, identifier_value, current_pc, expression_parens)),
+        )),
+        move |(not, neg, f)| {
+            let mut flags = ExpressionFactorFlags::empty();
+            if not.is_some() {
+                flags.set(ExpressionFactorFlags::NOT, true);
+            }
+            if neg.is_some() {
+                flags.set(ExpressionFactorFlags::NEG, true);
+            }
+            Located::from(location.clone(), Expression::Factor(f, flags))
+        },
+    ))(input)
 }
 
 fn fold_expressions<'a>(
@@ -649,6 +662,8 @@ mod test {
         check("lda #1 >> 4", "LDA #1 >> 4");
         check("lda #1 || 2", "LDA #1 || 2");
         check("lda #1 && 2", "LDA #1 && 2");
+        check("lda #-foo", "LDA #-foo");
+        check("lda #!foo", "LDA #!foo");
     }
 
     #[test]
@@ -748,7 +763,6 @@ mod test {
     fn parse_address_modifiers() {
         check("lda #<foo", "LDA #<foo");
         check("lda #>foo", "LDA #>foo");
-        check_err("lda #!foo", "test.asm:1:5: error: unexpected '#!foo'");
     }
 
     #[test]
@@ -775,10 +789,5 @@ mod test {
         };
         let e = expr.get(0).unwrap();
         assert_eq!(format!("{}", e.data), expected.to_string());
-    }
-
-    fn check_err(src: &str, expected: &str) {
-        let err = parse("test.asm", src).err().unwrap();
-        assert_eq!(err.to_string(), expected.to_string());
     }
 }

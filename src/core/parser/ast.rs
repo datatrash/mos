@@ -209,12 +209,45 @@ pub struct BinaryExpression<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expression<'a> {
+pub enum ExpressionFactor<'a> {
     /// The full identifier path, which modifier it uses
     IdentifierValue(IdentifierPath<'a>, Option<AddressModifier>),
     Number(i64, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     CurrentProgramCounter,
+    Ws(
+        Vec<Comment>,
+        Box<Located<'a, ExpressionFactor<'a>>>,
+        Vec<Comment>,
+    ),
+}
+
+bitflags::bitflags! {
+    pub struct ExpressionFactorFlags: u8 {
+        const NOT = 0b00000001;
+        const NEG = 0b00000010;
+    }
+}
+
+impl Display for ExpressionFactorFlags {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let not = if self.contains(ExpressionFactorFlags::NOT) {
+            "!"
+        } else {
+            ""
+        };
+        let neg = if self.contains(ExpressionFactorFlags::NEG) {
+            "-"
+        } else {
+            ""
+        };
+        write!(f, "{}{}", not, neg)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expression<'a> {
+    Factor(Located<'a, ExpressionFactor<'a>>, ExpressionFactorFlags),
     BinaryExpression(BinaryExpression<'a>),
     Ws(Vec<Comment>, Box<Located<'a, Expression<'a>>>, Vec<Comment>),
 }
@@ -273,7 +306,15 @@ impl<'a> Token<'a> {
 
     pub(crate) fn as_expression(&self) -> &Expression<'a> {
         match self {
-            Token::Expression(expr) => expr,
+            Token::Expression(expr) => &expr,
+            _ => panic!(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn as_factor(&self) -> &ExpressionFactor<'a> {
+        match self {
+            Token::Expression(Expression::Factor(expr, _)) => &expr.data,
             _ => panic!(),
         }
     }
@@ -381,9 +422,26 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
     }
 }
 
+impl<'a> CanWrapWhitespace<'a> for ExpressionFactor<'a> {
+    fn strip_whitespace(self) -> Self {
+        match self {
+            ExpressionFactor::ExprParens(inner) => ExpressionFactor::ExprParens(sb(inner)),
+            ExpressionFactor::Ws(_, inner, _) => inner.data,
+            _ => self,
+        }
+    }
+
+    fn wrap_inner(lhs: Vec<Comment>, inner: Box<Located<'a, Self>>, rhs: Vec<Comment>) -> Self {
+        ExpressionFactor::Ws(lhs, inner, rhs)
+    }
+}
+
 impl<'a> CanWrapWhitespace<'a> for Expression<'a> {
     fn strip_whitespace(self) -> Self {
         match self {
+            Expression::Factor(factor, flags) => {
+                Expression::Factor(factor.strip_whitespace(), flags)
+            }
             Expression::BinaryExpression(expr) => {
                 let e = BinaryExpression {
                     op: expr.op,
@@ -392,9 +450,7 @@ impl<'a> CanWrapWhitespace<'a> for Expression<'a> {
                 };
                 Expression::BinaryExpression(e)
             }
-            Expression::ExprParens(inner) => Expression::ExprParens(sb(inner)),
             Expression::Ws(_, inner, _) => inner.data,
-            _ => self,
         }
     }
 
@@ -419,29 +475,40 @@ impl Display for Comment {
     }
 }
 
-impl<'a> Display for Expression<'a> {
+impl<'a> Display for ExpressionFactor<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Expression::IdentifierValue(path, modifier) => {
+            Self::IdentifierValue(path, modifier) => {
                 let modifier = match modifier {
                     Some(m) => m.to_string(),
                     None => "".to_string(),
                 };
                 write!(f, "{}{}", modifier, path)
             }
-            Expression::Number(val, ty) => match ty {
+            Self::Number(val, ty) => match ty {
                 NumberType::Hex => write!(f, "${:x}", val),
                 NumberType::Bin => write!(f, "%{:b}", val),
                 NumberType::Dec => write!(f, "{}", val),
             },
-            Expression::CurrentProgramCounter => write!(f, "*"),
-            Expression::ExprParens(inner) => {
+            Self::CurrentProgramCounter => write!(f, "*"),
+            Self::ExprParens(inner) => {
                 write!(f, "[{}]", inner.data)
             }
-            Expression::BinaryExpression(expr) => {
+            Self::Ws(l, inner, r) => format_ws(f, l, inner, r),
+        }
+    }
+}
+
+impl<'a> Display for Expression<'a> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            Self::Factor(factor, flags) => {
+                write!(f, "{}{}", flags, factor.data)
+            }
+            Self::BinaryExpression(expr) => {
                 write!(f, "{} {} {}", expr.lhs.data, expr.op, expr.rhs.data)
             }
-            Expression::Ws(l, inner, r) => format_ws(f, l, inner, r),
+            Self::Ws(l, inner, r) => format_ws(f, l, inner, r),
         }
     }
 }

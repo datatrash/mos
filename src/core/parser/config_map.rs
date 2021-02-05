@@ -103,7 +103,9 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
 #[cfg(test)]
 mod tests {
     use crate::core::parser::config_map::{config_map, ConfigMap};
-    use crate::core::parser::{Expression, Identifier, LocatedSpan, NumberType, State, Token};
+    use crate::core::parser::{
+        ExpressionFactor, Identifier, LocatedSpan, NumberType, State, Token,
+    };
     use crate::errors::MosResult;
 
     #[test]
@@ -118,8 +120,8 @@ mod tests {
         }",
         );
         assert_eq!(
-            cfg.value("num").data.as_expression(),
-            &Expression::Number(123, NumberType::Dec)
+            cfg.value("num").data.as_factor(),
+            &ExpressionFactor::Number(123, NumberType::Dec)
         );
         assert_eq!(cfg.value("id").data.as_identifier(), &Identifier("v"));
         assert_eq!(
