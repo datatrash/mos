@@ -244,6 +244,11 @@ pub enum Token<'a> {
         Box<Located<'a, Token<'a>>>,
         Option<Box<Located<'a, Token<'a>>>>,
     ),
+    If(
+        Located<'a, Expression<'a>>,
+        Box<Located<'a, Token<'a>>>,
+        Option<Box<Located<'a, Token<'a>>>>,
+    ),
     Error,
 }
 
@@ -348,6 +353,11 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
                 let inner = inner.into_iter().map(|v| v.strip_whitespace()).collect();
                 Token::Data(inner, size)
             }
+            Token::Braces(inner) => {
+                let inner = inner.into_iter().map(|v| v.strip_whitespace()).collect();
+                Token::Braces(inner)
+            }
+            Token::If(expr, if_, else_) => Token::If(expr.strip_whitespace(), sb(if_), sob(else_)),
             Token::Ws(_, inner, _) => inner.data,
             _ => self,
         }
@@ -427,15 +437,12 @@ impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Token::Braces(tokens) => {
-                let mut tokens = tokens
+                let tokens = tokens
                     .iter()
                     .map(|t| format!("{}", t.data))
                     .collect_vec()
-                    .join("\n");
-                if !tokens.is_empty() {
-                    tokens = format!("\n{}\n", tokens);
-                }
-                write!(f, "{{{}}}", tokens)
+                    .join(" ");
+                write!(f, "{{ {} }}", tokens)
             }
             Token::Label(id) => {
                 write!(f, "{}:", id.0)
@@ -526,6 +533,13 @@ impl<'a> Display for Token<'a> {
                 write!(f, "[{}]", items)
             }
             Token::ConfigPair(_k, _v) => unimplemented!(),
+            Token::If(expr, if_, else_) => {
+                let else_ = match else_ {
+                    Some(e) => format!(" ELSE {}", e.data),
+                    None => "".to_string(),
+                };
+                write!(f, ".IF [{}] {}{}", expr.data, if_.data, else_)
+            }
             Token::Error => write!(f, "Error"),
         }
     }

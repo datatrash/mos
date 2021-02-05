@@ -415,6 +415,27 @@ fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
+fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    preceded(
+        tag_no_case(".if"),
+        map(
+            tuple((
+                expression,
+                ws(braces),
+                opt(preceded(tag_no_case("else"), ws(braces))),
+            )),
+            move |(expr, if_, else_)| {
+                Located::from(
+                    location.clone(),
+                    Token::If(expr, Box::new(if_), else_.map(Box::new)),
+                )
+            },
+        ),
+    )(input)
+}
+
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((
         braces,
@@ -426,6 +447,7 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
         label,
         data,
         segment,
+        if_,
         error,
     ))(input)
 }
@@ -638,8 +660,8 @@ mod test {
 
     #[test]
     fn parse_braces() {
-        check("{ }", "{}");
-        check("{ lda #123 }", "{\nLDA #123\n}");
+        check("{ }", "{  }");
+        check("{ lda #123 }", "{ LDA #123 }");
         check(
             r"
         {
@@ -649,7 +671,16 @@ mod test {
             }
         }            
         ",
-            "{\n{\nLDA #123\nLDA #234\n}\n}",
+            "{ { LDA #123 LDA #234 } }",
+        );
+    }
+
+    #[test]
+    fn parse_if() {
+        check(".if foo { nop }", ".IF [foo] { NOP }");
+        check(
+            ".if foo { nop } else { brk }",
+            ".IF [foo] { NOP } ELSE { BRK }",
         );
     }
 
@@ -683,7 +714,7 @@ mod test {
     #[test]
     fn use_segment() {
         check(".segment foo", ".SEGMENT foo");
-        check(".segment foo { nop }", ".SEGMENT foo {\nNOP\n}");
+        check(".segment foo { nop }", ".SEGMENT foo { NOP }");
     }
 
     #[test]

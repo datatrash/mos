@@ -1,9 +1,11 @@
 .define segment { name=default
 start=$2000}
 
+.const test=1
+
 *=$1000
   {lDa data
-            { STa             $d020 ,  x }
+            .if test { STa             $d020 ,  x }
         rtS
 }
 

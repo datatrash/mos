@@ -215,6 +215,24 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             )
         }
         Token::ConfigPair(_k, _v) => unimplemented!(),
+        Token::If(expr, if_, else_) => {
+            let expr = format_expression(&expr.data, opts);
+            let if_ = format_token(&if_.data, opts, indent).trim().to_string();
+            let else_ = match &else_ {
+                Some(e) => {
+                    let e = format_token(&e.data, opts, indent).trim().to_string();
+                    format!(" else {}", e)
+                }
+                None => "".to_string(),
+            };
+            format!(
+                "{ind}.if {expr} {if_}{else_}",
+                ind = indent_str(indent + 1),
+                expr = expr,
+                if_ = if_,
+                else_ = else_
+            )
+        }
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
     }
 }

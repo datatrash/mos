@@ -130,6 +130,11 @@ pub enum Emittable<'a> {
     Nested(String, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
     Segment(String, Location<'a>, Vec<Emittable<'a>>),
+    If(
+        Located<'a, Expression<'a>>,
+        Vec<Emittable<'a>>,
+        Vec<Emittable<'a>>,
+    ),
 }
 
 impl CodegenContext {
@@ -681,6 +686,24 @@ impl CodegenContext {
                         }
                     }
                 }
+                Emittable::If(expr, if_, else_) => match self.evaluate(&expr, error_on_failure) {
+                    Ok(Some(expr_result)) => {
+                        if expr_result > 0 {
+                            let inner = self.emit_emittables(if_, error_on_failure);
+                            match inner.is_empty() {
+                                true => None,
+                                false => Some(Emittable::If(expr, inner, vec![])),
+                            }
+                        } else {
+                            let inner = self.emit_emittables(else_, error_on_failure);
+                            match inner.is_empty() {
+                                true => None,
+                                false => Some(Emittable::If(expr, vec![], inner)),
+                            }
+                        }
+                    }
+                    _ => Some(Emittable::If(expr, if_, else_)),
+                },
             })
             .collect()
     }
@@ -755,6 +778,13 @@ impl CodegenContext {
 
                     active_label = None;
                     Some(e)
+                }
+                Token::If(expr, if_, else_) => {
+                    let if_ = self.generate_emittables(vec![*if_]);
+                    let else_ = else_
+                        .map(|e| self.generate_emittables(vec![*e]))
+                        .unwrap_or_else(Vec::new);
+                    Some(Emittable::If(expr, if_, else_))
                 }
                 _ => {
                     // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
@@ -1030,6 +1060,15 @@ mod tests {
             err.to_string(),
             "test.asm:2:1: error: cannot redefine symbol: foo"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn if_else() -> TestResult {
+        let ctx = test_codegen(
+            ".const foo=1\n.if foo { nop } else { rol }\n.if foo > 10 { nop } else { asl }",
+        )?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xea, 0x0a]);
         Ok(())
     }
 
