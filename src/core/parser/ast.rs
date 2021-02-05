@@ -222,6 +222,12 @@ pub enum VariableType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum IfType {
+    IfExpr,
+    IfDef(bool), // false = ifndef
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
     Braces(Vec<Located<'a, Token<'a>>>),
     Label(Identifier<'a>),
@@ -245,6 +251,7 @@ pub enum Token<'a> {
         Option<Box<Located<'a, Token<'a>>>>,
     ),
     If(
+        IfType,
         Located<'a, Expression<'a>>,
         Box<Located<'a, Token<'a>>>,
         Option<Box<Located<'a, Token<'a>>>>,
@@ -357,7 +364,9 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
                 let inner = inner.into_iter().map(|v| v.strip_whitespace()).collect();
                 Token::Braces(inner)
             }
-            Token::If(expr, if_, else_) => Token::If(expr.strip_whitespace(), sb(if_), sob(else_)),
+            Token::If(ty, expr, if_, else_) => {
+                Token::If(ty, expr.strip_whitespace(), sb(if_), sob(else_))
+            }
             Token::Ws(_, inner, _) => inner.data,
             _ => self,
         }
@@ -533,12 +542,17 @@ impl<'a> Display for Token<'a> {
                 write!(f, "[{}]", items)
             }
             Token::ConfigPair(_k, _v) => unimplemented!(),
-            Token::If(expr, if_, else_) => {
+            Token::If(ty, expr, if_, else_) => {
+                let ty = match ty {
+                    IfType::IfExpr => ".IF",
+                    IfType::IfDef(true) => ".IFDEF",
+                    IfType::IfDef(false) => ".IFNDEF",
+                };
                 let else_ = match else_ {
                     Some(e) => format!(" ELSE {}", e.data),
                     None => "".to_string(),
                 };
-                write!(f, ".IF [{}] {}{}", expr.data, if_.data, else_)
+                write!(f, "{} [{}] {}{}", ty, expr.data, if_.data, else_)
             }
             Token::Error => write!(f, "Error"),
         }

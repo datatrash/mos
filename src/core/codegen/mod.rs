@@ -131,6 +131,7 @@ pub enum Emittable<'a> {
     SegmentDefinition(ConfigMap<'a>),
     Segment(String, Location<'a>, Vec<Emittable<'a>>),
     If(
+        IfType,
         Located<'a, Expression<'a>>,
         Vec<Emittable<'a>>,
         Vec<Emittable<'a>>,
@@ -686,24 +687,41 @@ impl CodegenContext {
                         }
                     }
                 }
-                Emittable::If(expr, if_, else_) => match self.evaluate(&expr, error_on_failure) {
-                    Ok(Some(expr_result)) => {
-                        if expr_result > 0 {
-                            let inner = self.emit_emittables(if_, error_on_failure);
-                            match inner.is_empty() {
-                                true => None,
-                                false => Some(Emittable::If(expr, inner, vec![])),
-                            }
-                        } else {
-                            let inner = self.emit_emittables(else_, error_on_failure);
-                            match inner.is_empty() {
-                                true => None,
-                                false => Some(Emittable::If(expr, vec![], inner)),
+                Emittable::If(ty, expr, if_, else_) => {
+                    let expr_result = match ty {
+                        IfType::IfExpr => self
+                            .evaluate(&expr, error_on_failure)
+                            .map(|r| r.map(|r| r > 0)),
+                        IfType::IfDef(positive) => {
+                            let exists = self.evaluate(&expr, false);
+                            match (exists, positive) {
+                                (Ok(Some(_)), true) => Ok(Some(true)),
+                                (Ok(None), true) => Ok(Some(false)),
+                                (Ok(Some(_)), false) => Ok(Some(false)),
+                                (Ok(None), false) => Ok(Some(true)),
+                                (Err(e), _) => Err(e),
                             }
                         }
+                    };
+                    match expr_result {
+                        Ok(Some(res)) => {
+                            if res {
+                                let inner = self.emit_emittables(if_, error_on_failure);
+                                match inner.is_empty() {
+                                    true => None,
+                                    false => Some(Emittable::If(ty, expr, inner, vec![])),
+                                }
+                            } else {
+                                let inner = self.emit_emittables(else_, error_on_failure);
+                                match inner.is_empty() {
+                                    true => None,
+                                    false => Some(Emittable::If(ty, expr, vec![], inner)),
+                                }
+                            }
+                        }
+                        _ => Some(Emittable::If(ty, expr, if_, else_)),
                     }
-                    _ => Some(Emittable::If(expr, if_, else_)),
-                },
+                }
             })
             .collect()
     }
@@ -779,12 +797,12 @@ impl CodegenContext {
                     active_label = None;
                     Some(e)
                 }
-                Token::If(expr, if_, else_) => {
+                Token::If(ty, expr, if_, else_) => {
                     let if_ = self.generate_emittables(vec![*if_]);
                     let else_ = else_
                         .map(|e| self.generate_emittables(vec![*e]))
                         .unwrap_or_else(Vec::new);
-                    Some(Emittable::If(expr, if_, else_))
+                    Some(Emittable::If(ty, expr, if_, else_))
                 }
                 _ => {
                     // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
@@ -1069,6 +1087,20 @@ mod tests {
             ".const foo=1\n.if foo { nop } else { rol }\n.if foo > 10 { nop } else { asl }",
         )?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xea, 0x0a]);
+        Ok(())
+    }
+
+    #[test]
+    fn ifdef() -> TestResult {
+        let ctx = test_codegen(".const foo=1\n.ifdef foo { nop }\n.ifdef bar { asl }")?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn ifndef() -> TestResult {
+        let ctx = test_codegen(".const foo=1\n.ifndef foo { nop }\n.ifndef bar { asl }")?;
+        assert_eq!(ctx.segments().current().range_data(), vec![0x0a]);
         Ok(())
     }
 

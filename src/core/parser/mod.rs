@@ -418,21 +418,23 @@ fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
 fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    preceded(
-        tag_no_case(".if"),
-        map(
-            tuple((
-                expression,
-                ws(braces),
-                opt(preceded(tag_no_case("else"), ws(braces))),
+    map(
+        tuple((
+            alt((
+                map(tag_no_case(".ifdef"), |_| IfType::IfDef(true)),
+                map(tag_no_case(".ifndef"), |_| IfType::IfDef(false)),
+                map(tag_no_case(".if"), |_| IfType::IfExpr),
             )),
-            move |(expr, if_, else_)| {
-                Located::from(
-                    location.clone(),
-                    Token::If(expr, Box::new(if_), else_.map(Box::new)),
-                )
-            },
-        ),
+            ws(expression),
+            ws(braces),
+            opt(preceded(tag_no_case("else"), ws(braces))),
+        )),
+        move |(ty, expr, if_, else_)| {
+            Located::from(
+                location.clone(),
+                Token::If(ty, expr, Box::new(if_), else_.map(Box::new)),
+            )
+        },
     )(input)
 }
 
@@ -682,6 +684,8 @@ mod test {
             ".if foo { nop } else { brk }",
             ".IF [foo] { NOP } ELSE { BRK }",
         );
+        check(".ifdef foo { nop }", ".IFDEF [foo] { NOP }");
+        check(".ifndef foo { nop }", ".IFNDEF [foo] { NOP }");
     }
 
     #[test]
