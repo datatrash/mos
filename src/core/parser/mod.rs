@@ -4,7 +4,7 @@ use itertools::Itertools;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest, value};
-use nom::multi::{many0, separated_list1};
+use nom::multi::{fold_many_m_n, many0, separated_list1};
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{branch::alt, character::complete::multispace0};
 
@@ -150,6 +150,33 @@ fn identifier_name(input: LocatedSpan) -> IResult<Located<Token>> {
             Located::from(location.clone(), Token::IdentifierName(id))
         },
     )(input)
+}
+
+fn identifier_path(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    // A path consists of at least 2 items
+    let path = fold_many_m_n(
+        2,
+        100,
+        terminated(identifier_name, opt(char('.'))),
+        vec![],
+        |mut acc, item| {
+            acc.push(item);
+            acc
+        },
+    );
+
+    map(path, move |ids| {
+        let ids = ids
+            .into_iter()
+            .map(|i| i.data.into_identifier())
+            .collect_vec();
+        Located::from(
+            location.clone(),
+            Token::IdentifierPath(IdentifierPath::new(&ids)),
+        )
+    })(input)
 }
 
 fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
@@ -780,6 +807,22 @@ mod test {
             ".word 1 + 2, 3, 4 * 4"
         );
         Ok(())
+    }
+
+    #[test]
+    fn parse_identifiers_and_identifier_paths() {
+        let state = State::new("test.asm");
+        let input = LocatedSpan::new_extra("a", state);
+        let (_, lt) = identifier_name(input).ok().unwrap();
+        assert_eq!(lt.data.as_identifier(), &Identifier("a"));
+
+        let state = State::new("test.asm");
+        let input = LocatedSpan::new_extra("a.b", state);
+        let (_, lt) = identifier_path(input).ok().unwrap();
+        assert_eq!(
+            lt.data.as_identifier_path(),
+            &IdentifierPath::new(&[Identifier("a"), Identifier("b")])
+        );
     }
 
     fn check(src: &str, expected: &str) {

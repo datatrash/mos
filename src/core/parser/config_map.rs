@@ -53,7 +53,29 @@ impl<'a> ConfigMap<'a> {
                     .into(),
                 ),
             })
-            .collect_vec()
+            .collect()
+    }
+
+    pub fn require_single_identifier<'b>(
+        &self,
+        keys: &[&str],
+        location: Location<'b>,
+    ) -> Vec<MosError> {
+        keys.iter()
+            .filter_map(|key| match self.items.get(key) {
+                Some(tok) => match &tok.data {
+                    Token::IdentifierName(_) => None,
+                    _ => Some(
+                        ParseError::ExpectedError {
+                            location: location.clone(),
+                            message: format!("expected single identifier: {}", key),
+                        }
+                        .into(),
+                    ),
+                },
+                None => None,
+            })
+            .collect()
     }
 }
 
@@ -70,6 +92,7 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
 
     let value = alt((
         config_map,
+        identifier_path,
         identifier_name,
         map(expression, |expr| {
             Located::from(expr.location, Token::Expression(expr.data))
@@ -104,7 +127,7 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
 mod tests {
     use crate::core::parser::config_map::{config_map, ConfigMap};
     use crate::core::parser::{
-        ExpressionFactor, Identifier, LocatedSpan, NumberType, State, Token,
+        ExpressionFactor, Identifier, IdentifierPath, LocatedSpan, NumberType, State, Token,
     };
     use crate::errors::MosResult;
 
@@ -114,6 +137,7 @@ mod tests {
             r"{
             num = 123
             id = v
+            path = a.b
             nested =  {
                 nested_id   = nested_v
             }
@@ -124,6 +148,10 @@ mod tests {
             &ExpressionFactor::Number(123, NumberType::Dec)
         );
         assert_eq!(cfg.value("id").data.as_identifier(), &Identifier("v"));
+        assert_eq!(
+            cfg.value("path").data.as_identifier_path(),
+            &IdentifierPath::new(&[Identifier("a"), Identifier("b")])
+        );
         assert_eq!(
             cfg.value("nested")
                 .data

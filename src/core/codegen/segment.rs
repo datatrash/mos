@@ -1,6 +1,13 @@
 use std::ops::Range;
 
-pub const SEGMENT_OPTIONS: &[&str] = &["name", "start"];
+use crate::core::parser::{ConfigMap, Location};
+use crate::errors::MosError;
+
+pub fn require_segment_options_fields(cfg: &ConfigMap, location: &Location) -> Vec<MosError> {
+    let mut errors = cfg.require(&["name", "start"], location.clone());
+    errors.extend(cfg.require_single_identifier(&["name"], location.clone()));
+    errors
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ProgramCounter(u16);

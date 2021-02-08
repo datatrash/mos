@@ -6,7 +6,9 @@ use std::str::FromStr;
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 
-use crate::core::codegen::segment::{ProgramCounter, Segment, SegmentOptions, SEGMENT_OPTIONS};
+use crate::core::codegen::segment::{
+    require_segment_options_fields, ProgramCounter, Segment, SegmentOptions,
+};
 use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
@@ -785,14 +787,14 @@ impl CodegenContext {
                 Token::Definition(id, cfg) => {
                     let id = id.data.as_identifier().0;
                     let cfg = cfg.expect("Found empty definition");
-                    let cfg_location = cfg.location.clone();
+                    let cfg_location = cfg.location;
                     let cfg = cfg.data.into_config_map();
 
                     active_label = None;
                     match id {
                         "segment" => {
                             // Perform some sanity checks
-                            let errors = cfg.require(&SEGMENT_OPTIONS, cfg_location);
+                            let errors = require_segment_options_fields(&cfg, &cfg_location);
                             if errors.is_empty() {
                                 Some(Emittable::SegmentDefinition(cfg))
                             } else {
@@ -1077,6 +1079,24 @@ mod tests {
         );
         Ok(())
     }
+
+    /*#[test]
+    fn segments_can_depend_on_each_other() -> TestResult {
+        let ctx = test_codegen(
+            r"
+                .define segment { name = a start = $1000 }
+                .define segment { name = b start = segments.a.end }
+                nop
+                .segment b { rol }
+                asl
+                ",
+        )?;
+        assert_eq!(ctx.segments().get("a").range_data(), vec![0xea, 0x0a]);
+        assert_eq!(ctx.segments().get("b").range_data(), vec![0x2a]);
+        assert_eq!(ctx.segments().get("a").range(), &Some(0x1000..0x1002));
+        assert_eq!(ctx.segments().get("b").range(), &Some(0x1002..0x1003));
+        Ok(())
+    }*/
 
     #[test]
     fn can_use_constants() -> TestResult {

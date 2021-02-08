@@ -270,6 +270,7 @@ pub enum Token<'a> {
     Label(Identifier<'a>),
     Instruction(Instruction<'a>),
     IdentifierName(Identifier<'a>),
+    IdentifierPath(IdentifierPath<'a>),
     VariableDefinition(Identifier<'a>, Located<'a, Expression<'a>>, VariableType),
     ProgramCounterDefinition(Located<'a, Expression<'a>>),
     Operand(Operand<'a>),
@@ -304,6 +305,13 @@ impl<'a> Token<'a> {
         }
     }
 
+    pub(crate) fn as_identifier_path(&self) -> &IdentifierPath {
+        match self {
+            Token::IdentifierPath(p) => p,
+            _ => panic!(),
+        }
+    }
+
     pub(crate) fn as_expression(&self) -> &Expression<'a> {
         match self {
             Token::Expression(expr) => &expr,
@@ -323,6 +331,13 @@ impl<'a> Token<'a> {
     pub(crate) fn as_config_map(&self) -> &ConfigMap<'a> {
         match self {
             Token::Config(cfg) => cfg,
+            _ => panic!(),
+        }
+    }
+
+    pub(crate) fn into_identifier(self) -> Identifier<'a> {
+        match self {
+            Token::IdentifierName(id) => id,
             _ => panic!(),
         }
     }
@@ -535,6 +550,9 @@ impl<'a> Display for Token<'a> {
             },
             Token::IdentifierName(id) => {
                 write!(f, "{}", id.0)
+            }
+            Token::IdentifierPath(path) => {
+                write!(f, "{}", path.to_str_vec().into_iter().join("."))
             }
             Token::VariableDefinition(id, val, ty) => {
                 let ty = match ty {
