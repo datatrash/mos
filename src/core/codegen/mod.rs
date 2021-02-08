@@ -631,11 +631,9 @@ impl CodegenContext {
 
                         match start {
                             Some(start) => {
-                                let name = cfg.value("name").data.as_identifier().0;
-                                let write = match cfg.try_value("write") {
-                                    Some(val) => {
-                                        bool::from_str(val.data.as_identifier().0).unwrap_or(true)
-                                    }
+                                let name = cfg.value_as_identifier_path("name").single().0;
+                                let write = match cfg.try_value_as_identifier_path("write") {
+                                    Some(val) => bool::from_str(val.single().0).unwrap_or(true),
                                     None => true,
                                 };
                                 let options = SegmentOptions {
@@ -879,7 +877,8 @@ pub fn codegen<'a>(
     // On the first pass, any error is not a failure since we may encounter unresolved labels and such
     // After the first pass, all labels should be present so any error will be a failure then
     let mut error_on_failure = false;
-    while !to_process.is_empty() {
+    let mut num_passes = 0;
+    while !to_process.is_empty() && num_passes < 50 {
         log::trace!("==== PASS ================");
         let to_process_len = to_process.len();
         let next_to_process = ctx.emit_emittables(to_process, error_on_failure);
@@ -900,6 +899,10 @@ pub fn codegen<'a>(
             }
         }
         to_process = next_to_process;
+        num_passes += 1;
+    }
+    if num_passes == 50 {
+        panic!("Endless loop");
     }
 
     if ctx.errors.is_empty() {
@@ -911,6 +914,7 @@ pub fn codegen<'a>(
 
 #[cfg(test)]
 mod tests {
+    use crate::enable_default_tracing;
     use crate::parser::parse;
 
     use super::*;
@@ -1083,6 +1087,25 @@ mod tests {
     }
 
     #[test]
+    fn can_use_forward_references_to_other_segments() -> TestResult {
+        let ctx = test_codegen(
+            r"
+                .define segment { name = a start = $1000 }
+                .define segment { name = b start = $2000 }
+                lda foo
+                .segment b { foo: lda bar }
+                bar: nop
+                ",
+        )?;
+        assert_eq!(
+            ctx.segments().get("a").range_data(),
+            vec![0xad, 0x00, 0x20, 0xea]
+        );
+        assert_eq!(ctx.segments().get("b").range_data(), vec![0xad, 0x03, 0x10]);
+        Ok(())
+    }
+
+    #[test]
     fn cannot_use_unknown_segments() -> TestResult {
         let err = test_codegen(".segment foo").err().unwrap();
         assert_eq!(
@@ -1110,6 +1133,7 @@ mod tests {
 
     /*#[test]
     fn segments_can_depend_on_each_other() -> TestResult {
+        enable_default_tracing();
         let ctx = test_codegen(
             r"
                 .define segment { name = a start = $1000 }

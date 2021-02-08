@@ -152,7 +152,6 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
         Token::IdentifierName(id) => {
             format!("{}", id)
         }
-        Token::IdentifierPath(path) => path.to_str_vec().into_iter().join("."),
         Token::VariableDefinition(id, val, ty) => {
             let ty = match ty {
                 VariableType::Variable => ".var",

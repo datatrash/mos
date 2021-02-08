@@ -62,20 +62,49 @@ impl<'a> ConfigMap<'a> {
         location: Location<'b>,
     ) -> Vec<MosError> {
         keys.iter()
-            .filter_map(|key| match self.items.get(key) {
-                Some(tok) => match &tok.data {
-                    Token::IdentifierName(_) => None,
-                    _ => Some(
-                        ParseError::ExpectedError {
-                            location: location.clone(),
-                            message: format!("expected single identifier: {}", key),
-                        }
-                        .into(),
-                    ),
-                },
-                None => None,
+            .filter_map(|key| match self.try_value_as_identifier_path(key) {
+                Some(path) => {
+                    if path.len() != 1 {
+                        Some(
+                            ParseError::ExpectedError {
+                                location: location.clone(),
+                                message: format!("expected single identifier: {}", key),
+                            }
+                            .into(),
+                        )
+                    } else {
+                        None
+                    }
+                }
+                None => Some(
+                    ParseError::ExpectedError {
+                        location: location.clone(),
+                        message: format!("required field: {}", key),
+                    }
+                    .into(),
+                ),
             })
             .collect()
+    }
+
+    pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath<'b> {
+        match self.value(key).data.as_factor() {
+            ExpressionFactor::IdentifierValue(path, _) => path,
+            _ => panic!(),
+        }
+    }
+
+    pub fn try_value_as_identifier_path<'b>(
+        &'b self,
+        key: &'b str,
+    ) -> Option<&'b IdentifierPath<'b>> {
+        match self.try_value(key) {
+            Some(lt) => match lt.data.try_as_factor() {
+                Some(ExpressionFactor::IdentifierValue(path, _)) => Some(&path),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 }
 
@@ -92,8 +121,6 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
 
     let value = alt((
         config_map,
-        identifier_path,
-        identifier_name,
         map(expression, |expr| {
             Located::from(expr.location, Token::Expression(expr.data))
         }),
@@ -136,7 +163,6 @@ mod tests {
         let cfg = parse(
             r"{
             num = 123
-            id = v
             path = a.b
             nested =  {
                 nested_id   = nested_v
@@ -147,19 +173,25 @@ mod tests {
             cfg.value("num").data.as_factor(),
             &ExpressionFactor::Number(123, NumberType::Dec)
         );
-        assert_eq!(cfg.value("id").data.as_identifier(), &Identifier("v"));
         assert_eq!(
-            cfg.value("path").data.as_identifier_path(),
-            &IdentifierPath::new(&[Identifier("a"), Identifier("b")])
+            cfg.value("path").data.as_factor(),
+            &ExpressionFactor::IdentifierValue(
+                IdentifierPath::new(&[Identifier("a"), Identifier("b")]),
+                None,
+            )
         );
+
         assert_eq!(
             cfg.value("nested")
                 .data
                 .as_config_map()
                 .value("nested_id")
                 .data
-                .as_identifier(),
-            &Identifier("nested_v")
+                .as_factor(),
+            &ExpressionFactor::IdentifierValue(
+                IdentifierPath::new(&[Identifier("nested_v")]),
+                None,
+            )
         );
 
         assert_eq!(cfg.try_value("foo").is_none(), true);
