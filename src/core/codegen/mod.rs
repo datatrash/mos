@@ -6,8 +6,11 @@ use std::str::FromStr;
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 
+pub use segment::*;
+pub use symbol_table::*;
+
 use crate::core::codegen::segment::{
-    require_segment_options_fields, ProgramCounter, Segment, SegmentOptions,
+    require_segment_options_fields, ProgramCounter, SegmentOptions,
 };
 use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
@@ -88,7 +91,7 @@ impl SegmentMap {
         self.segments.get(name)
     }
 
-    fn get(&self, name: &str) -> &Segment {
+    pub fn get(&self, name: &str) -> &Segment {
         self.segments
             .get(name)
             .unwrap_or_else(|| panic!("Segment not found: {}", name))
@@ -100,7 +103,7 @@ impl SegmentMap {
             .unwrap_or_else(|| panic!("Segment not found: {}", name))
     }
 
-    fn keys(&self) -> Vec<&String> {
+    pub fn keys(&self) -> Vec<&String> {
         self.segments.keys().collect()
     }
 

@@ -15,6 +15,7 @@ pub enum MosError {
         location: OwnedLocation,
         message: String,
     },
+    BuildError(String),
     Io(#[from] std::io::Error),
     Clap(#[from] clap::Error),
     Unknown,
@@ -51,6 +52,14 @@ impl MosError {
             }
             MosError::Io(err) => format!("{}", err),
             MosError::Clap(err) => format!("{}", err),
+            MosError::BuildError(message) => {
+                let err = if use_color {
+                    Red.paint("error:")
+                } else {
+                    "error:".into()
+                };
+                format!("{} {}", err, message)
+            }
             MosError::Unknown => "unknown error".to_string(),
             MosError::Multiple(errors) => errors
                 .iter()
