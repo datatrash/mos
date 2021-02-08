@@ -22,6 +22,8 @@ pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
 pub enum CodegenError<'a> {
     #[error("unknown identifier: {1}")]
     UnknownIdentifier(Location<'a>, IdentifierPath<'a>),
+    #[error("unknown function: {1}")]
+    UnknownFunction(Location<'a>, Identifier<'a>),
     #[error("branch too far")]
     BranchTooFar(Location<'a>),
     #[error("cannot redefine symbol: {1}")]
@@ -36,6 +38,7 @@ impl<'a> From<CodegenError<'a>> for MosError {
     fn from(error: CodegenError<'a>) -> Self {
         let location = match &error {
             CodegenError::UnknownIdentifier(location, _) => location,
+            CodegenError::UnknownFunction(location, _) => location,
             CodegenError::BranchTooFar(location) => location,
             CodegenError::SymbolRedefinition(location, _) => location,
             CodegenError::OperandSizeMismatch(location) => location,
@@ -133,10 +136,14 @@ impl SegmentMap {
     }
 }
 
+pub type RegisteredFunction =
+    &'static dyn Fn(Vec<Option<i64>>) -> CodegenResult<'static, Option<i64>>;
+
 pub struct CodegenContext {
     options: CodegenOptions,
     segments: SegmentMap,
     symbols: SymbolTable,
+    functions: HashMap<String, RegisteredFunction>,
     errors: Vec<MosError>,
 }
 
@@ -148,7 +155,6 @@ pub enum Emittable<'a> {
     SegmentDefinition(ConfigMap<'a>),
     Segment(String, Location<'a>, Vec<Emittable<'a>>),
     If(
-        IfType,
         Located<'a, Expression<'a>>,
         Vec<Emittable<'a>>,
         Vec<Emittable<'a>>,
@@ -161,6 +167,7 @@ impl CodegenContext {
             options,
             segments: SegmentMap::new(),
             symbols: SymbolTable::new(),
+            functions: HashMap::new(),
             errors: vec![],
         }
     }
@@ -171,6 +178,10 @@ impl CodegenContext {
 
     pub fn segments(&self) -> &SegmentMap {
         &self.segments
+    }
+
+    pub fn register_fn(&mut self, name: &str, function: RegisteredFunction) {
+        self.functions.insert(name.into(), function);
     }
 
     fn evaluate_factor<'a>(
@@ -198,6 +209,19 @@ impl CodegenContext {
                     )),
                 }
             }
+            ExpressionFactor::FunctionCall(name, args) => {
+                let mut evaluated_args = vec![];
+                for arg in args {
+                    evaluated_args.push(self.evaluate(arg, pc, error_on_failure)?);
+                }
+                match self.functions.get(name.data.as_identifier().0) {
+                    Some(f) => f(evaluated_args),
+                    None => Err(CodegenError::UnknownFunction(
+                        name.location.clone(),
+                        name.data.as_identifier().clone(),
+                    )),
+                }
+            }
             _ => panic!("Unsupported token: {:?}", lt.data),
         }
     }
@@ -213,7 +237,11 @@ impl CodegenContext {
                 match self.evaluate_factor(factor, pc, error_on_failure) {
                     Ok(Some(mut val)) => {
                         if flags.contains(ExpressionFactorFlags::NOT) {
-                            val = !val;
+                            if val == 0 {
+                                val = 1
+                            } else {
+                                val = 0
+                            };
                         }
                         if flags.contains(ExpressionFactorFlags::NEG) {
                             val = -val;
@@ -723,22 +751,10 @@ impl CodegenContext {
                             }
                         }
                     }
-                    Emittable::If(ty, expr, if_, else_) => {
-                        let expr_result = match ty {
-                            IfType::IfExpr => self
-                                .evaluate(&expr, pc, error_on_failure)
-                                .map(|r| r.map(|r| r > 0)),
-                            IfType::IfDef(positive) => {
-                                let exists = self.evaluate(&expr, pc, false);
-                                match (exists, positive) {
-                                    (Ok(Some(_)), true) => Ok(Some(true)),
-                                    (Ok(None), true) => Ok(Some(false)),
-                                    (Ok(Some(_)), false) => Ok(Some(false)),
-                                    (Ok(None), false) => Ok(Some(true)),
-                                    (Err(e), _) => Err(e),
-                                }
-                            }
-                        };
+                    Emittable::If(expr, if_, else_) => {
+                        let expr_result = self
+                            .evaluate(&expr, pc, error_on_failure)
+                            .map(|r| r.map(|r| r > 0));
                         match expr_result {
                             Ok(Some(res)) => {
                                 log::trace!("result of ifdef: {}", res);
@@ -746,19 +762,19 @@ impl CodegenContext {
                                     let inner = self.emit_emittables(if_, error_on_failure);
                                     match inner.is_empty() {
                                         true => None,
-                                        false => Some(Emittable::If(ty, expr, inner, vec![])),
+                                        false => Some(Emittable::If(expr, inner, vec![])),
                                     }
                                 } else {
                                     let inner = self.emit_emittables(else_, error_on_failure);
                                     match inner.is_empty() {
                                         true => None,
-                                        false => Some(Emittable::If(ty, expr, vec![], inner)),
+                                        false => Some(Emittable::If(expr, vec![], inner)),
                                     }
                                 }
                             }
                             _ => {
                                 log::trace!("result of ifdef undetermined");
-                                Some(Emittable::If(ty, expr, if_, else_))
+                                Some(Emittable::If(expr, if_, else_))
                             }
                         }
                     }
@@ -844,12 +860,12 @@ impl CodegenContext {
                     active_label = None;
                     Some(e)
                 }
-                Token::If(ty, expr, if_, else_) => {
+                Token::If(expr, if_, else_) => {
                     let if_ = self.generate_emittables(vec![*if_]);
                     let else_ = else_
                         .map(|e| self.generate_emittables(vec![*e]))
                         .unwrap_or_else(Vec::new);
-                    Some(Emittable::If(ty, expr, if_, else_))
+                    Some(Emittable::If(expr, if_, else_))
                 }
                 _ => {
                     // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
@@ -888,11 +904,21 @@ impl CodegenContext {
     }
 }
 
+fn is_defined(args: Vec<Option<i64>>) -> CodegenResult<'static, Option<i64>> {
+    // We should have 1 argument and that argument should be set to Some
+    let r = match args.first() {
+        Some(Some(_)) => 1,
+        _ => 0,
+    };
+    Ok(Some(r))
+}
+
 pub fn codegen<'a>(
     ast: Vec<Located<'a, Token<'a>>>,
     options: CodegenOptions,
 ) -> MosResult<CodegenContext> {
     let mut ctx = CodegenContext::new(options);
+    ctx.register_fn("defined", &is_defined);
 
     let ast = ast.into_iter().map(|t| t.strip_whitespace()).collect_vec();
 
@@ -1222,14 +1248,15 @@ mod tests {
 
     #[test]
     fn ifdef() -> TestResult {
-        let ctx = test_codegen(".const foo=1\n.ifdef foo { nop }\n.ifdef bar { asl }")?;
+        let ctx = test_codegen(".const foo=1\n.if defined(foo) { nop }\n.if defined(bar) { asl }")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xea]);
         Ok(())
     }
 
     #[test]
     fn ifndef() -> TestResult {
-        let ctx = test_codegen(".const foo=1\n.ifndef foo { nop }\n.ifndef bar { asl }")?;
+        let ctx =
+            test_codegen(".const foo=1\n.if !defined(foo) { nop }\n.if !defined(bar) { asl }")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0x0a]);
         Ok(())
     }
@@ -1254,7 +1281,7 @@ mod tests {
         let ctx = test_codegen(".var foo = 1\nlda #-foo\nlda #!foo")?;
         assert_eq!(
             ctx.segments().current().range_data(),
-            vec![0xa9, 0xff, 0xa9, 0xfe]
+            vec![0xa9, 0xff, 0xa9, 0x00]
         );
         Ok(())
     }

@@ -235,6 +235,10 @@ pub enum ExpressionFactor<'a> {
     Number(i64, NumberType),
     ExprParens(Box<Located<'a, Expression<'a>>>),
     CurrentProgramCounter,
+    FunctionCall(
+        Box<Located<'a, Token<'a>>>,
+        Vec<Located<'a, Expression<'a>>>,
+    ),
     Ws(
         Vec<Comment>,
         Box<Located<'a, ExpressionFactor<'a>>>,
@@ -279,12 +283,6 @@ pub enum VariableType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum IfType {
-    IfExpr,
-    IfDef(bool), // false = ifndef
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
     Braces(Vec<Located<'a, Token<'a>>>),
     Label(Identifier<'a>),
@@ -308,7 +306,6 @@ pub enum Token<'a> {
         Option<Box<Located<'a, Token<'a>>>>,
     ),
     If(
-        IfType,
         Located<'a, Expression<'a>>,
         Box<Located<'a, Token<'a>>>,
         Option<Box<Located<'a, Token<'a>>>>,
@@ -435,9 +432,7 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
                 let inner = inner.into_iter().map(|v| v.strip_whitespace()).collect();
                 Token::Braces(inner)
             }
-            Token::If(ty, expr, if_, else_) => {
-                Token::If(ty, expr.strip_whitespace(), sb(if_), sob(else_))
-            }
+            Token::If(expr, if_, else_) => Token::If(expr.strip_whitespace(), sb(if_), sob(else_)),
             Token::Ws(_, inner, _) => inner.data,
             _ => self,
         }
@@ -451,6 +446,10 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
 impl<'a> CanWrapWhitespace<'a> for ExpressionFactor<'a> {
     fn strip_whitespace(self) -> Self {
         match self {
+            ExpressionFactor::FunctionCall(name, args) => ExpressionFactor::FunctionCall(
+                sb(name),
+                args.into_iter().map(|a| a.strip_whitespace()).collect(),
+            ),
             ExpressionFactor::ExprParens(inner) => ExpressionFactor::ExprParens(sb(inner)),
             ExpressionFactor::Ws(_, inner, _) => inner.data,
             _ => self,
@@ -517,6 +516,10 @@ impl<'a> Display for ExpressionFactor<'a> {
                 NumberType::Dec => write!(f, "{}", val),
             },
             Self::CurrentProgramCounter => write!(f, "*"),
+            Self::FunctionCall(name, args) => {
+                let args = args.iter().map(|arg| format!("{}", arg.data)).join(",");
+                write!(f, "{}[{}]", name.data, args)
+            }
             Self::ExprParens(inner) => {
                 write!(f, "[{}]", inner.data)
             }
@@ -639,17 +642,12 @@ impl<'a> Display for Token<'a> {
                 write!(f, "[{}]", items)
             }
             Token::ConfigPair(_k, _v) => unimplemented!(),
-            Token::If(ty, expr, if_, else_) => {
-                let ty = match ty {
-                    IfType::IfExpr => ".IF",
-                    IfType::IfDef(true) => ".IFDEF",
-                    IfType::IfDef(false) => ".IFNDEF",
-                };
+            Token::If(expr, if_, else_) => {
                 let else_ = match else_ {
                     Some(e) => format!(" ELSE {}", e.data),
                     None => "".to_string(),
                 };
-                write!(f, "{} [{}] {}{}", ty, expr.data, if_.data, else_)
+                write!(f, ".IF [{}] {}{}", expr.data, if_.data, else_)
             }
             Token::Error => write!(f, "Error"),
         }

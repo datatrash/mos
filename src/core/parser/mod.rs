@@ -4,7 +4,7 @@ use itertools::Itertools;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, anychar, char, digit1, hex_digit1, space1};
 use nom::combinator::{all_consuming, map, map_opt, not, opt, recognize, rest, value};
-use nom::multi::{many0, separated_list1};
+use nom::multi::{many0, separated_list0, separated_list1};
 use nom::sequence::{delimited, pair, preceded, terminated, tuple};
 use nom::{branch::alt, character::complete::multispace0};
 
@@ -420,19 +420,15 @@ fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
 
     map(
         tuple((
-            alt((
-                map(tag_no_case(".ifdef"), |_| IfType::IfDef(true)),
-                map(tag_no_case(".ifndef"), |_| IfType::IfDef(false)),
-                map(tag_no_case(".if"), |_| IfType::IfExpr),
-            )),
+            tag_no_case(".if"),
             ws(expression),
             ws(braces),
             opt(preceded(tag_no_case("else"), ws(braces))),
         )),
-        move |(ty, expr, if_, else_)| {
+        move |(_, expr, if_, else_)| {
             Located::from(
                 location.clone(),
-                Token::If(ty, expr, Box::new(if_), else_.map(Box::new)),
+                Token::If(expr, Box::new(if_), else_.map(Box::new)),
             )
         },
     )(input)
@@ -554,6 +550,27 @@ fn current_pc(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     }))(input)
 }
 
+fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
+    let location = Location::from(&input);
+
+    ws(map(
+        pair(
+            ws(identifier_name),
+            delimited(
+                char('('),
+                separated_list0(char(','), ws(expression)),
+                char(')'),
+            ),
+        ),
+        move |(fn_name, fn_args)| {
+            Located::from(
+                location.clone(),
+                ExpressionFactor::FunctionCall(Box::new(fn_name), fn_args),
+            )
+        },
+    ))(input)
+}
+
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
     let location = Location::from(&input);
 
@@ -561,7 +578,13 @@ fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
         tuple((
             opt(char('!')),
             opt(char('-')),
-            alt((number, identifier_value, current_pc, expression_parens)),
+            alt((
+                number,
+                fn_call,
+                identifier_value,
+                current_pc,
+                expression_parens,
+            )),
         )),
         move |(not, neg, f)| {
             let mut flags = ExpressionFactorFlags::empty();
@@ -711,8 +734,8 @@ mod test {
             ".if foo { nop } else { brk }",
             ".IF [foo] { NOP } ELSE { BRK }",
         );
-        check(".ifdef foo { nop }", ".IFDEF [foo] { NOP }");
-        check(".ifndef foo { nop }", ".IFNDEF [foo] { NOP }");
+        check(".if defined(foo) { nop }", ".IF [defined[foo]] { NOP }");
+        check(".if !defined(foo) { nop }", ".IF [!defined[foo]] { NOP }");
     }
 
     #[test]
@@ -782,6 +805,18 @@ mod test {
         Ok(())
     }
 
+    #[test]
+    fn parse_fn_call() {
+        let factor = invoke("func()", |span| fn_call(span));
+        assert_eq!(factor.to_string(), "func[]");
+
+        let factor = invoke("func(a)", |span| fn_call(span));
+        assert_eq!(factor.to_string(), "func[a]");
+
+        let factor = invoke("func(a, b)", |span| fn_call(span));
+        assert_eq!(factor.to_string(), "func[a,b]");
+    }
+
     fn check(src: &str, expected: &str) {
         let expr = match parse("test.asm", src) {
             Ok(expr) => expr,
@@ -789,5 +824,15 @@ mod test {
         };
         let e = expr.get(0).unwrap();
         assert_eq!(format!("{}", e.data), expected.to_string());
+    }
+
+    fn invoke<'a, O: 'a, F: FnOnce(LocatedSpan<'a>) -> IResult<Located<'a, O>>>(
+        src: &'a str,
+        parser: F,
+    ) -> O {
+        let state = State::new("test.asm");
+        let input = LocatedSpan::new_extra(src, state);
+        let result = parser(input);
+        result.ok().unwrap().1.data
     }
 }

@@ -63,6 +63,10 @@ fn format_expression_factor(token: &ExpressionFactor, opts: &Options) -> String 
             };
             format!("{}{}", modifier, path)
         }
+        ExpressionFactor::FunctionCall(name, args) => {
+            let args = args.iter().map(|arg| format!("{}", arg.data)).join(", ");
+            format!("{}({})", name.data, args)
+        }
         ExpressionFactor::ExprParens(inner) => {
             format!("[{}]", format_expression(&inner.data, opts))
         }
@@ -228,12 +232,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             )
         }
         Token::ConfigPair(_k, _v) => unimplemented!(),
-        Token::If(ty, expr, if_, else_) => {
-            let ty = match ty {
-                IfType::IfExpr => ".if",
-                IfType::IfDef(true) => ".ifdef",
-                IfType::IfDef(false) => ".ifndef",
-            };
+        Token::If(expr, if_, else_) => {
             let expr = format_expression(&expr.data, opts);
             let if_ = format_token(&if_.data, opts, indent).trim().to_string();
             let else_ = match &else_ {
@@ -244,9 +243,8 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                 None => "".to_string(),
             };
             format!(
-                "{ind}{ty} {expr} {if_}{else_}",
+                "{ind}.if {expr} {if_}{else_}",
                 ind = indent_str(indent + 1),
-                ty = ty,
                 expr = expr,
                 if_ = if_,
                 else_ = else_
