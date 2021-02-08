@@ -61,11 +61,26 @@ struct MergingSegment<'a> {
 }
 
 impl<'a> MergingSegment<'a> {
-    fn range_usize(&self) -> Option<Range<usize>> {
-        self.range.as_ref().map(|r| Range {
-            start: r.start as usize,
-            end: r.end as usize,
-        })
+    fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) {
+        let sr = segment.range().as_ref().unwrap();
+        let sr_usize = self.range_usize(sr);
+        self.sources.insert(segment_name, segment);
+        self.data[sr_usize].copy_from_slice(segment.range_data());
+
+        match &mut self.range {
+            Some(br) => {
+                br.start = min(br.start, sr.start);
+                br.end = max(br.end, sr.end);
+            }
+            None => self.range = Some(sr.start..sr.end),
+        }
+    }
+
+    fn range_usize(&self, range: &Range<u16>) -> Range<usize> {
+        Range {
+            start: range.start as usize,
+            end: range.end as usize,
+        }
     }
 
     fn overlaps_with_sources(&self, new_range: &Range<u16>) -> Vec<(&&'a str, &&'a Segment)> {
@@ -102,9 +117,6 @@ impl<'a> SegmentMerger<'a> {
 
     fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) -> MosResult<()> {
         if let Some(seg_range) = segment.range() {
-            let seg_start = seg_range.start as usize;
-            let seg_end = seg_range.end as usize;
-
             let target = match self.targets.entry(self.default_target.clone()) {
                 Entry::Occupied(o) => o.into_mut(),
                 Entry::Vacant(e) => e.insert(MergingSegment {
@@ -129,16 +141,7 @@ impl<'a> SegmentMerger<'a> {
                 )));
             }
 
-            target.sources.insert(segment_name, segment);
-            target.data[seg_start..seg_end].copy_from_slice(segment.range_data());
-
-            match &mut target.range {
-                Some(br) => {
-                    br.start = min(br.start, seg_range.start);
-                    br.end = max(br.end, seg_range.end);
-                }
-                None => target.range = Some(seg_range.start..seg_range.end),
-            }
+            target.merge(segment_name, segment);
         }
 
         Ok(())
@@ -189,7 +192,7 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             if let Some(range) = &m.range {
                 let mut out = fs::File::create(target_dir.join(path))?;
                 out.write_all(&range.start.to_le_bytes())?;
-                out.write_all(&m.data[m.range_usize().unwrap()])?;
+                out.write_all(&m.data[m.range_usize(range)])?;
             }
         }
 
