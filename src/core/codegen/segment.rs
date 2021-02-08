@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
 use crate::core::parser::{ConfigMap, Location};
@@ -27,6 +28,12 @@ impl ProgramCounter {
 
     pub fn as_i64(&self) -> i64 {
         self.0 as i64
+    }
+}
+
+impl Display for ProgramCounter {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "${:04x}", self.0)
     }
 }
 

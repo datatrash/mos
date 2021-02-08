@@ -15,7 +15,7 @@ clap = "3.0.0-beta.2"
 fs-err = "2"
 git-version = "0.3"
 itertools = "0.10"
-log = "0.4"
+log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 loggerv = "0.7"
 nom = "6"
 nom_locate = "3"

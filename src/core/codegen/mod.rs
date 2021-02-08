@@ -101,8 +101,12 @@ impl SegmentMap {
         self.segments.is_empty()
     }
 
-    pub(crate) fn current(&self) -> &Segment {
-        self.get(self.current.as_ref().expect("No current segment"))
+    pub fn current(&self) -> &Segment {
+        self.try_current().expect("No active segment")
+    }
+
+    pub(crate) fn try_current(&self) -> Option<&Segment> {
+        self.current.as_ref().map(|n| self.get(n))
     }
 
     pub(crate) fn current_segment_name(&self) -> Option<String> {
@@ -113,9 +117,15 @@ impl SegmentMap {
         self.current = name;
     }
 
-    fn current_mut(&mut self) -> &mut Segment {
-        let name = self.current.as_ref().expect("No current segment").clone();
-        self.get_mut(&name)
+    pub fn current_mut(&mut self) -> &mut Segment {
+        self.try_current_mut().expect("No active segment")
+    }
+
+    fn try_current_mut(&mut self) -> Option<&mut Segment> {
+        match &self.current {
+            Some(n) => self.segments.get_mut(n),
+            None => None,
+        }
     }
 }
 
@@ -126,6 +136,7 @@ pub struct CodegenContext {
     errors: Vec<MosError>,
 }
 
+#[derive(Debug)]
 pub enum Emittable<'a> {
     Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
     /// (Name of the scope, the emittables in the scope)
@@ -161,13 +172,12 @@ impl CodegenContext {
     fn evaluate_factor<'a>(
         &self,
         lt: &Located<'a, ExpressionFactor<'a>>,
+        pc: Option<ProgramCounter>,
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<i64>> {
         match &lt.data {
             ExpressionFactor::Number(n, _) => Ok(Some(*n)),
-            ExpressionFactor::CurrentProgramCounter => {
-                Ok(Some(self.segments.current().current_pc().into()))
-            }
+            ExpressionFactor::CurrentProgramCounter => Ok(pc.map(|p| p.as_i64())),
             ExpressionFactor::IdentifierValue(path, modifier) => {
                 let symbol_value = self.symbols.value(&path.to_str_vec());
 
@@ -191,11 +201,12 @@ impl CodegenContext {
     fn evaluate<'a>(
         &self,
         lt: &Located<'a, Expression<'a>>,
+        pc: Option<ProgramCounter>,
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<i64>> {
         match &lt.data {
             Expression::Factor(factor, flags) => {
-                match self.evaluate_factor(factor, error_on_failure) {
+                match self.evaluate_factor(factor, pc, error_on_failure) {
                     Ok(Some(mut val)) => {
                         if flags.contains(ExpressionFactorFlags::NOT) {
                             val = !val;
@@ -209,8 +220,8 @@ impl CodegenContext {
                 }
             }
             Expression::BinaryExpression(expr) => {
-                let lhs = self.evaluate(&expr.lhs, error_on_failure)?;
-                let rhs = self.evaluate(&expr.rhs, error_on_failure)?;
+                let lhs = self.evaluate(&expr.lhs, pc, error_on_failure)?;
+                let rhs = self.evaluate(&expr.rhs, pc, error_on_failure)?;
                 let op = &expr.op;
                 match (lhs, rhs) {
                     (Some(lhs), Some(rhs)) => {
@@ -242,8 +253,8 @@ impl CodegenContext {
 
     fn evaluate_operand<'a, 'b>(
         &self,
-        pc: ProgramCounter,
         i: &'a Instruction<'b>,
+        pc: Option<ProgramCounter>,
         location: &'a Location<'b>,
         error_on_failure: bool,
     ) -> CodegenResult<'b, (&'a AddressingMode, Option<i64>, Option<Register>)> {
@@ -260,7 +271,7 @@ impl CodegenContext {
                     _ => panic!(),
                 });
 
-                let evaluated = self.evaluate(&*operand.expr, error_on_failure)?;
+                let evaluated = self.evaluate(&*operand.expr, pc, error_on_failure)?;
                 evaluated
                     .map(|val| match i.mnemonic {
                         Mnemonic::Bcc
@@ -272,7 +283,10 @@ impl CodegenContext {
                         | Mnemonic::Bvc
                         | Mnemonic::Bvs => {
                             let target_pc = val as i64;
-                            let cur_pc = (usize::from(pc) + 2) as i64;
+                            // If the current PC cannot be determined we'll just default to the target_pc. This will be fixed up later
+                            // when the instruction is re-emitted.
+                            let cur_pc =
+                                (pc.unwrap_or_else(|| target_pc.into()).as_usize() + 2) as i64;
                             let mut offset = target_pc - cur_pc;
                             if offset >= -128 && offset <= 127 {
                                 if offset < 0 {
@@ -294,24 +308,16 @@ impl CodegenContext {
 
     fn emit_instruction<'a, 'b>(
         &mut self,
-        pc: Option<ProgramCounter>,
         i: &'a Instruction<'b>,
+        pc: Option<ProgramCounter>,
         location: &'a Location<'b>,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, Option<ProgramCounter>> {
-        let pc = match pc {
-            Some(pc) => {
-                self.segments.current_mut().set_current_pc(pc);
-                pc
-            }
-            None => self.segments.current().current_pc(),
-        };
-
+    ) -> CodegenResult<'b, (bool, Vec<u8>)> {
         type MM = Mnemonic;
         type AM = AddressingMode;
         use smallvec::smallvec as v;
 
-        let (am, val, suffix) = self.evaluate_operand(pc, i, location, error_on_failure)?;
+        let (am, val, suffix) = self.evaluate_operand(i, pc, location, error_on_failure)?;
         let possible_opcodes: SmallVec<[(u8, usize); 2]> = match (&i.mnemonic, am, suffix) {
             (MM::Adc, AM::Immediate, None) => v![(0x69, 1)],
             (MM::Adc, AM::Indirect, Some(Register::X)) => v![(0x61, 1)],
@@ -471,84 +477,62 @@ impl CodegenContext {
             None => (true, smallvec![possible_opcodes[0].0]),
         };
 
-        self.segments.current_mut().set(&bytes);
-
-        if expression_is_valid {
-            // Done with this token
-            Ok(None)
-        } else {
-            // Will try to emit later on this pc
-            Ok(Some(pc))
-        }
+        Ok((!expression_is_valid, bytes.to_vec()))
     }
 
     fn emit_data<'a>(
         &mut self,
-        pc: Option<ProgramCounter>,
         exprs: &[Located<'a, Expression<'a>>],
         data_length: usize,
+        pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<'a, Option<ProgramCounter>> {
-        let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
-
+    ) -> CodegenResult<'a, (bool, Vec<u8>)> {
         // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
         let mut any_failed = false;
 
-        // Before evaluating, make sure that the current segment has the right PC, since it may be used in an expression (e.g. 'lda *')
-        self.segments.current_mut().set_current_pc(pc);
-
+        let mut result = vec![];
         for expr in exprs {
-            let evaluated = self.evaluate(expr, error_on_failure)?;
-            match evaluated {
-                Some(val) => {
-                    match data_length {
-                        1 => self.segments.current_mut().set(&[val as u8]),
-                        2 => self
-                            .segments
-                            .current_mut()
-                            .set(&((val as u16).to_le_bytes())),
-                        4 => self
-                            .segments
-                            .current_mut()
-                            .set(&((val as u32).to_le_bytes())),
-                        _ => panic!(),
-                    };
-                }
+            let evaluated = self.evaluate(expr, pc, error_on_failure)?;
+            let bytes: Vec<u8> = match evaluated {
+                Some(val) => match data_length {
+                    1 => vec![val as u8],
+                    2 => (val as u16).to_le_bytes().to_vec(),
+                    4 => (val as u32).to_le_bytes().to_vec(),
+                    _ => panic!(),
+                },
                 None => {
                     any_failed = true;
                     match data_length {
-                        1 => self.segments.current_mut().set(&[0_u8]),
-                        2 => self.segments.current_mut().set(&(0_u16.to_le_bytes())),
-                        4 => self.segments.current_mut().set(&(0_u32.to_le_bytes())),
+                        1 => vec![0_u8],
+                        2 => 0_u16.to_le_bytes().to_vec(),
+                        4 => 0_u32.to_le_bytes().to_vec(),
                         _ => panic!(),
-                    };
+                    }
                 }
-            }
+            };
+            result.extend(bytes);
         }
 
-        if any_failed {
-            Ok(Some(pc))
-        } else {
-            Ok(None)
-        }
+        Ok((any_failed, result))
     }
 
     fn emit_single<'a, 'b>(
         &mut self,
-        pc: Option<ProgramCounter>,
         token: &'a Token<'b>,
         location: &'a Location<'b>,
+        pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, Option<ProgramCounter>> {
-        match token {
-            Token::Label(id) => {
-                let pc = pc.unwrap_or_else(|| self.segments.current().current_pc());
-                self.symbols
+    ) -> CodegenResult<'b, (bool, Vec<u8>)> {
+        let (emit_later, bytes) = match token {
+            Token::Label(id) => match pc {
+                Some(pc) => self
+                    .symbols
                     .register(id, Symbol::Label(pc), location, false)
-                    .map(|_| None)
-            }
+                    .map(|_| (false, vec![])),
+                None => Ok((true, vec![])),
+            },
             Token::VariableDefinition(id, val, ty) => {
-                let eval = self.evaluate(val, error_on_failure)?.unwrap();
+                let eval = self.evaluate(val, pc, error_on_failure)?.unwrap();
 
                 let result = match ty {
                     VariableType::Variable => {
@@ -561,32 +545,54 @@ impl CodegenContext {
                     }
                 };
 
-                result.map(|_| None)
+                result.map(|_| (false, vec![]))
             }
             Token::ProgramCounterDefinition(val) => {
-                let eval = self.evaluate(val, error_on_failure)?.unwrap();
-                self.segments
-                    .current_mut()
-                    .set_current_pc(ProgramCounter::new(eval as u16));
-                Ok(None)
+                let eval = self.evaluate(val, pc, error_on_failure)?.unwrap();
+                match self.segments.try_current_mut() {
+                    Some(segment) => {
+                        segment.set_current_pc(ProgramCounter::new(eval as u16));
+                        Ok((false, vec![]))
+                    }
+                    None => Ok((true, vec![])),
+                }
             }
-            Token::Instruction(i) => self.emit_instruction(pc, i, location, error_on_failure),
+            Token::Instruction(i) => self.emit_instruction(i, pc, location, error_on_failure),
             Token::Data(exprs, data_length) => {
-                self.emit_data(pc, exprs, *data_length, error_on_failure)
+                self.emit_data(exprs, *data_length, pc, error_on_failure)
             }
-            _ => Ok(None),
+            _ => Ok((false, vec![])),
+        }?;
+
+        if let Some(pc) = pc {
+            if !bytes.is_empty() {
+                log::trace!(
+                    "Emitting in segment {:?} at pc {}: {:?}",
+                    self.segments.current,
+                    pc,
+                    &bytes
+                );
+                let segment = self.segments.current_mut();
+                segment.set_current_pc(pc);
+                segment.set(&bytes);
+            }
         }
+
+        // We need to handle this emittable again later if the emittable has indicated this by itself (emit_later) or if there was no
+        // active segment we could emit to (pc.is_none()).
+        Ok((emit_later || pc.is_none(), bytes))
     }
 
     fn evaluate_or_error(
         &mut self,
         identifier: &str,
         cfg: &ConfigMap,
+        pc: Option<ProgramCounter>,
         error_on_failure: bool,
         error_msg: &str,
     ) -> Option<i64> {
         let expr = cfg.value(identifier).map(|val| val.as_expression().clone());
-        match self.evaluate(&expr, error_on_failure) {
+        match self.evaluate(&expr, pc, error_on_failure) {
             Ok(Some(val)) => Some(val),
             _ => {
                 if error_on_failure {
@@ -608,150 +614,161 @@ impl CodegenContext {
         emittables: Vec<Emittable<'a>>,
         error_on_failure: bool,
     ) -> Vec<Emittable<'a>> {
-        emittables
+        let result = emittables
             .into_iter()
-            .filter_map(|e| match e {
-                Emittable::SegmentDefinition(cfg) => {
-                    let start = self.evaluate_or_error(
-                        "start",
-                        &cfg,
-                        error_on_failure,
-                        "Could not determine start address for segment",
-                    );
+            .filter_map(|emittable| {
+                log::trace!("Processing emittable: {:?}", emittable);
+                let pc = self.segments.try_current().map(|seg| seg.current_pc());
+                match emittable {
+                    Emittable::SegmentDefinition(cfg) => {
+                        let start = self.evaluate_or_error(
+                            "start",
+                            &cfg,
+                            pc,
+                            error_on_failure,
+                            "Could not determine start address for segment",
+                        );
 
-                    match start {
-                        Some(start) => {
-                            let name = cfg.value("name").data.as_identifier().0;
-                            let write = match cfg.try_value("write") {
-                                Some(val) => {
-                                    bool::from_str(val.data.as_identifier().0).unwrap_or(true)
-                                }
-                                None => true,
-                            };
-                            let options = SegmentOptions {
-                                initial_pc: start.into(),
-                                write,
-                            };
-                            let segment = Segment::new(options);
-                            self.segments.insert(name, segment);
-                            None
-                        }
-                        None => {
-                            // try again later
-                            Some(Emittable::SegmentDefinition(cfg))
+                        match start {
+                            Some(start) => {
+                                let name = cfg.value("name").data.as_identifier().0;
+                                let write = match cfg.try_value("write") {
+                                    Some(val) => {
+                                        bool::from_str(val.data.as_identifier().0).unwrap_or(true)
+                                    }
+                                    None => true,
+                                };
+                                let options = SegmentOptions {
+                                    initial_pc: start.into(),
+                                    write,
+                                };
+                                let segment = Segment::new(options);
+                                self.segments.insert(name, segment);
+                                None
+                            }
+                            None => {
+                                // try again later
+                                Some(Emittable::SegmentDefinition(cfg))
+                            }
                         }
                     }
-                }
-                Emittable::Single(pc, location, token) => {
-                    if self.segments.is_empty() {
-                        // We want to start emitting, but we don't have a segment yet.
-                        log::trace!("Creating default segment");
-                        let options = SegmentOptions {
-                            initial_pc: self.options.pc,
-                            ..Default::default()
+                    Emittable::Single(provided_pc, location, token) => {
+                        let pc = match provided_pc {
+                            Some(pc) => Some(pc),
+                            None => pc,
                         };
-                        self.segments.insert("default", Segment::new(options));
-                    }
-
-                    match self.emit_single(pc, &token, &location, error_on_failure) {
-                        Ok(pc) => {
-                            pc.map(|pc| {
-                                // try to emit later
-                                Some(Emittable::Single(Some(pc), location, token))
-                            })
-                        }
-                        Err(e) => {
-                            self.errors.push(e.into());
-                            None
-                        }
-                    }
-                    .flatten()
-                }
-                Emittable::Nested(scope_name, inner) => {
-                    self.symbols.enter(&scope_name);
-                    let inner = self.emit_emittables(inner, error_on_failure);
-                    self.symbols.leave();
-                    match inner.is_empty() {
-                        true => None,
-                        false => Some(Emittable::Nested(scope_name, inner)),
-                    }
-                }
-                Emittable::Segment(segment_name, location, inner) => {
-                    let prev_segment = self.segments.current_segment_name();
-                    match self.segments.try_get(&segment_name) {
-                        Some(_) => {
-                            self.segments.set_current(Some(segment_name.clone()));
-                            match inner.is_empty() {
-                                true => {
-                                    // This segment is set without an inner scope
+                        match self.emit_single(&token, &location, pc, error_on_failure) {
+                            Ok((emit_later, _bytes)) => {
+                                if emit_later {
+                                    Some(Emittable::Single(pc, location, token))
+                                } else {
                                     None
                                 }
-                                false => {
-                                    // We have an inner scope, so reset the old segment afterwards
-                                    let inner = self.emit_emittables(inner, error_on_failure);
-                                    self.segments.set_current(prev_segment);
-                                    match inner.is_empty() {
-                                        true => None,
-                                        false => {
-                                            Some(Emittable::Segment(segment_name, location, inner))
+                            }
+                            Err(e) => {
+                                self.errors.push(e.into());
+                                None
+                            }
+                        }
+                    }
+                    Emittable::Nested(scope_name, inner) => {
+                        self.symbols.enter(&scope_name);
+                        let inner = self.emit_emittables(inner, error_on_failure);
+                        self.symbols.leave();
+                        match inner.is_empty() {
+                            true => None,
+                            false => Some(Emittable::Nested(scope_name, inner)),
+                        }
+                    }
+                    Emittable::Segment(segment_name, location, inner) => {
+                        let prev_segment = self.segments.current_segment_name();
+                        match self.segments.try_get(&segment_name) {
+                            Some(_) => {
+                                self.segments.set_current(Some(segment_name.clone()));
+                                match inner.is_empty() {
+                                    true => {
+                                        // This segment is set without an inner scope
+                                        None
+                                    }
+                                    false => {
+                                        // We have an inner scope, so reset the old segment afterwards
+                                        let inner = self.emit_emittables(inner, error_on_failure);
+                                        self.segments.set_current(prev_segment);
+                                        match inner.is_empty() {
+                                            true => None,
+                                            false => Some(Emittable::Segment(
+                                                segment_name,
+                                                location,
+                                                inner,
+                                            )),
                                         }
                                     }
                                 }
                             }
-                        }
-                        None => {
-                            if error_on_failure {
-                                self.errors.push(
-                                    CodegenError::UnknownIdentifier(
-                                        location.clone(),
-                                        IdentifierPath::new(&[Identifier(&segment_name)]),
-                                    )
-                                    .into(),
-                                );
-                                None
-                            } else {
-                                Some(Emittable::Segment(segment_name, location, inner))
+                            None => {
+                                if error_on_failure {
+                                    self.errors.push(
+                                        CodegenError::UnknownIdentifier(
+                                            location.clone(),
+                                            IdentifierPath::new(&[Identifier(&segment_name)]),
+                                        )
+                                        .into(),
+                                    );
+                                    None
+                                } else {
+                                    Some(Emittable::Segment(segment_name, location, inner))
+                                }
                             }
                         }
                     }
-                }
-                Emittable::If(ty, expr, if_, else_) => {
-                    let expr_result = match ty {
-                        IfType::IfExpr => self
-                            .evaluate(&expr, error_on_failure)
-                            .map(|r| r.map(|r| r > 0)),
-                        IfType::IfDef(positive) => {
-                            let exists = self.evaluate(&expr, false);
-                            match (exists, positive) {
-                                (Ok(Some(_)), true) => Ok(Some(true)),
-                                (Ok(None), true) => Ok(Some(false)),
-                                (Ok(Some(_)), false) => Ok(Some(false)),
-                                (Ok(None), false) => Ok(Some(true)),
-                                (Err(e), _) => Err(e),
-                            }
-                        }
-                    };
-                    match expr_result {
-                        Ok(Some(res)) => {
-                            if res {
-                                let inner = self.emit_emittables(if_, error_on_failure);
-                                match inner.is_empty() {
-                                    true => None,
-                                    false => Some(Emittable::If(ty, expr, inner, vec![])),
-                                }
-                            } else {
-                                let inner = self.emit_emittables(else_, error_on_failure);
-                                match inner.is_empty() {
-                                    true => None,
-                                    false => Some(Emittable::If(ty, expr, vec![], inner)),
+                    Emittable::If(ty, expr, if_, else_) => {
+                        let expr_result = match ty {
+                            IfType::IfExpr => self
+                                .evaluate(&expr, pc, error_on_failure)
+                                .map(|r| r.map(|r| r > 0)),
+                            IfType::IfDef(positive) => {
+                                let exists = self.evaluate(&expr, pc, false);
+                                match (exists, positive) {
+                                    (Ok(Some(_)), true) => Ok(Some(true)),
+                                    (Ok(None), true) => Ok(Some(false)),
+                                    (Ok(Some(_)), false) => Ok(Some(false)),
+                                    (Ok(None), false) => Ok(Some(true)),
+                                    (Err(e), _) => Err(e),
                                 }
                             }
+                        };
+                        match expr_result {
+                            Ok(Some(res)) => {
+                                log::trace!("result of ifdef: {}", res);
+                                if res {
+                                    let inner = self.emit_emittables(if_, error_on_failure);
+                                    match inner.is_empty() {
+                                        true => None,
+                                        false => Some(Emittable::If(ty, expr, inner, vec![])),
+                                    }
+                                } else {
+                                    let inner = self.emit_emittables(else_, error_on_failure);
+                                    match inner.is_empty() {
+                                        true => None,
+                                        false => Some(Emittable::If(ty, expr, vec![], inner)),
+                                    }
+                                }
+                            }
+                            _ => {
+                                log::trace!("result of ifdef undetermined");
+                                Some(Emittable::If(ty, expr, if_, else_))
+                            }
                         }
-                        _ => Some(Emittable::If(ty, expr, if_, else_)),
                     }
                 }
             })
-            .collect()
+            .collect();
+
+        for r in &result {
+            log::trace!("Result: {:?}", r);
+        }
+
+        result
     }
 
     fn require_cfg_value<'a, T>(
@@ -863,13 +880,24 @@ pub fn codegen<'a>(
     // After the first pass, all labels should be present so any error will be a failure then
     let mut error_on_failure = false;
     while !to_process.is_empty() {
+        log::trace!("==== PASS ================");
         let to_process_len = to_process.len();
         let next_to_process = ctx.emit_emittables(to_process, error_on_failure);
 
         // If we haven't processed any tokens then the tokens that are left could not be resolved.
         if next_to_process.len() == to_process_len {
-            // Emit an error on the next resolve failure
-            error_on_failure = true;
+            // Is it because there are no segments yet? Then create a default one.
+            if ctx.segments.is_empty() {
+                log::trace!("Creating default segment");
+                let options = SegmentOptions {
+                    initial_pc: ctx.options.pc,
+                    ..Default::default()
+                };
+                ctx.segments.insert("default", Segment::new(options));
+            } else {
+                // Emit an error on the next resolve failure
+                error_on_failure = true;
+            }
         }
         to_process = next_to_process;
     }

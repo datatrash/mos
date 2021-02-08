@@ -80,14 +80,17 @@ impl SymbolTable {
         location: &Location<'a>,
         allow_same_type_redefinition: bool,
     ) -> CodegenResult<'a, ()> {
-        if let Some(existing) = self.lookup_in_current_scope(&[id.0]) {
-            let is_same_type = std::mem::discriminant(existing) == std::mem::discriminant(&value);
+        if !allow_same_type_redefinition {
+            if let Some(existing) = self.lookup_in_current_scope(&[id.0]) {
+                let is_same_type =
+                    std::mem::discriminant(existing) == std::mem::discriminant(&value);
 
-            if !allow_same_type_redefinition || !is_same_type {
-                return Err(CodegenError::SymbolRedefinition(
-                    location.clone(),
-                    id.clone(),
-                ));
+                if !is_same_type || existing != &value {
+                    return Err(CodegenError::SymbolRedefinition(
+                        location.clone(),
+                        id.clone(),
+                    ));
+                }
             }
         }
 
