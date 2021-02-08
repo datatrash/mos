@@ -15,6 +15,7 @@ pub(super) enum Symbol {
     Label(ProgramCounter),
     Variable(i64),
     Constant(i64),
+    System(i64),
 }
 
 pub struct SymbolTable {
@@ -57,7 +58,10 @@ impl Scope {
             .join(LINE_ENDING);
 
         for (child, scope) in &self.children {
-            symbols = vec![symbols, scope.to_symbols(ty, Some(child))].join(LINE_ENDING);
+            let child_symbols = scope.to_symbols(ty, Some(child));
+            if !child_symbols.is_empty() {
+                symbols = vec![symbols, child_symbols].join(LINE_ENDING);
+            }
         }
 
         symbols
@@ -73,31 +77,57 @@ impl SymbolTable {
         }
     }
 
-    pub(super) fn register<'a>(
+    pub(super) fn register<'a, ID: Into<&'a str>>(
         &mut self,
-        id: &Identifier<'a>,
+        id: ID,
         value: Symbol,
-        location: &Location<'a>,
+        location: Option<&Location<'a>>,
         allow_same_type_redefinition: bool,
     ) -> CodegenResult<'a, ()> {
+        let id = id.into();
         if !allow_same_type_redefinition {
-            if let Some(existing) = self.lookup_in_current_scope(&[id.0]) {
+            if let Some(existing) = self.lookup_in_current_scope(&[id]) {
                 let is_same_type =
                     std::mem::discriminant(existing) == std::mem::discriminant(&value);
 
                 if !is_same_type || existing != &value {
                     return Err(CodegenError::SymbolRedefinition(
-                        location.clone(),
-                        id.clone(),
+                        location.unwrap().clone(),
+                        Identifier(id),
                     ));
                 }
             }
         }
 
-        self.current_scope_mut()
-            .table
-            .insert(id.0.to_string(), value);
+        self.current_scope_mut().table.insert(id.to_string(), value);
         Ok(())
+    }
+
+    pub(super) fn register_path<'a>(
+        &mut self,
+        path: &[&'a str],
+        value: Symbol,
+        location: Option<&Location<'a>>,
+        allow_same_type_redefinition: bool,
+    ) -> CodegenResult<'a, ()> {
+        if let Some((last, parents)) = path.split_last() {
+            for parent in parents {
+                if !self.current_scope().children.contains_key(*parent) {
+                    self.add_child_scope(Some(parent));
+                }
+                self.enter(parent);
+            }
+
+            let result = self.register(*last, value, location, allow_same_type_redefinition);
+
+            for _ in parents {
+                self.leave();
+            }
+
+            result
+        } else {
+            panic!("Empty path");
+        }
     }
 
     // Look up a symbol in the symbol table.
@@ -159,8 +189,7 @@ impl SymbolTable {
         self.lookup(path)
             .map(|s| match s {
                 Symbol::Label(pc) => Some(pc.as_i64()),
-                Symbol::Variable(val) => Some(*val),
-                Symbol::Constant(val) => Some(*val),
+                Symbol::Variable(val) | Symbol::Constant(val) | Symbol::System(val) => Some(*val),
             })
             .flatten()
     }
@@ -237,7 +266,6 @@ mod tests {
     use crate::commands::SymbolType;
     use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
     use crate::core::codegen::CodegenResult;
-    use crate::core::parser::{Identifier, Location};
 
     type TestResult = CodegenResult<'static, ()>;
 
@@ -288,6 +316,16 @@ mod tests {
     }
 
     #[test]
+    fn can_register_nested_symbols() -> TestResult {
+        let mut st = SymbolTable::new();
+        st.register_path(&["a", "a"], Symbol::Constant(1), None, false)?;
+        st.register_path(&["a", "b"], Symbol::Constant(2), None, false)?;
+        assert_eq!(st.lookup(&["a", "a"]), Some(&Symbol::Constant(1)));
+        assert_eq!(st.lookup(&["a", "b"]), Some(&Symbol::Constant(2)));
+        Ok(())
+    }
+
+    #[test]
     fn can_have_multiple_unnamed_scopes_side_by_side() -> TestResult {
         let mut st = SymbolTable::new();
         reg(&mut st, "A", 1)?;
@@ -307,20 +345,10 @@ mod tests {
     #[test]
     fn can_generate_vice_symbols() -> TestResult {
         let mut st = SymbolTable::new();
-        st.register(
-            &Identifier("foo"),
-            Symbol::Label(0x1234.into()),
-            &loc(),
-            false,
-        )?;
+        st.register("foo", Symbol::Label(0x1234.into()), None, false)?;
         let scope = st.add_child_scope(Some("scope"));
         st.enter(&scope);
-        st.register(
-            &Identifier("foo"),
-            Symbol::Label(0xCAFE.into()),
-            &loc(),
-            false,
-        )?;
+        st.register("foo", Symbol::Label(0xCAFE.into()), None, false)?;
         assert_eq!(
             st.to_symbols(SymbolType::Vice).lines().collect_vec(),
             &["al C:1234 .foo", "al C:CAFE .scope.foo"]
@@ -329,14 +357,6 @@ mod tests {
     }
 
     fn reg(st: &mut SymbolTable, id: &'static str, val: i64) -> TestResult {
-        st.register(&Identifier(id), Symbol::Constant(val), &loc(), false)
-    }
-
-    fn loc() -> Location<'static> {
-        Location {
-            path: "test.asm",
-            line: 1,
-            column: 1,
-        }
+        st.register(id, Symbol::Constant(val), None, false)
     }
 }

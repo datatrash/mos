@@ -47,6 +47,18 @@ impl<'a> Display for Identifier<'a> {
     }
 }
 
+impl<'a> From<Identifier<'a>> for &'a str {
+    fn from(id: Identifier<'a>) -> Self {
+        id.0
+    }
+}
+
+impl<'a> From<&Identifier<'a>> for &'a str {
+    fn from(id: &Identifier<'a>) -> Self {
+        id.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location<'a> {
     pub path: &'a str,

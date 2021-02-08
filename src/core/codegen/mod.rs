@@ -97,6 +97,10 @@ impl SegmentMap {
             .unwrap_or_else(|| panic!("Segment not found: {}", name))
     }
 
+    fn keys(&self) -> Vec<&String> {
+        self.segments.keys().collect()
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }
@@ -527,7 +531,7 @@ impl CodegenContext {
             Token::Label(id) => match pc {
                 Some(pc) => self
                     .symbols
-                    .register(id, Symbol::Label(pc), location, false)
+                    .register(id, Symbol::Label(pc), Some(location), false)
                     .map(|_| (false, vec![])),
                 None => Ok((true, vec![])),
             },
@@ -537,11 +541,11 @@ impl CodegenContext {
                 let result = match ty {
                     VariableType::Variable => {
                         self.symbols
-                            .register(id, Symbol::Variable(eval), location, true)
+                            .register(id, Symbol::Variable(eval), Some(location), true)
                     }
                     VariableType::Constant => {
                         self.symbols
-                            .register(id, Symbol::Constant(eval), location, false)
+                            .register(id, Symbol::Constant(eval), Some(location), false)
                     }
                 };
 
@@ -860,6 +864,28 @@ impl CodegenContext {
             })
             .collect_vec()
     }
+
+    fn after_pass(&mut self) -> CodegenResult<()> {
+        // For every segment that we have, register appropriate symbols
+        for segment_name in self.segments.keys() {
+            let segment = self.segments.get(&segment_name);
+            if let Some(range) = segment.range() {
+                self.symbols.register_path(
+                    &["segments", segment_name, "start"],
+                    Symbol::System(range.start as i64),
+                    None,
+                    true,
+                )?;
+                self.symbols.register_path(
+                    &["segments", segment_name, "end"],
+                    Symbol::System(range.end as i64),
+                    None,
+                    true,
+                )?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn codegen<'a>(
@@ -878,7 +904,12 @@ pub fn codegen<'a>(
     // After the first pass, all labels should be present so any error will be a failure then
     let mut error_on_failure = false;
     let mut num_passes = 0;
-    while !to_process.is_empty() && num_passes < 50 {
+
+    #[cfg(test)]
+    let max_passes = 50;
+    #[cfg(not(test))]
+    let max_passes = 500;
+    while !to_process.is_empty() && num_passes < max_passes {
         log::trace!("==== PASS ================");
         let to_process_len = to_process.len();
         let next_to_process = ctx.emit_emittables(to_process, error_on_failure);
@@ -898,11 +929,14 @@ pub fn codegen<'a>(
                 error_on_failure = true;
             }
         }
+
+        ctx.after_pass()?;
+
         to_process = next_to_process;
         num_passes += 1;
     }
-    if num_passes == 50 {
-        panic!("Endless loop");
+    if num_passes == max_passes {
+        panic!("Endless loop detected");
     }
 
     if ctx.errors.is_empty() {
@@ -914,7 +948,6 @@ pub fn codegen<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::enable_default_tracing;
     use crate::parser::parse;
 
     use super::*;
@@ -1131,9 +1164,8 @@ mod tests {
         Ok(())
     }
 
-    /*#[test]
+    #[test]
     fn segments_can_depend_on_each_other() -> TestResult {
-        enable_default_tracing();
         let ctx = test_codegen(
             r"
                 .define segment { name = a start = $1000 }
@@ -1148,7 +1180,7 @@ mod tests {
         assert_eq!(ctx.segments().get("a").range(), &Some(0x1000..0x1002));
         assert_eq!(ctx.segments().get("b").range(), &Some(0x1002..0x1003));
         Ok(())
-    }*/
+    }
 
     #[test]
     fn can_use_constants() -> TestResult {
