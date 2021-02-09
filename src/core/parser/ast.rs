@@ -310,6 +310,7 @@ pub enum Token<'a> {
         Box<Located<'a, Token<'a>>>,
         Option<Box<Located<'a, Token<'a>>>>,
     ),
+    Align(Located<'a, Expression<'a>>),
     Error,
 }
 
@@ -433,6 +434,7 @@ impl<'a> CanWrapWhitespace<'a> for Token<'a> {
                 Token::Braces(inner)
             }
             Token::If(expr, if_, else_) => Token::If(expr.strip_whitespace(), sb(if_), sob(else_)),
+            Token::Align(expr) => Token::Align(expr.strip_whitespace()),
             Token::Ws(_, inner, _) => inner.data,
             _ => self,
         }
@@ -648,6 +650,9 @@ impl<'a> Display for Token<'a> {
                     None => "".to_string(),
                 };
                 write!(f, ".IF [{}] {}{}", expr.data, if_.data, else_)
+            }
+            Token::Align(expr) => {
+                write!(f, ".ALIGN [{}]", expr.data)
             }
             Token::Error => write!(f, "Error"),
         }

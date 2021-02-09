@@ -434,6 +434,15 @@ fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
+fn align(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    map(
+        preceded(tag_no_case(".align"), ws(expression)),
+        move |expr| Located::from(location.clone(), Token::Align(expr)),
+    )(input)
+}
+
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((
         braces,
@@ -446,6 +455,7 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
         data,
         segment,
         if_,
+        align,
         error,
     ))(input)
 }
@@ -736,6 +746,11 @@ mod test {
         );
         check(".if defined(foo) { nop }", ".IF [defined[foo]] { NOP }");
         check(".if !defined(foo) { nop }", ".IF [!defined[foo]] { NOP }");
+    }
+
+    #[test]
+    fn parse_align() {
+        check(".align 123", ".ALIGN [123]");
     }
 
     #[test]

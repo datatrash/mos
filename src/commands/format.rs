@@ -250,6 +250,14 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                 else_ = else_
             )
         }
+        Token::Align(expr) => {
+            let expr = format_expression(&expr.data, opts);
+            format!(
+                "{ind}.align {expr}",
+                ind = indent_str(indent + 1),
+                expr = expr,
+            )
+        }
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
     }
 }

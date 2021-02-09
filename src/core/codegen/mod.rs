@@ -566,6 +566,18 @@ impl CodegenContext {
                     .map(|_| (false, vec![])),
                 None => Ok((true, vec![])),
             },
+            Token::Align(expr) => match self.evaluate(expr, pc, error_on_failure)? {
+                Some(align) => match pc {
+                    Some(pc) => {
+                        let padding = (align - (pc.as_i64() % align)) as usize;
+                        let mut v = Vec::new();
+                        v.resize(padding, 0u8);
+                        Ok((false, v))
+                    }
+                    None => Ok((true, vec![])),
+                },
+                None => Ok((true, vec![])),
+            },
             Token::VariableDefinition(id, val, ty) => {
                 let eval = self.evaluate(val, pc, error_on_failure)?.unwrap();
 
@@ -1285,6 +1297,16 @@ mod tests {
         assert_eq!(
             ctx.segments().current().range_data(),
             vec![0xa9, 0xff, 0xa9, 0x00]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn align() -> TestResult {
+        let ctx = test_codegen("nop\n.align foo\nnop\n.var foo = 3")?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xea, 0, 0, 0xea]
         );
         Ok(())
     }
