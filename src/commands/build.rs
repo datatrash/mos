@@ -117,7 +117,8 @@ impl<'a> SegmentMerger<'a> {
 
     fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) -> MosResult<()> {
         if let Some(seg_range) = segment.range() {
-            let target = match self.targets.entry(self.default_target.clone()) {
+            let target_name = &self.default_target;
+            let target = match self.targets.entry(target_name.clone()) {
                 Entry::Occupied(o) => o.into_mut(),
                 Entry::Vacant(e) => e.insert(MergingSegment {
                     data: [0; 65536],
@@ -132,12 +133,16 @@ impl<'a> SegmentMerger<'a> {
                     .into_iter()
                     .map(|(name, segment)| {
                         let sr = segment.range().as_ref().unwrap();
-                        format!("'{}' (${:04x} - ${:04x})", name, sr.start, sr.end)
+                        format!("segment '{}' (${:04x} - ${:04x})", name, sr.start, sr.end)
                     })
                     .join(", ");
                 self.errors.push(MosError::BuildError(format!(
-                    "segment '{}' (${:04x} - ${:04x}) overlaps with other segment(s): {}",
-                    segment_name, seg_range.start, seg_range.end, overlaps
+                    "in target '{}': segment '{}' (${:04x} - ${:04x}) overlaps with: {}",
+                    target_name.to_string_lossy(),
+                    segment_name,
+                    seg_range.start,
+                    seg_range.end,
+                    overlaps
                 )));
             }
 
