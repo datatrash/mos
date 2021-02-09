@@ -327,8 +327,8 @@ mod tests {
 
     #[test]
     fn format_valid_code() -> Result<()> {
-        let source = include_str!("../../test/cli/format/valid-unformatted.asm");
-        let expected = include_str!("../../test/cli/format/valid-formatted.asm");
+        let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
+        let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
         let ast = parse("test.asm", source)?;
         assert_eq!(format(&ast, &Options::default()), expected);
         Ok(())

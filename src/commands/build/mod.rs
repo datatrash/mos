@@ -1,8 +1,4 @@
-use std::cmp::{max, min};
-use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::ops::Range;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -10,7 +6,8 @@ use clap::{App, Arg, ArgMatches};
 use fs_err as fs;
 use itertools::Itertools;
 
-use crate::core::codegen::{codegen, CodegenOptions, Segment};
+use crate::core::codegen::{codegen, CodegenOptions};
+use crate::core::io::SegmentMerger;
 use crate::core::parser;
 use crate::errors::{MosError, MosResult};
 
@@ -54,105 +51,6 @@ pub fn build_app() -> App<'static> {
         )
 }
 
-struct MergingSegment<'a> {
-    data: [u8; 65536],
-    range: Option<Range<u16>>,
-    sources: HashMap<&'a str, &'a Segment>,
-}
-
-impl<'a> MergingSegment<'a> {
-    fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) {
-        let sr = segment.range().as_ref().unwrap();
-        let sr_usize = self.range_usize(sr);
-        self.sources.insert(segment_name, segment);
-        self.data[sr_usize].copy_from_slice(segment.range_data());
-
-        match &mut self.range {
-            Some(br) => {
-                br.start = min(br.start, sr.start);
-                br.end = max(br.end, sr.end);
-            }
-            None => self.range = Some(sr.start..sr.end),
-        }
-    }
-
-    fn range_usize(&self, range: &Range<u16>) -> Range<usize> {
-        Range {
-            start: range.start as usize,
-            end: range.end as usize,
-        }
-    }
-
-    fn overlaps_with_sources(&self, new_range: &Range<u16>) -> Vec<(&&'a str, &&'a Segment)> {
-        self.sources
-            .iter()
-            .filter_map(|(segment_name, segment)| {
-                let sr = segment.range().as_ref().unwrap();
-                if (new_range.start >= sr.start && new_range.start <= sr.end)
-                    || (new_range.end >= sr.start && new_range.end <= sr.end)
-                {
-                    Some((segment_name, segment))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-}
-
-struct SegmentMerger<'a> {
-    targets: HashMap<PathBuf, MergingSegment<'a>>,
-    default_target: PathBuf,
-    errors: Vec<MosError>,
-}
-
-impl<'a> SegmentMerger<'a> {
-    fn new(default_target: PathBuf) -> Self {
-        Self {
-            targets: HashMap::new(),
-            default_target,
-            errors: vec![],
-        }
-    }
-
-    fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) -> MosResult<()> {
-        if let Some(seg_range) = segment.range() {
-            let target_name = &self.default_target;
-            let target = match self.targets.entry(target_name.clone()) {
-                Entry::Occupied(o) => o.into_mut(),
-                Entry::Vacant(e) => e.insert(MergingSegment {
-                    data: [0; 65536],
-                    range: None,
-                    sources: HashMap::new(),
-                }),
-            };
-
-            let overlaps = target.overlaps_with_sources(&seg_range);
-            if !overlaps.is_empty() {
-                let overlaps = overlaps
-                    .into_iter()
-                    .map(|(name, segment)| {
-                        let sr = segment.range().as_ref().unwrap();
-                        format!("segment '{}' (${:04x} - ${:04x})", name, sr.start, sr.end)
-                    })
-                    .join(", ");
-                self.errors.push(MosError::BuildError(format!(
-                    "in target '{}': segment '{}' (${:04x} - ${:04x}) overlaps with: {}",
-                    target_name.to_string_lossy(),
-                    segment_name,
-                    seg_range.start,
-                    seg_range.end,
-                    overlaps
-                )));
-            }
-
-            target.merge(segment_name, segment);
-        }
-
-        Ok(())
-    }
-}
-
 pub fn build_command(args: &ArgMatches) -> MosResult<()> {
     let input_names = args.values_of("input").unwrap().collect_vec();
     let target_dir = PathBuf::from(args.value_of("target-dir").unwrap());
@@ -189,15 +87,15 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             }
         }
 
-        if !merger.errors.is_empty() {
-            return Err(MosError::Multiple(merger.errors));
+        if merger.has_errors() {
+            return Err(MosError::Multiple(merger.errors()));
         }
 
-        for (path, m) in &merger.targets {
-            if let Some(range) = &m.range {
+        for (path, m) in merger.targets() {
+            if let Some(range) = &m.range() {
                 let mut out = fs::File::create(target_dir.join(path))?;
                 out.write_all(&range.start.to_le_bytes())?;
-                out.write_all(&m.data[m.range_usize(range)])?;
+                out.write_all(&m.range_data())?;
             }
         }
 
