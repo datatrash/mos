@@ -152,4 +152,26 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn build_multiple_segments() -> Result<()> {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let input = &format!("{}/test/cli/build/multiple_segments.asm", root);
+
+        let args = build_app().get_matches_from(vec![
+            "build",
+            input,
+            "--target-dir",
+            &format!("{}/target", root),
+        ]);
+        build_command(&args)?;
+
+        let out_path = &format!("{}/target/multiple_segments.prg", root);
+        let out_bytes = std::fs::read(out_path)?;
+        let prg_path = &format!("{}/test/cli/build/multiple_segments.prg", root);
+        let prg_bytes = std::fs::read(prg_path)?;
+        assert_eq!(out_bytes, prg_bytes);
+
+        Ok(())
+    }
 }

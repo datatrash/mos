@@ -4,11 +4,9 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::commands::SymbolType;
-use crate::core::codegen::{CodegenError, CodegenResult};
+use crate::core::codegen::{CodegenError, CodegenResult, ProgramCounter};
 use crate::core::parser::{Identifier, Location};
 use crate::LINE_ENDING;
-
-use super::segment::ProgramCounter;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Symbol {

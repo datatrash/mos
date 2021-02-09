@@ -28,17 +28,16 @@ impl<'a> MergingSegment<'a> {
     }
 
     fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) {
-        let sr = segment.range().as_ref().unwrap();
-        let sr_usize = self.range_usize(sr);
+        let target_range = self.range_usize(&segment.target_range().unwrap());
         self.sources.insert(segment_name, segment);
-        self.data[sr_usize].copy_from_slice(segment.range_data());
+        self.data[target_range.clone()].copy_from_slice(segment.range_data());
 
         match &mut self.range {
             Some(br) => {
-                br.start = min(br.start, sr.start);
-                br.end = max(br.end, sr.end);
+                br.start = min(br.start, target_range.start as u16);
+                br.end = max(br.end, target_range.end as u16);
             }
-            None => self.range = Some(sr.start..sr.end),
+            None => self.range = Some(target_range.start as u16..target_range.end as u16),
         }
     }
 
@@ -94,7 +93,7 @@ impl<'a> SegmentMerger<'a> {
     }
 
     pub fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) -> MosResult<()> {
-        if let Some(seg_range) = segment.range() {
+        if let Some(seg_range) = segment.target_range() {
             let target_name = &self.default_target;
             let target = match self.targets.entry(target_name.clone()) {
                 Entry::Occupied(o) => o.into_mut(),

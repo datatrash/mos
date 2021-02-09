@@ -1,6 +1,6 @@
-use std::fmt::{Display, Formatter};
 use std::ops::Range;
 
+use crate::core::codegen::ProgramCounter;
 use crate::core::parser::{ConfigMap, Location};
 use crate::errors::MosError;
 
@@ -8,81 +8,6 @@ pub fn require_segment_options_fields(cfg: &ConfigMap, location: &Location) -> V
     let mut errors = cfg.require(&["name", "start"], location.clone());
     errors.extend(cfg.require_single_identifier(&["name"], location.clone()));
     errors
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct ProgramCounter(u16);
-
-impl ProgramCounter {
-    pub fn new(pc: u16) -> Self {
-        Self(pc)
-    }
-
-    pub fn to_le_bytes(&self) -> [u8; 2] {
-        self.0.to_le_bytes()
-    }
-
-    pub fn as_usize(&self) -> usize {
-        self.0 as usize
-    }
-
-    pub fn as_i64(&self) -> i64 {
-        self.0 as i64
-    }
-}
-
-impl Display for ProgramCounter {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "${:04x}", self.0)
-    }
-}
-
-impl From<usize> for ProgramCounter {
-    fn from(pc: usize) -> Self {
-        Self(pc as u16)
-    }
-}
-
-impl From<u16> for ProgramCounter {
-    fn from(pc: u16) -> Self {
-        Self(pc)
-    }
-}
-
-impl From<i32> for ProgramCounter {
-    fn from(pc: i32) -> Self {
-        Self(pc as u16)
-    }
-}
-
-impl From<i64> for ProgramCounter {
-    fn from(pc: i64) -> Self {
-        Self(pc as u16)
-    }
-}
-
-impl From<ProgramCounter> for usize {
-    fn from(pc: ProgramCounter) -> Self {
-        pc.0 as usize
-    }
-}
-
-impl From<&ProgramCounter> for usize {
-    fn from(pc: &ProgramCounter) -> Self {
-        pc.0 as usize
-    }
-}
-
-impl From<ProgramCounter> for i64 {
-    fn from(pc: ProgramCounter) -> Self {
-        pc.0 as i64
-    }
-}
-
-impl From<&ProgramCounter> for i64 {
-    fn from(pc: &ProgramCounter) -> Self {
-        pc.0 as i64
-    }
 }
 
 pub struct Segment {
@@ -95,6 +20,7 @@ pub struct Segment {
 pub struct SegmentOptions {
     pub initial_pc: ProgramCounter,
     pub write: bool,
+    pub target_pc: Option<ProgramCounter>,
 }
 
 impl Default for SegmentOptions {
@@ -102,6 +28,7 @@ impl Default for SegmentOptions {
         Self {
             initial_pc: ProgramCounter::new(0x2000u16),
             write: true,
+            target_pc: None,
         }
     }
 }
@@ -126,26 +53,26 @@ impl Segment {
 
     pub(crate) fn set(&mut self, bytes: &[u8]) -> ProgramCounter {
         if self.range.is_none() {
-            self.range = Some(self.pc.0..self.pc.0);
+            self.range = Some(self.pc.as_u16()..self.pc.as_u16());
         }
 
         let range = self.range.as_mut().unwrap();
 
-        if self.pc.0 < range.start {
-            range.start = self.pc.0;
+        if self.pc.as_u16() < range.start {
+            range.start = self.pc.as_u16();
         }
 
-        let index = self.pc.0 as usize;
+        let index = self.pc.as_usize();
         let length = bytes.len();
 
         for (offset, byte) in bytes.iter().enumerate() {
             self.data[index + offset] = *byte;
         }
 
-        self.pc.0 += length as u16;
+        self.pc += length as u16;
 
-        if self.pc.0 > range.end {
-            range.end = self.pc.0;
+        if self.pc.as_u16() > range.end {
+            range.end = self.pc.as_u16();
         }
 
         self.pc
@@ -161,6 +88,21 @@ impl Segment {
 
     pub(crate) fn range(&self) -> &Option<Range<u16>> {
         &self.range
+    }
+
+    pub(crate) fn target_range(&self) -> Option<Range<u16>> {
+        self.range
+            .as_ref()
+            .map(|range| match self.options.target_pc {
+                Some(target) => {
+                    let offset = target - self.options.initial_pc;
+                    Range {
+                        start: (range.start as i64 + offset) as u16,
+                        end: (range.end as i64 + offset) as u16,
+                    }
+                }
+                None => range.clone(),
+            })
     }
 
     pub(crate) fn range_data(&self) -> &[u8] {
@@ -188,6 +130,7 @@ mod tests {
     fn can_add_data() {
         let mut seg = Segment::new(SegmentOptions {
             initial_pc: 0xc000u16.into(),
+            target_pc: Some(0xb000u16.into()),
             ..Default::default()
         });
         let new_pc = seg.set(&[1, 2, 3]);
@@ -196,6 +139,7 @@ mod tests {
         assert_eq!(seg.data(0xc000..0xc003), &[1, 2, 3]);
         assert_eq!(seg.range_data(), &[1, 2, 3]);
         assert_eq!(seg.range(), &Some(0xc000..0xc003));
+        assert_eq!(seg.target_range(), Some(0xb000..0xb003));
 
         seg.set_current_pc(0x2000);
         let new_pc = seg.set(&[4]);
@@ -204,5 +148,6 @@ mod tests {
         assert_eq!(seg.data(0xc000..0xc003), &[1, 2, 3]);
         assert_eq!(seg.data(0x2000..0x2001), &[4]);
         assert_eq!(seg.range(), &Some(0x2000..0xc003));
+        assert_eq!(seg.target_range(), Some(0x1000..0xb003));
     }
 }

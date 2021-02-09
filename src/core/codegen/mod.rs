@@ -6,16 +6,16 @@ use std::str::FromStr;
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 
+pub use program_counter::*;
 pub use segment::*;
 pub use symbol_table::*;
 
-use crate::core::codegen::segment::{
-    require_segment_options_fields, ProgramCounter, SegmentOptions,
-};
+use crate::core::codegen::segment::{require_segment_options_fields, SegmentOptions};
 use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
 
+mod program_counter;
 mod segment;
 mod symbol_table;
 
@@ -638,21 +638,26 @@ impl CodegenContext {
         error_on_failure: bool,
         error_msg: &str,
     ) -> Option<i64> {
-        let expr = cfg.value(identifier).map(|val| val.as_expression().clone());
-        match self.evaluate(&expr, pc, error_on_failure) {
-            Ok(Some(val)) => Some(val),
-            _ => {
-                if error_on_failure {
-                    let err = CodegenError::InvalidDefinition(
-                        expr.location.clone(),
-                        Identifier(identifier),
-                        error_msg,
-                    )
-                    .into();
-                    self.errors.push(err);
+        match cfg
+            .try_value(identifier)
+            .map(|lt| lt.map(|val| val.as_expression().clone()))
+        {
+            Some(expr) => match self.evaluate(&expr, pc, error_on_failure) {
+                Ok(Some(val)) => Some(val),
+                _ => {
+                    if error_on_failure {
+                        let err = CodegenError::InvalidDefinition(
+                            expr.location.clone(),
+                            Identifier(identifier),
+                            error_msg,
+                        )
+                        .into();
+                        self.errors.push(err);
+                    }
+                    None
                 }
-                None
-            }
+            },
+            None => None,
         }
     }
 
@@ -676,6 +681,15 @@ impl CodegenContext {
                             "Could not determine start address for segment",
                         );
 
+                        let target_pc = self.evaluate_or_error(
+                            "target_address",
+                            &cfg,
+                            pc,
+                            error_on_failure,
+                            "Could not determine target address for segment",
+                        );
+                        let target_pc = target_pc.map(|pc| ProgramCounter::new(pc as u16));
+
                         match start {
                             Some(start) => {
                                 let name = cfg.value_as_identifier_path("name").single().0;
@@ -686,6 +700,7 @@ impl CodegenContext {
                                 let options = SegmentOptions {
                                     initial_pc: start.into(),
                                     write,
+                                    target_pc,
                                 };
                                 let segment = Segment::new(options);
                                 self.segments.insert(name, segment);
