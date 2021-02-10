@@ -50,7 +50,7 @@ fn get_app() -> App<'static> {
                 .about("Disables colorized output"),
         )
         .subcommand(build_app())
-        .subcommand(format_app())
+    //.subcommand(format_app())
 }
 
 fn main() {
@@ -68,7 +68,7 @@ fn main() {
 
     let result = match args.subcommand() {
         Some(("build", args)) => build_command(args),
-        Some(("format", args)) => format_command(args),
+        //Some(("format", args)) => format_command(args),
         _ => panic!("Unknown subcommand"),
     };
 
@@ -100,7 +100,7 @@ mod tests {
         }
     }
 
-    #[test]
+    /*#[test]
     fn can_invoke_format() {
         let args = get_app().get_matches_from(vec!["mos", "format", "test.asm"]);
         assert_eq!(args.subcommand_name(), Some("format"));
@@ -111,5 +111,5 @@ mod tests {
             }
             _ => panic!(),
         }
-    }
+    }*/
 }

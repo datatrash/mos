@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use nom::combinator::map;
 use nom::multi::many0;
-use nom::sequence::delimited;
 
 use crate::core::parser::*;
 
@@ -15,22 +14,21 @@ impl<'a> ConfigMap<'a> {
     pub fn new(items: Vec<Located<'a, Token<'a>>>) -> Self {
         let items = items
             .into_iter()
-            .map(|pair| {
-                let (k, v) = match pair.data {
-                    Token::ConfigPair(k, v) => (k.data, v),
+            .filter_map(|pair| {
+                let kvp = match pair.data {
+                    Token::ConfigPair(k, _eq, v) => Some((k.data, v)),
+                    Token::EolTrivia(_) => None,
                     _ => panic!(),
                 };
 
-                let k = k.as_identifier().0;
-                (k, *v)
+                kvp.map(|(k, v)| {
+                    let k = k.as_identifier().0;
+                    (k, *v)
+                })
             })
             .collect();
 
         Self { items }
-    }
-
-    pub fn keys<'b>(&'b self) -> Vec<&'b &'a str> {
-        self.items.keys().collect_vec()
     }
 
     pub fn value<'b>(&'b self, key: &'b str) -> &'b Located<Token> {
@@ -89,7 +87,7 @@ impl<'a> ConfigMap<'a> {
 
     pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath<'b> {
         match self.value(key).data.as_factor() {
-            ExpressionFactor::IdentifierValue(path, _) => path,
+            ExpressionFactor::IdentifierValue(path, _) => &path.data,
             _ => panic!(),
         }
     }
@@ -100,7 +98,7 @@ impl<'a> ConfigMap<'a> {
     ) -> Option<&'b IdentifierPath<'b>> {
         match self.try_value(key) {
             Some(lt) => match lt.data.try_as_factor() {
-                Some(ExpressionFactor::IdentifierValue(path, _)) => Some(&path),
+                Some(ExpressionFactor::IdentifierValue(path, _)) => Some(&path.data),
                 _ => None,
             },
             _ => None,
@@ -127,11 +125,14 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
     ));
 
     map(
-        tuple((ws(terminated(ws(identifier_name), char('='))), ws(value))),
-        move |(k, v)| {
+        tuple((ws(identifier_name), ws(char('=')), ws(value))),
+        move |(k, eq, v)| {
+            let k = k.flatten();
+            let eq = eq.map(|_| '=');
+            let v = v.flatten();
             Located::from(
                 location.clone(),
-                Token::ConfigPair(Box::new(k), Box::new(v)),
+                Token::ConfigPair(Box::new(k), eq, Box::new(v)),
             )
         },
     )(input)
@@ -141,70 +142,51 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map(
-        delimited(
-            terminated(char('{'), emptiness()),
-            many0(terminated(ws(kvp), emptiness())),
-            preceded(emptiness(), char('}')),
-        ),
-        move |inner| Located::from(location.clone(), Token::Config(ConfigMap::new(inner))),
+        tuple((
+            ws(char('{')),
+            located(many0(alt((kvp, end_of_line)))),
+            ws(char('}')),
+        )),
+        move |(lhs, inner, rhs)| {
+            let lhs = lhs.map(|_| '{');
+            let rhs = rhs.map(|_| '}');
+            dbg!(&inner);
+            Located::from(location.clone(), Token::Config(lhs, inner, rhs))
+        },
     )(input)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::core::parser::config_map::{config_map, ConfigMap};
-    use crate::core::parser::{
-        ExpressionFactor, Identifier, IdentifierPath, LocatedSpan, NumberType, State, Token,
-    };
+    use crate::core::parser::config_map::config_map;
+    use crate::core::parser::{LocatedSpan, State};
     use crate::errors::MosResult;
 
     #[test]
     fn parse_config_object() -> MosResult<()> {
-        let cfg = parse(
+        check(
             r"{
-            num = 123
-            path = a.b
+            num =    123
+            path =   a.b
+            nested =  {
+                nested_id   = nested_v
+            }
+        }",
+            r"{
+            num =    123
+            path =   a.b
             nested =  {
                 nested_id   = nested_v
             }
         }",
         );
-        assert_eq!(
-            cfg.value("num").data.as_factor(),
-            &ExpressionFactor::Number(123, NumberType::Dec)
-        );
-        assert_eq!(
-            cfg.value("path").data.as_factor(),
-            &ExpressionFactor::IdentifierValue(
-                IdentifierPath::new(&[Identifier("a"), Identifier("b")]),
-                None,
-            )
-        );
-
-        assert_eq!(
-            cfg.value("nested")
-                .data
-                .as_config_map()
-                .value("nested_id")
-                .data
-                .as_factor(),
-            &ExpressionFactor::IdentifierValue(
-                IdentifierPath::new(&[Identifier("nested_v")]),
-                None,
-            )
-        );
-
-        assert_eq!(cfg.try_value("foo").is_none(), true);
 
         Ok(())
     }
 
-    fn parse(source: &str) -> ConfigMap {
+    fn check(source: &str, expected: &str) {
         let input = LocatedSpan::new_extra(source, State::new("test.asm"));
         let (_, expr) = config_map(input).expect("parser cannot fail");
-        match expr.data {
-            Token::Config(cfg) => cfg,
-            _ => panic!(),
-        }
+        assert_eq!(format!("{}", expr), expected.to_string());
     }
 }

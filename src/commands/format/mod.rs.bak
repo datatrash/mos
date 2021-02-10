@@ -45,16 +45,16 @@ impl Default for Options {
 
 fn format_expression_factor(token: &ExpressionFactor, opts: &Options) -> String {
     match token {
-        ExpressionFactor::Number(val, ty) => match ty {
+        ExpressionFactor::Number(ty, val) => match &ty.data {
             NumberType::Hex => {
-                if *val < 256 {
-                    format!("${:02x}", val)
+                if val.data < 256 {
+                    format!("${:02x}", val.data)
                 } else {
-                    format!("${:04x}", val)
+                    format!("${:04x}", val.data)
                 }
             }
-            NumberType::Bin => format!("%{:b}", val),
-            NumberType::Dec => format!("{}", val),
+            NumberType::Bin => format!("%{:b}", val.data),
+            NumberType::Dec => format!("{}", val.data),
         },
         ExpressionFactor::IdentifierValue(path, modifier) => {
             let modifier = match modifier {
@@ -67,26 +67,33 @@ fn format_expression_factor(token: &ExpressionFactor, opts: &Options) -> String 
             let args = args.iter().map(|arg| format!("{}", arg.data)).join(", ");
             format!("{}({})", name.data, args)
         }
-        ExpressionFactor::ExprParens(inner) => {
-            format!("[{}]", format_expression(&inner.data, opts))
+        ExpressionFactor::ExprParens(lhs, inner, rhs) => {
+            format!("{}{}{}", lhs, format_expression(&inner.data, opts), rhs)
         }
-        ExpressionFactor::CurrentProgramCounter => "*".to_string(),
-        ExpressionFactor::Ws(lhs, inner, rhs) => {
-            format_ws(lhs, format_expression_factor(&inner.data, opts), rhs, opts)
-        }
+        ExpressionFactor::CurrentProgramCounter(star) => format!("{}", star),
     }
 }
 
 fn format_expression(token: &Expression, opts: &Options) -> String {
     match token {
-        Expression::Factor(factor, flags) => {
-            format!("{}{}", flags, format_expression_factor(&factor.data, opts))
+        Expression::Factor(factor, _flags, not, neg) => {
+            let not = match not {
+                Some(n) => format!("{}", n),
+                None => "".to_string(),
+            };
+            let neg = match neg {
+                Some(n) => format!("{}", n),
+                None => "".to_string(),
+            };
+            format!(
+                "{}{}{}",
+                not,
+                neg,
+                format_expression_factor(&factor.data, opts)
+            )
         }
         Expression::BinaryExpression(expr) => {
             format!("{} {} {}", expr.lhs.data, expr.op, expr.rhs.data)
-        }
-        Expression::Ws(lhs, inner, rhs) => {
-            format_ws(lhs, format_expression(&inner.data, opts), rhs, opts)
         }
     }
 }
@@ -101,7 +108,7 @@ fn indent_str(indent: usize) -> String {
 
 fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
     match token {
-        Token::Braces(tokens) => {
+        Token::Braces(lhs, tokens, rhs) => {
             let mut tokens = tokens
                 .iter()
                 .map(|t| format_token(&t.data, opts, indent + 1))
@@ -115,8 +122,10 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
 
             // Scopes always end with an extra newline
             format!(
-                "{ind}{{{t}{ind}}}{le}",
+                "{ind}{lhs}{t}{ind}{rhs}{le}",
                 ind = indent_str(indent + 1),
+                lhs = lhs,
+                rhs = rhs,
                 t = tokens,
                 le = LINE_ENDING
             )
@@ -129,7 +138,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                 .map(|o| format_token(&o.data, opts, indent));
 
             let operand = operand.unwrap_or_else(|| "".to_string());
-            let extra_newline = match &i.mnemonic {
+            let extra_newline = match &i.mnemonic.data {
                 Mnemonic::Rts => LINE_ENDING,
                 _ => "",
             };
@@ -147,21 +156,29 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
 
             match &o.addressing_mode {
                 AddressingMode::AbsoluteOrZP => format!("{}{}", expr, suffix),
-                AddressingMode::Immediate => expr,
+                AddressingMode::Immediate => format!("{}{}", o.left_char.as_ref().unwrap(), expr),
                 AddressingMode::Implied => expr,
-                AddressingMode::Indirect => format!("({}{})", expr, suffix),
-                AddressingMode::OuterIndirect => format!("({}){}", expr, suffix),
+                AddressingMode::Indirect => format!(
+                    "{}{}{}{}",
+                    o.left_char.as_ref().unwrap(),
+                    expr,
+                    suffix,
+                    o.right_char.as_ref().unwrap()
+                ),
+                AddressingMode::OuterIndirect => format!(
+                    "{}{}{}{}",
+                    o.left_char.as_ref().unwrap(),
+                    expr,
+                    o.right_char.as_ref().unwrap(),
+                    suffix
+                ),
             }
         }
         Token::IdentifierName(id) => {
             format!("{}", id)
         }
-        Token::VariableDefinition(id, val, ty) => {
-            let ty = match ty {
-                VariableType::Variable => ".var",
-                VariableType::Constant => ".const",
-            };
-            format!("{} {} = {}", ty, id, val.data)
+        Token::VariableDefinition(ty, id, eq, val) => {
+            format!("{}{}{}{}", ty, id, eq, val)
         }
         Token::ProgramCounterDefinition(val) => {
             let ind = indent_str(indent + 1);
@@ -173,37 +190,29 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                 .map(|t| format_expression(&t.data, opts))
                 .collect_vec()
                 .join(", ");
-            match size {
-                1 => format!("{}.byte {}", indent_str(indent + 1), expr),
-                2 => format!("{}.word {}", indent_str(indent + 1), expr),
-                4 => format!("{}.dword {}", indent_str(indent + 1), expr),
-                _ => panic!(),
-            }
-        }
-        Token::Ws(lhs, inner, rhs) => {
-            format_ws(lhs, format_token(&inner.data, opts, indent), rhs, opts)
+            format!("{}{} {}", indent_str(indent + 1), size, expr)
         }
         Token::Label(id) => format!("{}:", id.0),
-        Token::RegisterSuffix(reg) => match reg {
-            Register::X => ", x".to_string(),
-            Register::Y => ", y".to_string(),
-        },
-        Token::Definition(id, cfg) => {
+        Token::RegisterSuffix(comma, reg) => {
+            format!("{}, {}", comma.trivia_to_string(), reg.data)
+        }
+        Token::Definition(tag, id, cfg) => {
             let cfg = cfg
                 .as_ref()
                 .map(|c| format_token(&c.data, opts, 0))
                 .unwrap_or_else(|| "".to_string());
-            format!(".define {} {}", format_token(&id.data, opts, 0), cfg)
+            format!("{}{}{}", tag, format_token(&id.data, opts, 0), cfg)
         }
-        Token::Segment(id, inner) => {
+        Token::Segment(tag, id, inner) => {
             let inner = match inner {
                 Some(i) => format!(" {}", i.data),
                 None => "".to_string(),
             };
-            format!(".segment {}{}", id.data, inner)
+            format!("{}{}{}", tag, id, inner)
         }
-        Token::Config(cfg) => {
-            let mut items = cfg
+        Token::Config(_lhs, _inner, _rhs) => {
+            todo!();
+            /*let mut items = cfg
                 .keys()
                 .iter()
                 .sorted()
@@ -229,21 +238,21 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
                 ind = indent_str(indent),
                 i = items,
                 le = LINE_ENDING
-            )
+            )*/
         }
-        Token::ConfigPair(_k, _v) => unimplemented!(),
-        Token::If(expr, if_, else_) => {
+        Token::ConfigPair(_k, _eq, _v) => unimplemented!(),
+        Token::If(tag_if, expr, if_, tag_else, else_) => {
             let expr = format_expression(&expr.data, opts);
             let if_ = format_token(&if_.data, opts, indent).trim().to_string();
-            let else_ = match &else_ {
-                Some(e) => {
+            let else_ = match (&tag_else, &else_) {
+                (Some(tag_else), Some(e)) => {
                     let e = format_token(&e.data, opts, indent).trim().to_string();
-                    format!(" else {}", e)
+                    format!("{}{}", tag_else, e)
                 }
-                None => "".to_string(),
+                _ => "".to_string(),
             };
             format!(
-                "{ind}.if {expr} {if_}{else_}",
+                "{ind}{tag_if}{expr}{if_}{else_}",
                 ind = indent_str(indent + 1),
                 expr = expr,
                 if_ = if_,
@@ -259,6 +268,7 @@ fn format_token(token: &Token, opts: &Options, indent: usize) -> String {
             )
         }
         Token::Error => panic!("Formatting should not happen on ASTs containing errors"),
+        Token::Eof => "".to_string(),
     }
 }
 
