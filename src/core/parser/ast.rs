@@ -37,6 +37,7 @@ impl<'a> State<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Comment {
     Whitespace(String),
+    NewLine,
     CStyle(String),
     CppStyle(String),
 }
@@ -534,6 +535,7 @@ impl Display for Comment {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Comment::Whitespace(str) => write!(f, "{}", str),
+            Comment::NewLine => writeln!(f),
             Comment::CStyle(str) => write!(f, "{}", str),
             Comment::CppStyle(str) => write!(f, "{}", str),
         }

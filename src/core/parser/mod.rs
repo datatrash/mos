@@ -104,11 +104,9 @@ fn c_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
     )))(input)
 }
 
-fn trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
-    let location = Location::from(&input);
-
-    map(
-        many1(alt((
+fn trivia_impl<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Comment> {
+    move |input: LocatedSpan<'a>| {
+        let (input, comment) = alt((
             map(space1, |span: LocatedSpan| {
                 Comment::Whitespace(span.fragment().to_owned().into())
             }),
@@ -118,6 +116,19 @@ fn trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
             map(cpp_comment, |span| {
                 Comment::CppStyle(span.fragment().to_owned().into())
             }),
+        ))(input)?;
+
+        Ok((input, comment))
+    }
+}
+
+fn multiline_trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
+    let location = Location::from(&input);
+
+    map(
+        many1(alt((
+            trivia_impl(),
+            map(tuple((opt(char('\r')), char('\n'))), |_| Comment::NewLine),
         ))),
         move |comments| Trivia {
             location: location.clone(),
@@ -126,19 +137,49 @@ fn trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
     )(input)
 }
 
-fn ws<'a, T, F>(mut inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<'a, T>>
+fn trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
+    let location = Location::from(&input);
+
+    map(many1(trivia_impl()), move |comments| Trivia {
+        location: location.clone(),
+        comments,
+    })(input)
+}
+
+fn ws_impl<'a, T, F>(
+    mut inner: F,
+    multiline: bool,
+) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<'a, T>>
 where
     F: FnMut(LocatedSpan<'a>) -> IResult<T>,
 {
     move |input: LocatedSpan<'a>| {
         let location = Location::from(&input);
 
-        let (input, trivia) = opt(trivia)(input)?;
+        let (input, trivia) = if multiline {
+            opt(multiline_trivia)(input)
+        } else {
+            opt(trivia)(input)
+        }?;
         let (input, data) = inner(input)?;
         let result = Located::from_trivia(location.clone(), data, trivia);
 
         Ok((input, result))
     }
+}
+
+fn multiline_ws<'a, T, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<'a, T>>
+where
+    F: FnMut(LocatedSpan<'a>) -> IResult<T>,
+{
+    ws_impl(inner, true)
+}
+
+fn ws<'a, T, F>(inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<'a, T>>
+where
+    F: FnMut(LocatedSpan<'a>) -> IResult<T>,
+{
+    ws_impl(inner, false)
 }
 
 fn located<'a, T, F>(mut inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<Located<T>>
@@ -455,7 +496,7 @@ fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map(
-        tuple((ws(char('{')), located(opt(tokens)), ws(char('}')))),
+        tuple((multiline_ws(char('{')), located(opt(tokens)), ws(char('}')))),
         move |(lhs, inner, rhs)| {
             let lhs = lhs.map(|_| '{');
             let rhs = rhs.map(|_| '}');
@@ -889,6 +930,7 @@ mod test {
     #[test]
     fn parse_if() {
         check("  .if   foo { nop }", "  .IF   foo { NOP }");
+        check("  .if   foo\n{\nnop\n}", "  .IF   foo\n{\nNOP\n}");
         check(
             "   .if   foo { nop }   else { brk }",
             "   .IF   foo { NOP }   ELSE { BRK }",
@@ -923,11 +965,13 @@ mod test {
     #[test]
     fn parse_segment_definitions() {
         check(
-            r"  .define   segment   {
+            r"  .define   segment
+            {
             name = hello
             start = 4096
             }",
-            r"  .DEFINE   segment   {
+            r"  .DEFINE   segment
+            {
             name = hello
             start = 4096
             }",

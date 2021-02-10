@@ -143,14 +143,13 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
 
     map(
         tuple((
-            ws(char('{')),
+            multiline_ws(char('{')),
             located(many0(alt((kvp, end_of_line)))),
             ws(char('}')),
         )),
         move |(lhs, inner, rhs)| {
             let lhs = lhs.map(|_| '{');
             let rhs = rhs.map(|_| '}');
-            dbg!(&inner);
             Located::from(location.clone(), Token::Config(lhs, inner, rhs))
         },
     )(input)
@@ -165,14 +164,16 @@ mod tests {
     #[test]
     fn parse_config_object() -> MosResult<()> {
         check(
-            r"{
+            r"/*   */   
+            {
             num =    123
             path =   a.b
             nested =  {
                 nested_id   = nested_v
             }
         }",
-            r"{
+            r"/*   */   
+            {
             num =    123
             path =   a.b
             nested =  {
