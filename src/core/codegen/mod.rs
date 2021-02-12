@@ -194,9 +194,9 @@ impl CodegenContext {
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<i64>> {
         match &lt.data {
-            ExpressionFactor::Number(_, n) => Ok(Some(n.data)),
+            ExpressionFactor::Number { value, .. } => Ok(Some(value.data)),
             ExpressionFactor::CurrentProgramCounter(_) => Ok(pc.map(|p| p.as_i64())),
-            ExpressionFactor::IdentifierValue(path, modifier) => {
+            ExpressionFactor::IdentifierValue { path, modifier } => {
                 let symbol_value = self.symbols.value(&path.data.to_str_vec());
 
                 match (symbol_value, modifier, error_on_failure) {
@@ -212,7 +212,7 @@ impl CodegenContext {
                     )),
                 }
             }
-            ExpressionFactor::FunctionCall(name, _lhs, args, _rhs) => {
+            ExpressionFactor::FunctionCall { name, args, .. } => {
                 let mut evaluated_args = vec![];
                 for (arg, _comma) in args {
                     evaluated_args.push(self.evaluate(arg, pc, error_on_failure)?);
@@ -236,7 +236,7 @@ impl CodegenContext {
         error_on_failure: bool,
     ) -> CodegenResult<'a, Option<i64>> {
         match &lt.data {
-            Expression::Factor(factor, flags, _, _) => {
+            Expression::Factor { factor, flags, .. } => {
                 match self.evaluate_factor(factor, pc, error_on_failure) {
                     Ok(Some(mut val)) => {
                         if flags.contains(ExpressionFactorFlags::NOT) {
@@ -299,9 +299,9 @@ impl CodegenContext {
             }) => {
                 let register_suffix = operand.suffix.as_deref().map(|s| match s {
                     Located {
-                        data: Token::RegisterSuffix(_, r),
+                        data: Token::RegisterSuffix { register, .. },
                         ..
-                    } => r.data,
+                    } => register.data,
                     _ => panic!(),
                 });
 
@@ -558,14 +558,14 @@ impl CodegenContext {
         error_on_failure: bool,
     ) -> CodegenResult<'b, (bool, Vec<u8>)> {
         let (emit_later, bytes) = match token {
-            Token::Label(id, _colon) => match pc {
+            Token::Label { id, .. } => match pc {
                 Some(pc) => self
                     .symbols
                     .register(&id.data, Symbol::Label(pc), Some(&id.location), false)
                     .map(|_| (false, vec![])),
                 None => Ok((true, vec![])),
             },
-            Token::Align(_tag, expr) => match self.evaluate(expr, pc, error_on_failure)? {
+            Token::Align { value, .. } => match self.evaluate(value, pc, error_on_failure)? {
                 Some(align) => match pc {
                     Some(pc) => {
                         let padding = (align - (pc.as_i64() % align)) as usize;
@@ -577,8 +577,8 @@ impl CodegenContext {
                 },
                 None => Ok((true, vec![])),
             },
-            Token::VariableDefinition(ty, id, _eq, val) => {
-                let eval = self.evaluate(val, pc, error_on_failure)?.unwrap();
+            Token::VariableDefinition { ty, id, value, .. } => {
+                let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
 
                 let result = match ty.data {
                     VariableType::Variable => self.symbols.register(
@@ -597,8 +597,8 @@ impl CodegenContext {
 
                 result.map(|_| (false, vec![]))
             }
-            Token::ProgramCounterDefinition(_star, _eq, val) => {
-                let eval = self.evaluate(val, pc, error_on_failure)?.unwrap();
+            Token::ProgramCounterDefinition { value, .. } => {
+                let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
                 match self.segments.try_current_mut() {
                     Some(segment) => {
                         segment.set_current_pc(ProgramCounter::new(eval as u16));
@@ -608,9 +608,9 @@ impl CodegenContext {
                 }
             }
             Token::Instruction(i) => self.emit_instruction(i, pc, location, error_on_failure),
-            Token::Data(exprs, data_size) => {
-                let exprs = exprs.iter().map(|(expr, _comma)| expr).collect_vec();
-                self.emit_data(&exprs, data_size.data.byte_len(), pc, error_on_failure)
+            Token::Data { values, size } => {
+                let values = values.iter().map(|(expr, _comma)| expr).collect_vec();
+                self.emit_data(&values, size.data.byte_len(), pc, error_on_failure)
             }
             _ => Ok((false, vec![])),
         }?;
@@ -853,11 +853,11 @@ impl CodegenContext {
         let mut active_label = None;
         ast.into_iter()
             .filter_map(|lt| match lt.data {
-                Token::Definition(_tag, id, cfg) => {
+                Token::Definition { id, value, .. } => {
                     let definition_type = id.data.as_identifier().0;
-                    let cfg = cfg.expect("Found empty definition");
+                    let cfg = value.expect("Found empty definition");
                     let cfg_location = match &cfg.data {
-                        Token::Config(_lhs, inner, _rhs) => inner.location.clone(),
+                        Token::Config { inner, .. } => inner.location.clone(),
                         _ => panic!(),
                     };
                     let cfg = cfg.data.into_config_map();
@@ -877,18 +877,16 @@ impl CodegenContext {
                         _ => panic!("Unknown definition type: {}", id),
                     }
                 }
-                Token::Segment(_tag, id, braces) => {
+                Token::Segment { id, inner, .. } => {
                     let segment_name = id.data.as_identifier().0;
-                    let inner = braces
-                        .map(|b| b.data.into_braces())
-                        .unwrap_or_else(Vec::new);
+                    let inner = inner.map(|b| b.data.into_braces()).unwrap_or_else(Vec::new);
                     Some(Emittable::Segment(
                         segment_name.into(),
                         id.location.clone(),
                         self.generate_emittables(inner),
                     ))
                 }
-                Token::Braces(_, inner, _) => {
+                Token::Braces { inner, .. } => {
                     let scope_name = self.symbols.add_child_scope(active_label);
                     self.symbols.enter(&scope_name);
                     let e = Emittable::Nested(scope_name, self.generate_emittables(inner.data));
@@ -897,19 +895,21 @@ impl CodegenContext {
                     active_label = None;
                     Some(e)
                 }
-                Token::If(_tag_if, expr, if_, _tag_else, else_) => {
+                Token::If {
+                    value, if_, else_, ..
+                } => {
                     let if_ = self.generate_emittables(vec![*if_]);
                     let else_ = else_
                         .map(|e| self.generate_emittables(vec![*e]))
                         .unwrap_or_else(Vec::new);
-                    Some(Emittable::If(expr, if_, else_))
+                    Some(Emittable::If(value, if_, else_))
                 }
                 _ => {
                     // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
                     // used to set the name of the braces' scope. If it is not followed by braces we unset the active label to make sure
                     // any nested scope doesn't accidentally get the labels' name.
                     match &lt.data {
-                        Token::Label(id, _colon) => active_label = Some(id.data.0),
+                        Token::Label { id, .. } => active_label = Some(id.data.0),
                         _ => active_label = None,
                     };
                     Some(Emittable::Single(None, lt.location, lt.data))

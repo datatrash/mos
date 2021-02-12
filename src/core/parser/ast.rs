@@ -140,8 +140,8 @@ pub enum AddressingMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operand<'a> {
     pub expr: Box<Located<'a, Expression<'a>>>,
-    pub left_paren: Option<Located<'a, char>>,
-    pub right_paren: Option<Located<'a, char>>,
+    pub lchar: Option<Located<'a, char>>,
+    pub rchar: Option<Located<'a, char>>,
     pub addressing_mode: AddressingMode,
     pub suffix: Option<Box<Located<'a, Token<'a>>>>,
 }
@@ -256,24 +256,26 @@ pub struct BinaryExpression<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionFactor<'a> {
-    /// The full identifier path, which modifier it uses
-    IdentifierValue(
-        Located<'a, IdentifierPath<'a>>,
-        Option<Located<'a, AddressModifier>>,
-    ),
-    Number(Located<'a, NumberType>, Located<'a, i64>),
-    ExprParens(
-        Located<'a, char>,
-        Box<Located<'a, Expression<'a>>>,
-        Located<'a, char>,
-    ),
     CurrentProgramCounter(Located<'a, char>),
-    FunctionCall(
-        Box<Located<'a, Token<'a>>>,
-        Located<'a, char>,
-        Vec<ArgItem<'a>>,
-        Located<'a, char>,
-    ),
+    ExprParens {
+        lparen: Located<'a, char>,
+        inner: Box<Located<'a, Expression<'a>>>,
+        rparen: Located<'a, char>,
+    },
+    FunctionCall {
+        name: Box<Located<'a, Token<'a>>>,
+        lparen: Located<'a, char>,
+        args: Vec<ArgItem<'a>>,
+        rparen: Located<'a, char>,
+    },
+    IdentifierValue {
+        path: Located<'a, IdentifierPath<'a>>,
+        modifier: Option<Located<'a, AddressModifier>>,
+    },
+    Number {
+        ty: Located<'a, NumberType>,
+        value: Located<'a, i64>,
+    },
 }
 
 bitflags::bitflags! {
@@ -301,26 +303,26 @@ impl Display for ExpressionFactorFlags {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<'a> {
-    Factor(
-        Located<'a, ExpressionFactor<'a>>,
-        ExpressionFactorFlags,
-        Option<Located<'a, char>>,
-        Option<Located<'a, char>>,
-    ),
     BinaryExpression(BinaryExpression<'a>),
+    Factor {
+        factor: Box<Located<'a, ExpressionFactor<'a>>>,
+        flags: ExpressionFactorFlags,
+        tag_not: Option<Located<'a, char>>,
+        tag_neg: Option<Located<'a, char>>,
+    },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum VariableType {
-    Variable,
     Constant,
+    Variable,
 }
 
 impl Display for VariableType {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            VariableType::Variable => write!(f, ".var"),
             VariableType::Constant => write!(f, ".const"),
+            VariableType::Variable => write!(f, ".var"),
         }
     }
 }
@@ -354,60 +356,72 @@ impl Display for DataSize {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
-    Braces(
-        Located<'a, char>,
-        Located<'a, Vec<Located<'a, Token<'a>>>>,
-        Located<'a, char>,
-    ),
-    Label(Located<'a, Identifier<'a>>, Option<Located<'a, char>>),
-    Instruction(Instruction<'a>),
-    IdentifierName(Identifier<'a>),
-    VariableDefinition(
-        Located<'a, VariableType>,
-        Located<'a, Identifier<'a>>,
-        Located<'a, char>,
-        Box<Located<'a, Expression<'a>>>,
-    ),
-    ProgramCounterDefinition(
-        Located<'a, char>,
-        Located<'a, char>,
-        Located<'a, Expression<'a>>,
-    ),
-    Operand(Operand<'a>),
-    RegisterSuffix(Located<'a, char>, Located<'a, Register>),
-    Data(Vec<ArgItem<'a>>, Located<'a, DataSize>),
-    Expression(Expression<'a>),
-    Definition(
-        Located<'a, &'a str>,
-        Box<Located<'a, Token<'a>>>,
-        Option<Box<Located<'a, Token<'a>>>>,
-    ),
-    Config(
-        Located<'a, char>,
-        Located<'a, Vec<Located<'a, Token<'a>>>>,
-        Located<'a, char>,
-    ),
-    ConfigPair(
-        Box<Located<'a, Token<'a>>>,
-        Located<'a, char>,
-        Box<Located<'a, Token<'a>>>,
-    ),
-    Segment(
-        Located<'a, &'a str>,
-        Box<Located<'a, Token<'a>>>,
-        Option<Box<Located<'a, Token<'a>>>>,
-    ),
-    If(
-        Located<'a, &'a str>,
-        Located<'a, Expression<'a>>,
-        Box<Located<'a, Token<'a>>>,
-        Option<Located<'a, &'a str>>,
-        Option<Box<Located<'a, Token<'a>>>>,
-    ),
-    Align(Located<'a, &'a str>, Located<'a, Expression<'a>>),
-    Error,
+    Align {
+        tag: Located<'a, &'a str>,
+        value: Located<'a, Expression<'a>>,
+    },
+    Braces {
+        lparen: Located<'a, char>,
+        inner: Located<'a, Vec<Located<'a, Token<'a>>>>,
+        rparen: Located<'a, char>,
+    },
+    Config {
+        lparen: Located<'a, char>,
+        inner: Located<'a, Vec<Located<'a, Token<'a>>>>,
+        rparen: Located<'a, char>,
+    },
+    ConfigPair {
+        key: Box<Located<'a, Token<'a>>>,
+        eq: Located<'a, char>,
+        value: Box<Located<'a, Token<'a>>>,
+    },
+    Data {
+        values: Vec<ArgItem<'a>>,
+        size: Located<'a, DataSize>,
+    },
+    Definition {
+        tag: Located<'a, &'a str>,
+        id: Box<Located<'a, Token<'a>>>,
+        value: Option<Box<Located<'a, Token<'a>>>>,
+    },
     EolTrivia(Located<'a, char>),
     Eof,
+    Error,
+    Expression(Expression<'a>),
+    IdentifierName(Identifier<'a>),
+    If {
+        tag_if: Located<'a, &'a str>,
+        value: Located<'a, Expression<'a>>,
+        if_: Box<Located<'a, Token<'a>>>,
+        tag_else: Option<Located<'a, &'a str>>,
+        else_: Option<Box<Located<'a, Token<'a>>>>,
+    },
+    Instruction(Instruction<'a>),
+    Label {
+        id: Located<'a, Identifier<'a>>,
+        colon: Option<Located<'a, char>>,
+    },
+    Operand(Operand<'a>),
+    ProgramCounterDefinition {
+        star: Located<'a, char>,
+        eq: Located<'a, char>,
+        value: Located<'a, Expression<'a>>,
+    },
+    RegisterSuffix {
+        comma: Located<'a, char>,
+        register: Located<'a, Register>,
+    },
+    Segment {
+        tag: Located<'a, &'a str>,
+        id: Box<Located<'a, Token<'a>>>,
+        inner: Option<Box<Located<'a, Token<'a>>>>,
+    },
+    VariableDefinition {
+        ty: Located<'a, VariableType>,
+        id: Located<'a, Identifier<'a>>,
+        eq: Located<'a, char>,
+        value: Box<Located<'a, Expression<'a>>>,
+    },
 }
 
 impl<'a> Token<'a> {
@@ -427,14 +441,14 @@ impl<'a> Token<'a> {
 
     pub(crate) fn as_factor(&self) -> &ExpressionFactor<'a> {
         match self {
-            Token::Expression(Expression::Factor(expr, _, _, _)) => &expr.data,
+            Token::Expression(Expression::Factor { factor, .. }) => &factor.data,
             _ => panic!(),
         }
     }
 
     pub(crate) fn try_as_factor(&self) -> Option<&ExpressionFactor<'a>> {
         match self {
-            Token::Expression(Expression::Factor(expr, _, _, _)) => Some(&expr.data),
+            Token::Expression(Expression::Factor { factor, .. }) => Some(&factor.data),
             _ => None,
         }
     }
@@ -448,14 +462,14 @@ impl<'a> Token<'a> {
 
     pub(crate) fn into_config_map(self) -> ConfigMap<'a> {
         match self {
-            Token::Config(_, kvp, _) => ConfigMap::new(kvp.data),
+            Token::Config { inner, .. } => ConfigMap::new(inner.data),
             _ => panic!(),
         }
     }
 
     pub(crate) fn into_braces(self) -> Vec<Located<'a, Token<'a>>> {
         match self {
-            Token::Braces(_, inner, _) => inner.data,
+            Token::Braces { inner, .. } => inner.data,
             _ => panic!(),
         }
     }
@@ -546,25 +560,34 @@ impl Display for Comment {
 impl<'a> Display for ExpressionFactor<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Self::IdentifierValue(path, modifier) => {
+            Self::CurrentProgramCounter(star) => write!(f, "{}", star),
+            Self::ExprParens {
+                lparen,
+                inner,
+                rparen,
+            } => {
+                write!(f, "{}{}{}", lparen, inner, rparen)
+            }
+            Self::FunctionCall {
+                name,
+                lparen,
+                args,
+                rparen,
+            } => {
+                write!(f, "{}{}{}{}", name, lparen, format_arglist(args), rparen)
+            }
+            Self::IdentifierValue { path, modifier } => {
                 let modifier = match modifier {
                     Some(m) => m.to_string(),
                     None => "".to_string(),
                 };
                 write!(f, "{}{}", modifier, path)
             }
-            Self::Number(ty, val) => match ty.data {
-                NumberType::Hex => write!(f, "{}{:x}", ty, val),
-                NumberType::Bin => write!(f, "{}{:b}", ty, val),
-                NumberType::Dec => write!(f, "{}{}", ty, val),
+            Self::Number { ty, value } => match ty.data {
+                NumberType::Hex => write!(f, "{}{:x}", ty, value),
+                NumberType::Bin => write!(f, "{}{:b}", ty, value),
+                NumberType::Dec => write!(f, "{}{}", ty, value),
             },
-            Self::CurrentProgramCounter(star) => write!(f, "{}", star),
-            Self::FunctionCall(name, lhs, args, rhs) => {
-                write!(f, "{}{}{}{}", name, lhs, format_arglist(args), rhs)
-            }
-            Self::ExprParens(lbracket, inner, rbracket) => {
-                write!(f, "{}{}{}", lbracket, inner, rbracket)
-            }
         }
     }
 }
@@ -609,19 +632,24 @@ impl<'a, T: Display + Binary> Binary for Located<'a, T> {
 impl<'a> Display for Expression<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Self::Factor(factor, _flags, not, neg) => {
-                let not = match not {
+            Self::BinaryExpression(expr) => {
+                write!(f, "{}{}{}", expr.lhs, expr.op, expr.rhs)
+            }
+            Self::Factor {
+                factor,
+                tag_not,
+                tag_neg,
+                ..
+            } => {
+                let not = match tag_not {
                     Some(n) => format!("{}", n),
                     None => "".to_string(),
                 };
-                let neg = match neg {
+                let neg = match tag_neg {
                     Some(n) => format!("{}", n),
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", not, neg, factor)
-            }
-            Self::BinaryExpression(expr) => {
-                write!(f, "{}{}{}", expr.lhs, expr.op, expr.rhs)
             }
         }
     }
@@ -630,21 +658,73 @@ impl<'a> Display for Expression<'a> {
 impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Token::Braces(lhs, tokens, rhs) | Token::Config(lhs, tokens, rhs) => {
-                let tokens = tokens
+            Token::Align { tag, value } => {
+                write!(f, "{}{}", format!("{}", tag).to_uppercase(), value)
+            }
+            Token::Braces {
+                lparen: left_paren,
+                inner,
+                rparen: right_paren,
+            }
+            | Token::Config {
+                lparen: left_paren,
+                inner,
+                rparen: right_paren,
+            } => {
+                let inner = inner
                     .data
                     .iter()
                     .map(|t| format!("{}", t))
                     .collect_vec()
                     .join("");
-                write!(f, "{}{}{}", lhs, tokens, rhs)
+                write!(f, "{}{}{}", left_paren, inner, right_paren)
             }
-            Token::Label(id, colon) => {
-                let colon = match colon {
-                    Some(c) => format!("{}", c),
-                    None => "".to_string(),
+            Token::ConfigPair { key, eq, value } => {
+                write!(f, "{}{}{}", key, eq, value)
+            }
+            Token::Data { values, size } => {
+                write!(
+                    f,
+                    "{}{}",
+                    format!("{}", size).to_uppercase(),
+                    format_arglist(values)
+                )
+            }
+            Token::Definition { tag, id, value } => {
+                let value = value
+                    .as_ref()
+                    .map(|c| format!("{}", c))
+                    .unwrap_or_else(|| "".to_string());
+                write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, value)
+            }
+            Token::Eof => Ok(()),
+            Token::EolTrivia(triv) => {
+                write!(f, "{}", triv)
+            }
+            Token::Error => write!(f, "Error"),
+            Token::Expression(e) => write!(f, "{}", e),
+            Token::IdentifierName(id) => {
+                write!(f, "{}", id.0)
+            }
+            Token::If {
+                tag_if,
+                value,
+                if_,
+                tag_else,
+                else_,
+            } => {
+                let else_ = match (tag_else, else_) {
+                    (Some(tag), Some(e)) => format!("{}{}", format!("{}", tag).to_uppercase(), e),
+                    _ => "".to_string(),
                 };
-                write!(f, "{}{}", id, colon)
+                write!(
+                    f,
+                    "{}{}{}{}",
+                    format!("{}", tag_if).to_uppercase(),
+                    value,
+                    if_,
+                    else_
+                )
             }
             Token::Instruction(i) => match &i.operand {
                 Some(o) => {
@@ -652,16 +732,13 @@ impl<'a> Display for Token<'a> {
                 }
                 None => write!(f, "{}", i.mnemonic),
             },
-            Token::IdentifierName(id) => {
-                write!(f, "{}", id.0)
+            Token::Label { id, colon } => {
+                let colon = match colon {
+                    Some(c) => format!("{}", c),
+                    None => "".to_string(),
+                };
+                write!(f, "{}{}", id, colon)
             }
-            Token::VariableDefinition(ty, id, eq, val) => {
-                write!(f, "{}{}{}{}", format!("{}", ty).to_uppercase(), id, eq, val)
-            }
-            Token::ProgramCounterDefinition(star, eq, val) => {
-                write!(f, "{}{}{}", star, eq, val)
-            }
-            Token::Expression(e) => write!(f, "{}", e),
             Token::Operand(o) => {
                 let suffix = match &o.suffix {
                     Some(s) => format!("{}", s),
@@ -673,16 +750,16 @@ impl<'a> Display for Token<'a> {
                         write!(f, "{}{}", o.expr, suffix)
                     }
                     AddressingMode::Immediate => {
-                        write!(f, "{}{}", o.left_paren.as_ref().unwrap(), o.expr)
+                        write!(f, "{}{}", o.lchar.as_ref().unwrap(), o.expr)
                     }
                     AddressingMode::Implied => write!(f, ""),
                     AddressingMode::OuterIndirect => {
                         write!(
                             f,
                             "{}{}{}{}",
-                            o.left_paren.as_ref().unwrap(),
+                            o.lchar.as_ref().unwrap(),
                             o.expr,
-                            o.right_paren.as_ref().unwrap(),
+                            o.rchar.as_ref().unwrap(),
                             suffix
                         )
                     }
@@ -690,64 +767,37 @@ impl<'a> Display for Token<'a> {
                         write!(
                             f,
                             "{}{}{}{}",
-                            o.left_paren.as_ref().unwrap(),
+                            o.lchar.as_ref().unwrap(),
                             o.expr,
                             suffix,
-                            o.right_paren.as_ref().unwrap()
+                            o.rchar.as_ref().unwrap()
                         )
                     }
                 }
             }
-            Token::RegisterSuffix(comma, reg) => {
-                write!(f, "{}{}", comma, format!("{}", reg).to_uppercase())
+            Token::ProgramCounterDefinition { star, eq, value } => {
+                write!(f, "{}{}{}", star, eq, value)
             }
-            Token::Data(args, sz) => {
-                write!(
-                    f,
-                    "{}{}",
-                    format!("{}", sz).to_uppercase(),
-                    format_arglist(args)
-                )
+            Token::RegisterSuffix { comma, register } => {
+                write!(f, "{}{}", comma, format!("{}", register).to_uppercase())
             }
-            Token::Definition(tag, id, cfg) => {
-                let cfg = cfg
-                    .as_ref()
-                    .map(|c| format!("{}", c))
-                    .unwrap_or_else(|| "".to_string());
-                write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, cfg)
-            }
-            Token::Segment(tag, id, inner) => {
+            Token::Segment { tag, id, inner } => {
                 let inner = match inner {
                     Some(i) => format!("{}", i),
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, inner)
             }
-            Token::ConfigPair(k, eq, v) => {
-                write!(f, "{}{}{}", k, eq, v)
-            }
-            Token::If(tag_if, expr, if_, tag_else, else_) => {
-                let else_ = match (tag_else, else_) {
-                    (Some(tag), Some(e)) => format!("{}{}", format!("{}", tag).to_uppercase(), e),
-                    _ => "".to_string(),
-                };
+            Token::VariableDefinition { ty, id, eq, value } => {
                 write!(
                     f,
                     "{}{}{}{}",
-                    format!("{}", tag_if).to_uppercase(),
-                    expr,
-                    if_,
-                    else_
+                    format!("{}", ty).to_uppercase(),
+                    id,
+                    eq,
+                    value
                 )
             }
-            Token::Align(tag, expr) => {
-                write!(f, "{}{}", format!("{}", tag).to_uppercase(), expr)
-            }
-            Token::Error => write!(f, "Error"),
-            Token::EolTrivia(triv) => {
-                write!(f, "{}", triv)
-            }
-            Token::Eof => Ok(()),
         }
     }
 }

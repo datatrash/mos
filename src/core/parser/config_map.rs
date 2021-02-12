@@ -16,7 +16,7 @@ impl<'a> ConfigMap<'a> {
             .into_iter()
             .filter_map(|pair| {
                 let kvp = match pair.data {
-                    Token::ConfigPair(k, _eq, v) => Some((k.data, v)),
+                    Token::ConfigPair { key, value, .. } => Some((key.data, value)),
                     Token::EolTrivia(_) => None,
                     _ => panic!(),
                 };
@@ -87,7 +87,7 @@ impl<'a> ConfigMap<'a> {
 
     pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath<'b> {
         match self.value(key).data.as_factor() {
-            ExpressionFactor::IdentifierValue(path, _) => &path.data,
+            ExpressionFactor::IdentifierValue { path, .. } => &path.data,
             _ => panic!(),
         }
     }
@@ -98,7 +98,7 @@ impl<'a> ConfigMap<'a> {
     ) -> Option<&'b IdentifierPath<'b>> {
         match self.try_value(key) {
             Some(lt) => match lt.data.try_as_factor() {
-                Some(ExpressionFactor::IdentifierValue(path, _)) => Some(&path.data),
+                Some(ExpressionFactor::IdentifierValue { path, .. }) => Some(&path.data),
                 _ => None,
             },
             _ => None,
@@ -126,10 +126,10 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
 
     map_once(
         tuple((ws(identifier_name), ws(char('=')), ws(value))),
-        move |(k, eq, v)| {
-            let k = k.flatten();
-            let v = v.flatten();
-            Located::from(location, Token::ConfigPair(Box::new(k), eq, Box::new(v)))
+        move |(key, eq, value)| {
+            let key = Box::new(key.flatten());
+            let value = Box::new(value.flatten());
+            Located::from(location, Token::ConfigPair { key, eq, value })
         },
     )(input)
 }
@@ -143,7 +143,16 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
             located(many0(alt((kvp, end_of_line)))),
             ws(char('}')),
         )),
-        move |(lhs, inner, rhs)| Located::from(location, Token::Config(lhs, inner, rhs)),
+        move |(lparen, inner, rparen)| {
+            Located::from(
+                location,
+                Token::Config {
+                    lparen,
+                    inner,
+                    rparen,
+                },
+            )
+        },
     )(input)
 }
 
