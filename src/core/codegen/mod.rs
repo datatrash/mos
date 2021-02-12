@@ -941,6 +941,7 @@ impl CodegenContext {
     }
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn is_defined(args: Vec<Option<i64>>) -> CodegenResult<'static, Option<i64>> {
     // We should have 1 argument and that argument should be set to Some
     let r = match args.first() {

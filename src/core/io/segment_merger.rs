@@ -48,6 +48,7 @@ impl<'a> MergingSegment<'a> {
         }
     }
 
+    #[allow(clippy::suspicious_operation_groupings)]
     fn overlaps_with_sources(&self, new_range: &Range<u16>) -> Vec<(&&'a str, &&'a Segment)> {
         self.sources
             .iter()
