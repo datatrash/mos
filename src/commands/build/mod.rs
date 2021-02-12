@@ -66,11 +66,11 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             input_path.file_stem().unwrap().to_string_lossy()
         ));
 
-        let mut file = fs::File::open(input_path)?;
+        let mut file = fs::File::open(&input_path)?;
         let mut source = String::new();
         file.read_to_string(&mut source)?;
 
-        let ast = parser::parse(input_name, source.as_str())?;
+        let ast = parser::parse(&input_path, source.as_str())?;
 
         let generated_code = codegen(
             ast,

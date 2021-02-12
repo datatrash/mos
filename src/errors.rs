@@ -47,7 +47,11 @@ impl MosError {
                 };
                 format!(
                     "{}:{}:{}: {} {}",
-                    location.path, location.line, location.column, err, message
+                    location.path.to_string_lossy(),
+                    location.line,
+                    location.column,
+                    err,
+                    message
                 )
             }
             MosError::Io(err) => format!("{}", err),

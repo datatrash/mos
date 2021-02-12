@@ -1010,6 +1010,8 @@ pub fn codegen<'a>(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::parser::parse;
 
     use super::*;
@@ -1472,7 +1474,7 @@ mod tests {
     fn cannot_perform_too_far_branch_calculations() -> TestResult {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
         let src = format!("foo: {}bne foo", many_nops);
-        let ast = parse("test.asm", &src)?;
+        let ast = parse(&Path::new("test.asm"), &src)?;
         let result = codegen(ast, CodegenOptions::default());
         assert_eq!(
             format!("{}", result.err().unwrap()),
@@ -1645,7 +1647,7 @@ mod tests {
     }
 
     fn test_codegen(code: &'static str) -> MosResult<CodegenContext> {
-        let ast = parse("test.asm", &code)?;
+        let ast = parse(&Path::new("test.asm"), &code)?;
         codegen(ast, CodegenOptions::default())
     }
 }

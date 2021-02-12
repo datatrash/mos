@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::fmt::{Binary, Display, Formatter, LowerHex};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use itertools::Itertools;
@@ -15,14 +16,14 @@ pub type ArgItem<'a> = (Located<'a, Expression<'a>>, Option<Located<'a, char>>);
 
 #[derive(Clone, Debug)]
 pub struct State<'a> {
-    pub filename: &'a str,
+    pub path: &'a Path,
     pub errors: Rc<RefCell<Vec<ParseError<'a>>>>,
 }
 
 impl<'a> State<'a> {
-    pub fn new(filename: &'a str) -> Self {
+    pub fn new(path: &'a Path) -> Self {
         Self {
-            filename,
+            path,
             errors: Rc::new(RefCell::new(Vec::new())),
         }
     }
@@ -65,14 +66,14 @@ impl<'a> From<&Identifier<'a>> for &'a str {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location<'a> {
-    pub path: &'a str,
+    pub path: &'a Path,
     pub line: u32,
     pub column: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedLocation {
-    pub path: String,
+    pub path: PathBuf,
     pub line: u32,
     pub column: u32,
 }
@@ -80,7 +81,7 @@ pub struct OwnedLocation {
 impl<'a> From<Location<'a>> for OwnedLocation {
     fn from(l: Location<'a>) -> Self {
         Self {
-            path: String::from(l.path),
+            path: l.path.to_path_buf(),
             line: l.line,
             column: l.column,
         }
@@ -90,7 +91,7 @@ impl<'a> From<Location<'a>> for OwnedLocation {
 impl<'a> From<&'a Location<'a>> for OwnedLocation {
     fn from(l: &'a Location<'a>) -> Self {
         Self {
-            path: String::from(l.path),
+            path: l.path.to_path_buf(),
             line: l.line,
             column: l.column,
         }
@@ -100,7 +101,7 @@ impl<'a> From<&'a Location<'a>> for OwnedLocation {
 impl<'a> From<&LocatedSpan<'a>> for Location<'a> {
     fn from(span: &LocatedSpan<'a>) -> Self {
         Self {
-            path: span.extra.filename,
+            path: span.extra.path,
             line: span.location_line(),
             column: span.get_column() as u32,
         }

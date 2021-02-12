@@ -158,6 +158,8 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::core::parser::config_map::config_map;
     use crate::core::parser::{LocatedSpan, State};
     use crate::errors::MosResult;
@@ -187,7 +189,7 @@ mod tests {
     }
 
     fn check(source: &str, expected: &str) {
-        let input = LocatedSpan::new_extra(source, State::new("test.asm"));
+        let input = LocatedSpan::new_extra(source, State::new(&Path::new("test.asm")));
         let (_, expr) = config_map(input).expect("parser cannot fail");
         assert_eq!(format!("{}", expr), expected.to_string());
     }

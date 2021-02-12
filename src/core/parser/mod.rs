@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::rc::Rc;
 
 use itertools::Itertools;
@@ -856,7 +857,7 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
-pub fn parse<'a>(filename: &'a str, source: &'a str) -> MosResult<Vec<Located<'a, Token<'a>>>> {
+pub fn parse<'a>(filename: &'a Path, source: &'a str) -> MosResult<Vec<Located<'a, Token<'a>>>> {
     let state = State::new(filename);
     let errors = state.errors.clone();
     let input = LocatedSpan::new_extra(source, state);
@@ -1055,7 +1056,7 @@ mod test {
     }
 
     fn check(src: &str, expected: &str) {
-        let expr = match parse("test.asm", src) {
+        let expr = match parse(&Path::new("test.asm"), src) {
             Ok(expr) => expr,
             Err(e) => panic!("Errors: {:?}", e),
         };
@@ -1067,7 +1068,7 @@ mod test {
         src: &'a str,
         parser: F,
     ) -> O {
-        let state = State::new("test.asm");
+        let state = State::new(&Path::new("test.asm"));
         let input = LocatedSpan::new_extra(src, state);
         let result = parser(input);
         if result.is_err() {
