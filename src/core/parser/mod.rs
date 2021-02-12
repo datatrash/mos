@@ -48,6 +48,24 @@ impl<'a> From<ParseError<'a>> for MosError {
     }
 }
 
+fn value<'a, T: Clone>(value: T) -> impl FnMut(LocatedSpan<'a>) -> IResult<T> {
+    move |input| Ok((input, value.clone()))
+}
+
+pub fn map_once<I, O1, O2, E, F, G>(
+    mut first: F,
+    second: G,
+) -> impl FnOnce(I) -> nom::IResult<I, O2, E>
+where
+    F: nom::Parser<I, O1, E>,
+    G: FnOnce(O1) -> O2,
+{
+    move |input: I| {
+        let (input, o1) = first.parse(input)?;
+        Ok((input, second(o1)))
+    }
+}
+
 fn expect<'a, F, E, T>(
     mut parser: F,
     error_msg: E,
@@ -125,23 +143,20 @@ fn trivia_impl<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Comment> {
 fn multiline_trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         many1(alt((
             trivia_impl(),
             map(tuple((opt(char('\r')), char('\n'))), |_| Comment::NewLine),
         ))),
-        move |comments| Trivia {
-            location: location.clone(),
-            comments,
-        },
+        move |comments| Trivia { location, comments },
     )(input)
 }
 
 fn trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
     let location = Location::from(&input);
 
-    map(many1(trivia_impl()), move |comments| Trivia {
-        location: location.clone(),
+    map_once(many1(trivia_impl()), move |comments| Trivia {
+        location,
         comments,
     })(input)
 }
@@ -162,7 +177,7 @@ where
             opt(trivia)(input)
         }?;
         let (input, data) = inner(input)?;
-        let result = Located::from_trivia(location.clone(), data, trivia);
+        let result = Located::from_trivia(location, data, trivia);
 
         Ok((input, result))
     }
@@ -189,21 +204,21 @@ where
     move |input: LocatedSpan<'a>| {
         let location = Location::from(&input);
         let (input, inner) = inner(input)?;
-        Ok((input, Located::from(location.clone(), inner)))
+        Ok((input, Located::from(location, inner)))
     }
 }
 
 fn identifier_name(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         recognize(pair(
             alt((alpha1, tag("_"))),
             many0(alt((alphanumeric1, tag("_")))),
         )),
         move |id: LocatedSpan| {
             let id = Identifier(id.fragment());
-            Located::from(location.clone(), Token::IdentifierName(id))
+            Located::from(location, Token::IdentifierName(id))
         },
     )(input)
 }
@@ -224,7 +239,7 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
         ws(separated_list1(char('.'), identifier_name)),
     ));
 
-    map(id, move |(modifier, identifier_path)| {
+    map_once(id, move |(modifier, identifier_path)| {
         let identifier_path = identifier_path.map(|ids| {
             let location = ids.first().unwrap().location.clone();
             let path = ids
@@ -236,7 +251,7 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
         let modifier = modifier.map(|m| m.flatten());
 
         Located::from(
-            location.clone(),
+            location,
             ExpressionFactor::IdentifierValue(identifier_path.flatten(), modifier),
         )
     })(input)
@@ -249,12 +264,11 @@ fn register_suffix<'a>(
 ) -> IResult<'a, Located<'a, Token<'a>>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((ws(char(',')), ws(tag_no_case(reg)))),
         move |(comma, reg)| {
-            let comma = comma.map(|_| ',');
             let reg = reg.map(|_r| map_to);
-            Located::from(location.clone(), Token::RegisterSuffix(comma, reg))
+            Located::from(location, Token::RegisterSuffix(comma, reg))
         },
     )(input)
 }
@@ -277,8 +291,8 @@ fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
             loc_imm.clone(),
             Token::Operand(Operand {
                 expr: Box::new(expr),
-                left_char,
-                right_char: None,
+                left_paren: left_char,
+                right_paren: None,
                 addressing_mode: AddressingMode::Immediate,
                 suffix: None,
             }),
@@ -295,8 +309,8 @@ fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
                 loc_abs.clone(),
                 Token::Operand(Operand {
                     expr: Box::new(expr),
-                    left_char: None,
-                    right_char: None,
+                    left_paren: None,
+                    right_paren: None,
                     addressing_mode: AddressingMode::AbsoluteOrZP,
                     suffix: suffix.map(Box::new),
                 }),
@@ -312,15 +326,13 @@ fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
             ws(char(')')),
             optional_suffix(),
         )),
-        move |(lbrace, expr, rbrace, suffix)| {
-            let left_char = Some(lbrace.map_into(|_| '('));
-            let right_char = Some(rbrace.map_into(|_| ')'));
+        move |(left_paren, expr, right_paren, suffix)| {
             Located::from(
                 loc_ind.clone(),
                 Token::Operand(Operand {
                     expr: Box::new(expr.flatten()),
-                    left_char,
-                    right_char,
+                    left_paren: Some(left_paren),
+                    right_paren: Some(right_paren),
                     addressing_mode: AddressingMode::OuterIndirect,
                     suffix: suffix.map(Box::new),
                 }),
@@ -336,15 +348,13 @@ fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
             optional_suffix(),
             ws(char(')')),
         )),
-        move |(lbrace, expr, suffix, rbrace)| {
-            let left_char = Some(lbrace.map_into(|_| '('));
-            let right_char = Some(rbrace.map_into(|_| ')'));
+        move |(left_paren, expr, suffix, right_paren)| {
             Located::from(
                 loc_outer_ind.clone(),
                 Token::Operand(Operand {
                     expr: Box::new(expr.flatten()),
-                    left_char,
-                    right_char,
+                    left_paren: Some(left_paren),
+                    right_paren: Some(right_paren),
                     addressing_mode: AddressingMode::Indirect,
                     suffix: suffix.map(Box::new),
                 }),
@@ -360,12 +370,12 @@ fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
 
     let instruction = tuple((ws(mnemonic), opt(operand)));
 
-    map(instruction, move |(mnemonic, operand)| {
+    map_once(instruction, move |(mnemonic, operand)| {
         let instruction = Instruction {
             mnemonic,
             operand: operand.map(Box::new),
         };
-        Located::from(location.clone(), Token::Instruction(instruction))
+        Located::from(location, Token::Instruction(instruction))
     })(input)
 }
 
@@ -388,14 +398,14 @@ fn error(input: LocatedSpan) -> IResult<Located<Token>> {
 fn label(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             ws(identifier_name),
             expect(ws(char(':')), "labels should end with ':'"),
         )),
         move |(id, colon)| {
             let id = id.flatten().map_into(|i| i.into_identifier());
-            Located::from(location.clone(), Token::Label(id, colon))
+            Located::from(location, Token::Label(id, colon))
         },
     )(input)
 }
@@ -403,7 +413,7 @@ fn label(input: LocatedSpan) -> IResult<Located<Token>> {
 fn data(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             alt((
                 map(ws(tag_no_case(".byte")), |t| t.map(|_| DataSize::Byte)),
@@ -412,9 +422,7 @@ fn data(input: LocatedSpan) -> IResult<Located<Token>> {
             )),
             expect(arg_list, "expected expression"),
         )),
-        move |(sz, args)| {
-            Located::from(location.clone(), Token::Data(args.unwrap_or_default(), sz))
-        },
+        move |(sz, args)| Located::from(location, Token::Data(args.unwrap_or_default(), sz)),
     )(input)
 }
 
@@ -425,7 +433,7 @@ fn varconst<'a, 'b>(
 ) -> IResult<'a, Located<'a, Token<'a>>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             ws(tag_no_case(tag)),
             ws(identifier_name),
@@ -435,9 +443,8 @@ fn varconst<'a, 'b>(
         move |(tag, id, eq, expr)| {
             let tag = tag.map(|_| ty);
             let id = id.flatten().map_into(|id| id.into_identifier());
-            let eq = eq.map(|_| '=');
             Located::from(
-                location.clone(),
+                location,
                 Token::VariableDefinition(tag, id, eq, Box::new(expr)),
             )
         },
@@ -455,15 +462,12 @@ fn const_definition(input: LocatedSpan) -> IResult<Located<Token>> {
 fn pc_definition(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((ws(char('*')), ws(char('=')), ws(expression))),
         move |(star, eq, expr)| {
-            let star = star.map(|_| '*');
-            let eq = eq.map(|_| '=');
-            let expr = expr.flatten();
             Located::from(
-                location.clone(),
-                Token::ProgramCounterDefinition(star, eq, expr),
+                location,
+                Token::ProgramCounterDefinition(star, eq, expr.flatten()),
             )
         },
     )(input)
@@ -472,7 +476,7 @@ fn pc_definition(input: LocatedSpan) -> IResult<Located<Token>> {
 fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             ws(tag_no_case(".define")),
             ws(identifier_name),
@@ -482,11 +486,10 @@ fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
             ),
         )),
         move |(tag, id, cfg)| {
-            let tag = tag.map(|_| ".define");
             let id = id.flatten();
             Located::from(
-                location.clone(),
-                Token::Definition(tag, Box::new(id), cfg.map(Box::new)),
+                location,
+                Token::Definition(tag.map_into(|_| ".define"), Box::new(id), cfg.map(Box::new)),
             )
         },
     )(input)
@@ -495,13 +498,11 @@ fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
 fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((multiline_ws(char('{')), located(opt(tokens)), ws(char('}')))),
         move |(lhs, inner, rhs)| {
-            let lhs = lhs.map(|_| '{');
-            let rhs = rhs.map(|_| '}');
             let inner = inner.map_into(|vec| vec.unwrap_or_else(Vec::new));
-            Located::from(location.clone(), Token::Braces(lhs, inner, rhs))
+            Located::from(location, Token::Braces(lhs, inner, rhs))
         },
     )(input)
 }
@@ -509,16 +510,18 @@ fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
 fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             ws(tag_no_case(".segment")),
             ws(identifier_name),
             opt(map(braces, Box::new)),
         )),
         move |(tag, id, inner)| {
-            let tag = tag.map(|_| ".segment");
             let id = id.flatten();
-            Located::from(location.clone(), Token::Segment(tag, Box::new(id), inner))
+            Located::from(
+                location.clone(),
+                Token::Segment(tag.map_into(|_| ".segment"), Box::new(id), inner),
+            )
         },
     )(input)
 }
@@ -526,7 +529,7 @@ fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
 fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             ws(tag_no_case(".if")),
             expression,
@@ -534,13 +537,13 @@ fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
             opt(tuple((ws(tag_no_case("else")), braces))),
         )),
         move |(tag_if, expr, if_, else_)| {
-            let tag_if = tag_if.map(|_| ".if");
+            let tag_if = tag_if.map_into(|_| ".if");
             let (tag_else, else_) = match else_ {
-                Some((tag_else, else_)) => (Some(tag_else.map(|_| "else")), Some(else_)),
+                Some((tag_else, else_)) => (Some(tag_else.map_into(|_| "else")), Some(else_)),
                 None => (None, None),
             };
             Located::from(
-                location.clone(),
+                location,
                 Token::If(tag_if, expr, Box::new(if_), tag_else, else_.map(Box::new)),
             )
         },
@@ -550,12 +553,12 @@ fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
 fn align(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((ws(tag_no_case(".align")), ws(expression))),
         move |(tag, expr)| {
-            let tag = tag.map(|_| ".align");
+            let tag = tag.map_into(|_| ".align");
             let expr = expr.flatten();
-            Located::from(location.clone(), Token::Align(tag, expr))
+            Located::from(location, Token::Align(tag, expr))
         },
     )(input)
 }
@@ -584,9 +587,9 @@ fn statement_or_error(input: LocatedSpan) -> IResult<Located<Token>> {
 fn end_of_line(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(ws(tuple((opt(char('\r')), char('\n')))), move |triv| {
+    map_once(ws(tuple((opt(char('\r')), char('\n')))), move |triv| {
         let triv = triv.map(|_| '\n');
-        Located::from(location.clone(), Token::EolTrivia(triv))
+        Located::from(location, Token::EolTrivia(triv))
     })(input)
 }
 
@@ -613,13 +616,10 @@ fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
 fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
-    let hex_location = location.clone();
-    let bin_location = location.clone();
-    let dec_location = location;
-    alt((
-        map(
+    map(
+        alt((
             tuple((
-                ws(char('$')),
+                map(ws(char('$')), |ty| ty.map_into(|_| NumberType::Hex)),
                 ws(map(recognize(many1(hex_digit1)), |n| {
                     let location = Location::from(&n);
                     Located::from(
@@ -628,60 +628,37 @@ fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                     )
                 })),
             )),
-            move |(ty, number)| {
-                let ty = ty.map_into(|_| NumberType::Hex);
-                Located::from(
-                    hex_location.clone(),
-                    ExpressionFactor::Number(ty, number.flatten()),
-                )
-            },
-        ),
-        map(
             tuple((
-                ws(char('%')),
+                map(ws(char('%')), |ty| ty.map_into(|_| NumberType::Bin)),
                 ws(map(recognize(many1(is_a("01"))), |n| {
                     let location = Location::from(&n);
                     Located::from(location, i64::from_str_radix(n.fragment(), 2).ok().unwrap())
                 })),
             )),
-            move |(ty, number)| {
-                let ty = ty.map_into(|_| NumberType::Bin);
-                Located::from(
-                    bin_location.clone(),
-                    ExpressionFactor::Number(ty, number.flatten()),
-                )
-            },
-        ),
-        map(
-            ws(map(recognize(many1(is_a("0123456789"))), |n| {
-                let location = Location::from(&n);
-                Located::from(
-                    location,
-                    i64::from_str_radix(n.fragment(), 10).ok().unwrap(),
-                )
-            })),
-            move |number| {
-                let ty = Located::from(dec_location.clone(), NumberType::Dec);
-                Located::from(
-                    dec_location.clone(),
-                    ExpressionFactor::Number(ty, number.flatten()),
-                )
-            },
-        ),
-    ))(input)
+            tuple((
+                value(Located::from(location, NumberType::Dec)),
+                ws(map(recognize(many1(is_a("0123456789"))), |n| {
+                    let location = Location::from(&n);
+                    Located::from(
+                        location,
+                        i64::from_str_radix(n.fragment(), 10).ok().unwrap(),
+                    )
+                })),
+            )),
+        )),
+        |(ty, number)| number.map_into(move |number| ExpressionFactor::Number(ty, number)),
+    )(input)
 }
 
 fn expression_parens(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((ws(char('[')), ws(expression), ws(char(']')))),
         move |(lhs, expr, rhs)| {
-            let lhs = lhs.map(|_| '[');
             let expr = expr.flatten();
-            let rhs = rhs.map(|_| ']');
             Located::from(
-                location.clone(),
+                location,
                 ExpressionFactor::ExprParens(lhs, Box::new(expr), rhs),
             )
         },
@@ -691,12 +668,8 @@ fn expression_parens(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
 fn current_pc(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
-    map(ws(char('*')), move |star| {
-        let star = star.map_into(|_| '*');
-        Located::from(
-            location.clone(),
-            ExpressionFactor::CurrentProgramCounter(star),
-        )
+    map_once(ws(char('*')), move |star| {
+        Located::from(location, ExpressionFactor::CurrentProgramCounter(star))
     })(input)
 }
 
@@ -722,7 +695,7 @@ fn arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem>> {
 fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             ws(identifier_name),
             ws(char('(')),
@@ -731,9 +704,7 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
         )),
         move |(fn_name, lhs, fn_args, rhs)| {
             let fn_name = fn_name.flatten();
-            let lhs = lhs.map(|_| '(');
             let fn_args = fn_args.unwrap_or_else(Vec::new);
-            let rhs = rhs.map(|_| ')');
             Located::from(
                 location.clone(),
                 ExpressionFactor::FunctionCall(Box::new(fn_name), lhs, fn_args, rhs),
@@ -745,7 +716,7 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             opt(ws(char('!'))),
             opt(ws(char('-'))),
@@ -765,9 +736,7 @@ fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
             if neg.is_some() {
                 flags.set(ExpressionFactorFlags::NEG, true);
             }
-            let not = not.map(|n| n.map_into(|_| '!'));
-            let neg = neg.map(|n| n.map_into(|_| '-'));
-            Located::from(location.clone(), Expression::Factor(f, flags, not, neg))
+            Located::from(location, Expression::Factor(f, flags, not, neg))
         },
     )(input)
 }

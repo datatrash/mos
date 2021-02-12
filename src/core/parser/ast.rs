@@ -140,8 +140,8 @@ pub enum AddressingMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operand<'a> {
     pub expr: Box<Located<'a, Expression<'a>>>,
-    pub left_char: Option<Located<'a, char>>,
-    pub right_char: Option<Located<'a, char>>,
+    pub left_paren: Option<Located<'a, char>>,
+    pub right_paren: Option<Located<'a, char>>,
     pub addressing_mode: AddressingMode,
     pub suffix: Option<Box<Located<'a, Token<'a>>>>,
 }
@@ -195,6 +195,7 @@ impl<'a> IdentifierPath<'a> {
     }
 
     pub fn single(&self) -> &Identifier {
+        assert_eq!(self.len(), 1);
         self.0.first().unwrap()
     }
 }
@@ -499,8 +500,8 @@ impl<'a, T> Located<'a, T> {
         )
     }
 
-    pub fn map_into<U, F: Fn(T) -> U>(self, map_fn: F) -> Located<'a, U> {
-        Located::from_trivia(self.location.clone(), map_fn(self.data), self.trivia)
+    pub fn map_into<U, F: FnOnce(T) -> U>(self, map_fn: F) -> Located<'a, U> {
+        Located::from_trivia(self.location, map_fn(self.data), self.trivia)
     }
 
     pub fn from<L: Into<Location<'a>>>(location: L, data: T) -> Self {
@@ -672,16 +673,16 @@ impl<'a> Display for Token<'a> {
                         write!(f, "{}{}", o.expr, suffix)
                     }
                     AddressingMode::Immediate => {
-                        write!(f, "{}{}", o.left_char.as_ref().unwrap(), o.expr)
+                        write!(f, "{}{}", o.left_paren.as_ref().unwrap(), o.expr)
                     }
                     AddressingMode::Implied => write!(f, ""),
                     AddressingMode::OuterIndirect => {
                         write!(
                             f,
                             "{}{}{}{}",
-                            o.left_char.as_ref().unwrap(),
+                            o.left_paren.as_ref().unwrap(),
                             o.expr,
-                            o.right_char.as_ref().unwrap(),
+                            o.right_paren.as_ref().unwrap(),
                             suffix
                         )
                     }
@@ -689,10 +690,10 @@ impl<'a> Display for Token<'a> {
                         write!(
                             f,
                             "{}{}{}{}",
-                            o.left_char.as_ref().unwrap(),
+                            o.left_paren.as_ref().unwrap(),
                             o.expr,
                             suffix,
-                            o.right_char.as_ref().unwrap()
+                            o.right_paren.as_ref().unwrap()
                         )
                     }
                 }

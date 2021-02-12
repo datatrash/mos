@@ -124,16 +124,12 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
         }),
     ));
 
-    map(
+    map_once(
         tuple((ws(identifier_name), ws(char('=')), ws(value))),
         move |(k, eq, v)| {
             let k = k.flatten();
-            let eq = eq.map(|_| '=');
             let v = v.flatten();
-            Located::from(
-                location.clone(),
-                Token::ConfigPair(Box::new(k), eq, Box::new(v)),
-            )
+            Located::from(location, Token::ConfigPair(Box::new(k), eq, Box::new(v)))
         },
     )(input)
 }
@@ -141,17 +137,13 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
 pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         tuple((
             multiline_ws(char('{')),
             located(many0(alt((kvp, end_of_line)))),
             ws(char('}')),
         )),
-        move |(lhs, inner, rhs)| {
-            let lhs = lhs.map(|_| '{');
-            let rhs = rhs.map(|_| '}');
-            Located::from(location.clone(), Token::Config(lhs, inner, rhs))
-        },
+        move |(lhs, inner, rhs)| Located::from(location, Token::Config(lhs, inner, rhs)),
     )(input)
 }
 
