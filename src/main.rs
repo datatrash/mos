@@ -1,15 +1,24 @@
+//! MOS is a toolkit for building applications that target the MOS 6502 CPU.
+
+//#![deny(missing_docs)]
+
 use clap::{App, AppSettings, Arg};
 
 use crate::commands::*;
 use crate::core::parser;
 
+/// Contains the available CLI commands and their associated logic
 mod commands;
-mod core;
+/// Contains all main business logic
+pub mod core;
+/// Error handling
 mod errors;
 
 #[cfg(windows)]
+/// A platform-specific newline.
 pub const LINE_ENDING: &str = "\r\n";
 #[cfg(not(windows))]
+/// A platform-specific newline
 pub const LINE_ENDING: &str = "\n";
 
 #[cfg(test)]

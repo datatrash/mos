@@ -9,14 +9,22 @@ use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::ParseError;
 
+/// A span containing a fragment of the source text and the location of this fragment within the source
 pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
+
+/// A convenience wrapper around nom's own [nom::IResult] to make use of our own [LocatedSpan] type
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
-// An item in a comma-separated list
+
+/// An item in a comma-separated list
 pub type ArgItem<'a> = (Located<'a, Expression<'a>>, Option<Located<'a, char>>);
 
+/// The state of the parser
 #[derive(Clone, Debug)]
 pub struct State<'a> {
+    /// Which file are we parsing?
     pub path: &'a Path,
+
+    /// Which errors did we encounter?
     pub errors: Rc<RefCell<Vec<ParseError<'a>>>>,
 }
 
@@ -30,6 +38,7 @@ impl<'a> State<'a> {
 }
 
 impl<'a> State<'a> {
+    /// When there is an error during parsing we don't want to fail. Instead, we continue but log the error via this method
     pub fn report_error(&self, error: ParseError<'a>) {
         self.errors.borrow_mut().push(error);
     }

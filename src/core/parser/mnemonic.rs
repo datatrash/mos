@@ -1,8 +1,10 @@
-use crate::parser::{IResult, LocatedSpan};
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
 
+use crate::parser::{IResult, LocatedSpan};
+
+/// The available 6502 instructions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mnemonic {
     Adc,
@@ -69,6 +71,7 @@ macro_rules! parse_mnemonic {
     };
 }
 
+/// Tries to parse a 6502 mnemonic
 pub(super) fn mnemonic(input: LocatedSpan) -> IResult<Mnemonic> {
     alt((
         alt((
