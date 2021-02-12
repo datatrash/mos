@@ -132,17 +132,17 @@ fn c_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
 }
 
 #[doc(hidden)]
-fn trivia_impl<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Comment> {
+fn trivia_impl<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Trivia> {
     move |input: LocatedSpan<'a>| {
         let (input, comment) = alt((
             map(space1, |span: LocatedSpan| {
-                Comment::Whitespace(span.fragment().to_owned().into())
+                Trivia::Whitespace(span.fragment().to_owned().into())
             }),
             map(c_comment, |span| {
-                Comment::CStyle(span.fragment().to_owned().into())
+                Trivia::CStyle(span.fragment().to_owned().into())
             }),
             map(cpp_comment, |span| {
-                Comment::CppStyle(span.fragment().to_owned().into())
+                Trivia::CppStyle(span.fragment().to_owned().into())
             }),
         ))(input)?;
 
@@ -151,25 +151,24 @@ fn trivia_impl<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Comment> {
 }
 
 /// Tries to parse trivia, including newlines
-fn multiline_trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
+fn multiline_trivia(input: LocatedSpan) -> IResult<Box<Located<Vec<Trivia>>>> {
     let location = Location::from(&input);
 
     map_once(
         many1(alt((
             trivia_impl(),
-            map(tuple((opt(char('\r')), char('\n'))), |_| Comment::NewLine),
+            map(tuple((opt(char('\r')), char('\n'))), |_| Trivia::NewLine),
         ))),
-        move |comments| Trivia { location, comments },
+        move |comments| Box::new(Located::from(location, comments)),
     )(input)
 }
 
 /// Tries to parse trivia, without newlines
-fn trivia<'a>(input: LocatedSpan<'a>) -> IResult<Trivia<'a>> {
+fn trivia(input: LocatedSpan) -> IResult<Box<Located<Vec<Trivia>>>> {
     let location = Location::from(&input);
 
-    map_once(many1(trivia_impl()), move |comments| Trivia {
-        location,
-        comments,
+    map_once(many1(trivia_impl()), move |comments| {
+        Box::new(Located::from(location, comments))
     })(input)
 }
 
@@ -555,7 +554,11 @@ fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     map_once(
-        tuple((multiline_ws(char('{')), located(opt(tokens)), ws(char('}')))),
+        tuple((
+            multiline_ws(char('{')),
+            located(opt(many0(statement))),
+            ws(char('}')),
+        )),
         move |(lparen, inner, rparen)| {
             let inner = inner.map_into(|vec| vec.unwrap_or_else(Vec::new));
             Located::from(
@@ -679,7 +682,7 @@ fn eof(input: LocatedSpan) -> IResult<Located<Token>> {
 
 /// Parses an entire file
 fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
-    map(tuple((tokens_or_error, eof)), |(tokens, eof)| {
+    map(tuple((many1(statement_or_error), eof)), |(tokens, eof)| {
         let mut result = tokens;
         result.push(eof);
         result

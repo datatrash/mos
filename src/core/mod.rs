@@ -1,5 +1,3 @@
-use parser::ast;
-
 /// Contains everything related to transforming the [AST](parser::ast) into actual code
 pub mod codegen;
 

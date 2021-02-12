@@ -45,7 +45,7 @@ impl<'a> State<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Comment {
+pub enum Trivia {
     Whitespace(String),
     NewLine,
     CStyle(String),
@@ -202,6 +202,10 @@ impl<'a> IdentifierPath<'a> {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn single(&self) -> &Identifier {
@@ -489,7 +493,7 @@ impl<'a> Token<'a> {
 pub struct Located<'a, T> {
     pub location: Location<'a>,
     pub data: T,
-    pub trivia: Option<Trivia<'a>>,
+    pub trivia: Option<Box<Located<'a, Vec<Trivia>>>>,
 }
 
 impl<'a, T> Located<'a, Located<'a, T>> {
@@ -502,7 +506,7 @@ impl<'a, T> Located<'a, Located<'a, T>> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/*#[derive(Debug, Clone, PartialEq)]
 pub struct Trivia<'a> {
     pub location: Location<'a>,
     pub comments: Vec<Comment>,
@@ -513,7 +517,7 @@ impl<'a> Display for Trivia<'a> {
         let triv = self.comments.iter().map(|t| format!("{}", t)).join("");
         write!(f, "{}", triv)
     }
-}
+}*/
 
 impl<'a, T> Located<'a, T> {
     pub fn map<U, F: Fn(&T) -> U>(&self, map_fn: F) -> Located<'a, U> {
@@ -539,7 +543,7 @@ impl<'a, T> Located<'a, T> {
     pub fn from_trivia<L: Into<Location<'a>>>(
         location: L,
         data: T,
-        trivia: Option<Trivia<'a>>,
+        trivia: Option<Box<Located<'a, Vec<Trivia>>>>,
     ) -> Self {
         Self {
             location: location.into(),
@@ -556,13 +560,13 @@ impl Display for Mnemonic {
     }
 }
 
-impl Display for Comment {
+impl Display for Trivia {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            Comment::Whitespace(str) => write!(f, "{}", str),
-            Comment::NewLine => writeln!(f),
-            Comment::CStyle(str) => write!(f, "{}", str),
-            Comment::CppStyle(str) => write!(f, "{}", str),
+            Trivia::Whitespace(str) => write!(f, "{}", str),
+            Trivia::NewLine => writeln!(f),
+            Trivia::CStyle(str) => write!(f, "{}", str),
+            Trivia::CppStyle(str) => write!(f, "{}", str),
         }
     }
 }
@@ -614,10 +618,10 @@ fn format_arglist(args: &[ArgItem]) -> String {
         .join("")
 }
 
-fn format_trivia(trivia: &Option<Trivia>) -> String {
+fn format_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> String {
     trivia
         .as_ref()
-        .map(|t| format!("{}", t))
+        .map(|t| t.data.iter().map(|c| format!("{}", c)).join(""))
         .unwrap_or_else(|| "".to_string())
 }
 
