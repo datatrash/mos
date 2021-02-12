@@ -19,26 +19,28 @@ mod program_counter;
 mod segment;
 mod symbol_table;
 
-pub type CodegenResult<'a, T> = Result<T, CodegenError<'a>>;
+pub type CodegenResult<T> = Result<T, CodegenError>;
 
 #[derive(thiserror::Error, Debug, PartialEq)]
-pub enum CodegenError<'a> {
+pub enum CodegenError {
     #[error("unknown identifier: {1}")]
-    UnknownIdentifier(Location<'a>, IdentifierPath<'a>),
+    UnknownIdentifier(OwnedLocation, OwnedIdentifierPath),
     #[error("unknown function: {1}")]
-    UnknownFunction(Location<'a>, Identifier<'a>),
+    UnknownFunction(OwnedLocation, OwnedIdentifier),
     #[error("branch too far")]
-    BranchTooFar(Location<'a>),
+    BranchTooFar(OwnedLocation),
     #[error("cannot redefine symbol: {1}")]
-    SymbolRedefinition(Location<'a>, Identifier<'a>),
+    SymbolRedefinition(OwnedLocation, OwnedIdentifier),
     #[error("operand size mismatch")]
-    OperandSizeMismatch(Location<'a>),
+    OperandSizeMismatch(OwnedLocation),
     #[error("invalid definition: {1}: {2}")]
-    InvalidDefinition(Location<'a>, Identifier<'a>, &'a str),
+    InvalidDefinition(OwnedLocation, OwnedIdentifier, String),
+    #[error("'super' is only allowed at the start of a path: {1}")]
+    SuperNotAllowed(OwnedLocation, String),
 }
 
-impl<'a> From<CodegenError<'a>> for MosError {
-    fn from(error: CodegenError<'a>) -> Self {
+impl From<CodegenError> for MosError {
+    fn from(error: CodegenError) -> Self {
         let location = match &error {
             CodegenError::UnknownIdentifier(location, _) => location,
             CodegenError::UnknownFunction(location, _) => location,
@@ -46,9 +48,10 @@ impl<'a> From<CodegenError<'a>> for MosError {
             CodegenError::SymbolRedefinition(location, _) => location,
             CodegenError::OperandSizeMismatch(location) => location,
             CodegenError::InvalidDefinition(location, _, _) => location,
+            CodegenError::SuperNotAllowed(location, _) => location,
         };
         MosError::Codegen {
-            location: location.into(),
+            location: location.clone(),
             message: format!("{}", error),
         }
     }
@@ -139,8 +142,7 @@ impl SegmentMap {
     }
 }
 
-pub type RegisteredFunction =
-    &'static dyn Fn(Vec<Option<i64>>) -> CodegenResult<'static, Option<i64>>;
+pub type RegisteredFunction = &'static dyn Fn(Vec<Option<i64>>) -> CodegenResult<Option<i64>>;
 
 pub struct CodegenContext {
     options: CodegenOptions,
@@ -187,17 +189,17 @@ impl CodegenContext {
         self.functions.insert(name.into(), function);
     }
 
-    fn evaluate_factor<'a>(
+    fn evaluate_factor(
         &self,
-        lt: &Located<'a, ExpressionFactor<'a>>,
+        lt: &Located<ExpressionFactor>,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<'a, Option<i64>> {
+    ) -> CodegenResult<Option<i64>> {
         match &lt.data {
             ExpressionFactor::Number { value, .. } => Ok(Some(value.data)),
             ExpressionFactor::CurrentProgramCounter(_) => Ok(pc.map(|p| p.as_i64())),
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                let symbol_value = self.symbols.value(&path.data.to_str_vec());
+                let symbol_value = self.symbols.value(&lt.location, &path.data.to_str_vec())?;
 
                 match (symbol_value, modifier, error_on_failure) {
                     (Some(val), None, _) => Ok(Some(val)),
@@ -207,8 +209,8 @@ impl CodegenContext {
                     },
                     (None, _, false) => Ok(None),
                     (None, _, true) => Err(CodegenError::UnknownIdentifier(
-                        path.location.clone(),
-                        path.data.clone(),
+                        path.location.clone().into(),
+                        path.data.clone().into(),
                     )),
                 }
             }
@@ -220,8 +222,8 @@ impl CodegenContext {
                 match self.functions.get(name.data.as_identifier().0) {
                     Some(f) => f(evaluated_args),
                     None => Err(CodegenError::UnknownFunction(
-                        name.location.clone(),
-                        name.data.as_identifier().clone(),
+                        name.location.clone().into(),
+                        name.data.as_identifier().clone().into(),
                     )),
                 }
             }
@@ -229,12 +231,12 @@ impl CodegenContext {
         }
     }
 
-    fn evaluate<'a>(
+    fn evaluate(
         &self,
-        lt: &Located<'a, Expression<'a>>,
+        lt: &Located<Expression>,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<'a, Option<i64>> {
+    ) -> CodegenResult<Option<i64>> {
         match &lt.data {
             Expression::Factor { factor, flags, .. } => {
                 match self.evaluate_factor(factor, pc, error_on_failure) {
@@ -285,13 +287,13 @@ impl CodegenContext {
         }
     }
 
-    fn evaluate_operand<'a, 'b>(
+    fn evaluate_operand<'a>(
         &self,
-        i: &'a Instruction<'b>,
+        i: &'a Instruction,
         pc: Option<ProgramCounter>,
-        location: &'a Location<'b>,
+        location: &Location,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, (&'a AddressingMode, Option<i64>, Option<IndexRegister>)> {
+    ) -> CodegenResult<(&'a AddressingMode, Option<i64>, Option<IndexRegister>)> {
         match i.operand.as_deref() {
             Some(Located {
                 data: Token::Operand(operand),
@@ -329,7 +331,7 @@ impl CodegenContext {
                                 let val = offset as i64;
                                 Ok((&operand.addressing_mode, Some(val), register_suffix))
                             } else {
-                                Err(CodegenError::BranchTooFar(location.clone()))
+                                Err(CodegenError::BranchTooFar(location.into()))
                             }
                         }
                         _ => Ok((&operand.addressing_mode, Some(val), register_suffix)),
@@ -340,13 +342,13 @@ impl CodegenContext {
         }
     }
 
-    fn emit_instruction<'a, 'b>(
+    fn emit_instruction(
         &mut self,
-        i: &'a Instruction<'b>,
+        i: &Instruction,
         pc: Option<ProgramCounter>,
-        location: &'a Location<'b>,
+        location: &Location,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, (bool, Vec<u8>)> {
+    ) -> CodegenResult<(bool, Vec<u8>)> {
         type MM = Mnemonic;
         type AM = AddressingMode;
         use smallvec::smallvec as v;
@@ -489,9 +491,7 @@ impl CodegenContext {
 
                         match result {
                             Some(r) => r,
-                            None => {
-                                return Err(CodegenError::OperandSizeMismatch(location.clone()))
-                            }
+                            None => return Err(CodegenError::OperandSizeMismatch(location.into())),
                         }
                     }
                     None => {
@@ -514,13 +514,13 @@ impl CodegenContext {
         Ok((!expression_is_valid, bytes.to_vec()))
     }
 
-    fn emit_data<'a>(
+    fn emit_data(
         &mut self,
-        exprs: &[&Located<'a, Expression<'a>>],
+        exprs: &[&Located<Expression>],
         data_length: usize,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<'a, (bool, Vec<u8>)> {
+    ) -> CodegenResult<(bool, Vec<u8>)> {
         // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
         let mut any_failed = false;
 
@@ -550,13 +550,13 @@ impl CodegenContext {
         Ok((any_failed, result))
     }
 
-    fn emit_single<'a, 'b>(
+    fn emit_single(
         &mut self,
-        token: &'a Token<'b>,
-        location: &'a Location<'b>,
+        token: &Token,
+        location: &Location,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<'b, (bool, Vec<u8>)> {
+    ) -> CodegenResult<(bool, Vec<u8>)> {
         let (emit_later, bytes) = match token {
             Token::Label { id, .. } => match pc {
                 Some(pc) => self
@@ -651,9 +651,9 @@ impl CodegenContext {
                 _ => {
                     if error_on_failure {
                         let err = CodegenError::InvalidDefinition(
-                            expr.location.clone(),
-                            Identifier(identifier),
-                            error_msg,
+                            expr.location.into(),
+                            OwnedIdentifier(identifier.into()),
+                            error_msg.into(),
                         )
                         .into();
                         self.errors.push(err);
@@ -773,8 +773,10 @@ impl CodegenContext {
                                 if error_on_failure {
                                     self.errors.push(
                                         CodegenError::UnknownIdentifier(
-                                            location.clone(),
-                                            IdentifierPath::new(&[Identifier(&segment_name)]),
+                                            location.into(),
+                                            OwnedIdentifierPath::new(&[OwnedIdentifier(
+                                                segment_name,
+                                            )]),
                                         )
                                         .into(),
                                     );
@@ -834,9 +836,9 @@ impl CodegenContext {
             Ok(None) => {
                 self.errors.push(
                     CodegenError::InvalidDefinition(
-                        cfg_location.clone(),
-                        Identifier(key),
-                        "missing value",
+                        cfg_location.into(),
+                        OwnedIdentifier(key.into()),
+                        "missing value".into(),
                     )
                     .into(),
                 );
@@ -942,7 +944,7 @@ impl CodegenContext {
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn is_defined(args: Vec<Option<i64>>) -> CodegenResult<'static, Option<i64>> {
+fn is_defined(args: Vec<Option<i64>>) -> CodegenResult<Option<i64>> {
     // We should have 1 argument and that argument should be set to Some
     let r = match args.first() {
         Some(Some(_)) => 1,

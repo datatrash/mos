@@ -61,9 +61,31 @@ pub enum Trivia {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier<'a>(pub &'a str);
 
+/// Same as [Identifier] but with an owned [String] instead.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OwnedIdentifier(pub String);
+
 impl<'a> Display for Identifier<'a> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl Display for OwnedIdentifier {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<'a> From<Identifier<'a>> for OwnedIdentifier {
+    fn from(id: Identifier<'a>) -> Self {
+        Self(id.0.into())
+    }
+}
+
+impl<'a> From<&Identifier<'a>> for OwnedIdentifier {
+    fn from(id: &Identifier<'a>) -> Self {
+        Self(id.0.into())
     }
 }
 
@@ -212,6 +234,37 @@ impl Display for AddressModifier {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IdentifierPath<'a>(Vec<Identifier<'a>>);
 
+/// Same as [IdentifierPath] but containing [OwnedIdentifier]s.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OwnedIdentifierPath(Vec<OwnedIdentifier>);
+
+impl<'a> Display for IdentifierPath<'a> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0.iter().map(|i| i.0).collect_vec().join("."))
+    }
+}
+
+impl Display for OwnedIdentifierPath {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.0.iter().map(|i| i.0.as_str()).collect_vec().join(".")
+        )
+    }
+}
+
+impl<'a> From<IdentifierPath<'a>> for OwnedIdentifierPath {
+    fn from(src: IdentifierPath<'a>) -> Self {
+        Self(
+            src.0
+                .into_iter()
+                .map(|id| OwnedIdentifier(id.0.into()))
+                .collect(),
+        )
+    }
+}
+
 impl<'a> IdentifierPath<'a> {
     pub fn new(ids: &[Identifier<'a>]) -> Self {
         Self(ids.to_vec())
@@ -235,9 +288,9 @@ impl<'a> IdentifierPath<'a> {
     }
 }
 
-impl<'a> Display for IdentifierPath<'a> {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0.iter().map(|i| i.0).collect_vec().join("."))
+impl OwnedIdentifierPath {
+    pub fn new(ids: &[OwnedIdentifier]) -> Self {
+        Self(ids.to_vec())
     }
 }
 

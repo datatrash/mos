@@ -5,7 +5,7 @@ use itertools::Itertools;
 
 use crate::commands::SymbolType;
 use crate::core::codegen::{CodegenError, CodegenResult, ProgramCounter};
-use crate::core::parser::{Identifier, Location};
+use crate::core::parser::{Location, OwnedIdentifier};
 use crate::LINE_ENDING;
 
 #[derive(Debug, PartialEq)]
@@ -81,17 +81,18 @@ impl SymbolTable {
         value: Symbol,
         location: Option<&Location<'a>>,
         allow_same_type_redefinition: bool,
-    ) -> CodegenResult<'a, ()> {
+    ) -> CodegenResult<()> {
         let id = id.into();
         if !allow_same_type_redefinition {
-            if let Some(existing) = self.lookup_in_current_scope(&[id]) {
+            let location = location.unwrap();
+            if let Some(existing) = self.lookup_in_current_scope(location, &[id])? {
                 let is_same_type =
                     std::mem::discriminant(existing) == std::mem::discriminant(&value);
 
                 if !is_same_type || existing != &value {
                     return Err(CodegenError::SymbolRedefinition(
-                        location.unwrap().clone(),
-                        Identifier(id),
+                        location.clone().into(),
+                        OwnedIdentifier(id.into()),
                     ));
                 }
             }
@@ -101,13 +102,13 @@ impl SymbolTable {
         Ok(())
     }
 
-    pub(super) fn register_path<'a>(
+    pub(super) fn register_path(
         &mut self,
-        path: &[&'a str],
+        path: &[&str],
         value: Symbol,
-        location: Option<&Location<'a>>,
+        location: Option<&Location>,
         allow_same_type_redefinition: bool,
-    ) -> CodegenResult<'a, ()> {
+    ) -> CodegenResult<()> {
         if let Some((last, parents)) = path.split_last() {
             for parent in parents {
                 if !self.current_scope().children.contains_key(*parent) {
@@ -131,65 +132,91 @@ impl SymbolTable {
     // Look up a symbol in the symbol table.
     // If `check_target_scope_only` is set, the lookup will not bubble up to parent scopes if the
     // symbol is not found.
-    fn lookup_internal(&self, path: &[&str], check_target_scope_only: bool) -> Option<&Symbol> {
+    fn lookup_internal(
+        &self,
+        location: &Location,
+        path: &[&str],
+        check_target_scope_only: bool,
+    ) -> CodegenResult<Option<&Symbol>> {
         if path.is_empty() {
-            return None;
+            return Ok(None);
         }
 
         let mut scope = self.current_scope();
 
         let (id, path_ids) = path.split_last().unwrap();
-        for path in path_ids {
-            match *path {
-                "super" => match &scope.parent {
+
+        let mut in_super_phase = true;
+        for id in path_ids {
+            if id.eq_ignore_ascii_case("super") {
+                if !in_super_phase {
+                    return Err(CodegenError::SuperNotAllowed(
+                        location.into(),
+                        path.iter().join("."),
+                    ));
+                }
+
+                match &scope.parent {
                     Some(p) => scope = self.scope(p),
                     None => {
                         // Already at the root scope
                     }
-                },
-                id => match scope.children.get(id) {
+                }
+            } else {
+                in_super_phase = false;
+
+                match scope.children.get(*id) {
                     Some(s) => scope = s,
                     None => {
-                        return None;
+                        return Ok(None);
                     }
-                },
+                }
             }
         }
 
         loop {
             if let Some(symbol) = scope.table.get(&id.to_string()) {
-                return Some(symbol);
+                return Ok(Some(symbol));
             }
 
             if check_target_scope_only {
                 // Didn't find it in the current scope, so bail out
-                return None;
+                return Ok(None);
             }
 
             match &scope.parent {
                 Some(p) => scope = self.scope(p),
                 None => {
-                    return None;
+                    return Ok(None);
                 }
             }
         }
     }
 
-    pub(super) fn lookup(&self, path: &[&str]) -> Option<&Symbol> {
-        self.lookup_internal(path, false)
+    pub(super) fn lookup(
+        &self,
+        location: &Location,
+        path: &[&str],
+    ) -> CodegenResult<Option<&Symbol>> {
+        self.lookup_internal(location, path, false)
     }
 
-    pub(super) fn lookup_in_current_scope(&self, path: &[&str]) -> Option<&Symbol> {
-        self.lookup_internal(path, true)
+    pub(super) fn lookup_in_current_scope(
+        &self,
+        location: &Location,
+        path: &[&str],
+    ) -> CodegenResult<Option<&Symbol>> {
+        self.lookup_internal(location, path, true)
     }
 
-    pub(super) fn value(&self, path: &[&str]) -> Option<i64> {
-        self.lookup(path)
+    pub(super) fn value(&self, location: &Location, path: &[&str]) -> CodegenResult<Option<i64>> {
+        Ok(self
+            .lookup(location, path)?
             .map(|s| match s {
                 Symbol::Label(pc) => Some(pc.as_i64()),
                 Symbol::Variable(val) | Symbol::Constant(val) | Symbol::System(val) => Some(*val),
             })
-            .flatten()
+            .flatten())
     }
 
     fn current_scope(&self) -> &Scope {
@@ -259,13 +286,16 @@ impl SymbolTable {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use itertools::Itertools;
 
     use crate::commands::SymbolType;
     use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
     use crate::core::codegen::CodegenResult;
+    use crate::core::parser::Location;
 
-    type TestResult = CodegenResult<'static, ()>;
+    type TestResult = CodegenResult<()>;
 
     #[test]
     fn can_lookup_symbols() -> TestResult {
@@ -276,39 +306,51 @@ mod tests {
         st.enter(&scope);
         reg(&mut st, "A", 100)?;
 
-        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(100)));
+        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(100)));
 
         let scope = st.add_child_scope(Some("bar"));
         st.enter(&scope);
         reg(&mut st, "A", 555)?;
-        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(555)));
+        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(555)));
         st.leave();
 
-        assert_eq!(st.lookup(&["B"]), Some(&Symbol::Constant(2)));
-        assert_eq!(st.lookup(&["super", "A"]), Some(&Symbol::Constant(1)));
+        assert_eq!(st.lookup(&loc(), &["B"])?, Some(&Symbol::Constant(2)));
         assert_eq!(
-            st.lookup(&["super", "foo", "A"]),
+            st.lookup(&loc(), &["super", "A"])?,
+            Some(&Symbol::Constant(1))
+        );
+        assert_eq!(
+            st.lookup(&loc(), &["super", "foo", "A"])?,
             Some(&Symbol::Constant(100))
         );
 
         st.leave();
 
         assert_eq!(
-            st.lookup(&["foo", "bar", "A"]),
+            st.lookup(&loc(), &["foo", "bar", "A"])?,
             Some(&Symbol::Constant(555))
         );
 
-        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(1)));
-        assert_eq!(st.lookup(&["foo", "A"]), Some(&Symbol::Constant(100)));
-        assert_eq!(st.lookup(&["super", "A"]), Some(&Symbol::Constant(1)));
+        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(1)));
+        assert_eq!(
+            st.lookup(&loc(), &["foo", "A"])?,
+            Some(&Symbol::Constant(100))
+        );
+        assert_eq!(
+            st.lookup(&loc(), &["super", "A"])?,
+            Some(&Symbol::Constant(1))
+        );
 
-        assert_eq!(st.lookup(&["foo2", "A"]), None);
+        assert_eq!(st.lookup(&loc(), &["foo2", "A"])?, None);
         let scope = st.add_child_scope(Some("foo2"));
         st.enter(&scope);
         reg(&mut st, "A", 200)?;
-        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(200)));
+        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(200)));
         st.leave();
-        assert_eq!(st.lookup(&["foo2", "A"]), Some(&Symbol::Constant(200)));
+        assert_eq!(
+            st.lookup(&loc(), &["foo2", "A"])?,
+            Some(&Symbol::Constant(200))
+        );
 
         Ok(())
     }
@@ -316,10 +358,24 @@ mod tests {
     #[test]
     fn can_register_nested_symbols() -> TestResult {
         let mut st = SymbolTable::new();
-        st.register_path(&["a", "a"], Symbol::Constant(1), None, false)?;
-        st.register_path(&["a", "b"], Symbol::Constant(2), None, false)?;
-        assert_eq!(st.lookup(&["a", "a"]), Some(&Symbol::Constant(1)));
-        assert_eq!(st.lookup(&["a", "b"]), Some(&Symbol::Constant(2)));
+        st.register_path(&["a", "a"], Symbol::Constant(1), Some(&loc()), false)?;
+        st.register_path(&["a", "b"], Symbol::Constant(2), Some(&loc()), false)?;
+        assert_eq!(st.lookup(&loc(), &["a", "a"])?, Some(&Symbol::Constant(1)));
+        assert_eq!(st.lookup(&loc(), &["a", "b"])?, Some(&Symbol::Constant(2)));
+        Ok(())
+    }
+
+    #[test]
+    fn super_is_only_allowed_at_start() -> TestResult {
+        let mut st = SymbolTable::new();
+        st.register_path(&["foo", "bar"], Symbol::Constant(1), Some(&loc()), false)?;
+        assert_eq!(
+            st.lookup(&loc(), &["foo", "super", "foo", "bar"])
+                .err()
+                .unwrap()
+                .to_string(),
+            "'super' is only allowed at the start of a path: foo.super.foo.bar"
+        );
         Ok(())
     }
 
@@ -330,12 +386,12 @@ mod tests {
         let scope = st.add_child_scope(None);
         st.enter(&scope);
         reg(&mut st, "A", 100)?;
-        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(100)));
+        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(100)));
         st.leave();
         let scope = st.add_child_scope(None);
         st.enter(&scope);
         reg(&mut st, "A", 200)?;
-        assert_eq!(st.lookup(&["A"]), Some(&Symbol::Constant(200)));
+        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(200)));
         st.leave();
         Ok(())
     }
@@ -343,10 +399,10 @@ mod tests {
     #[test]
     fn can_generate_vice_symbols() -> TestResult {
         let mut st = SymbolTable::new();
-        st.register("foo", Symbol::Label(0x1234.into()), None, false)?;
+        st.register("foo", Symbol::Label(0x1234.into()), Some(&loc()), false)?;
         let scope = st.add_child_scope(Some("scope"));
         st.enter(&scope);
-        st.register("foo", Symbol::Label(0xCAFE.into()), None, false)?;
+        st.register("foo", Symbol::Label(0xCAFE.into()), Some(&loc()), false)?;
         assert_eq!(
             st.to_symbols(SymbolType::Vice).lines().collect_vec(),
             &["al C:1234 .foo", "al C:CAFE .scope.foo"]
@@ -354,7 +410,15 @@ mod tests {
         Ok(())
     }
 
-    fn reg(st: &mut SymbolTable, id: &'static str, val: i64) -> TestResult {
-        st.register(id, Symbol::Constant(val), None, false)
+    fn reg<'a>(st: &'a mut SymbolTable, id: &'a str, val: i64) -> TestResult {
+        st.register(id, Symbol::Constant(val), Some(&loc()), false)
+    }
+
+    fn loc<'a>() -> Location<'a> {
+        Location {
+            path: &Path::new("test.asm"),
+            line: 0,
+            column: 0,
+        }
     }
 }
