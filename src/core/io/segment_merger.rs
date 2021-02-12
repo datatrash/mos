@@ -9,13 +9,17 @@ use itertools::Itertools;
 use crate::core::codegen::Segment;
 use crate::errors::{MosError, MosResult};
 
-pub struct MergingSegment<'a> {
+/// A segment of data that will be emitted to an output file.
+pub struct TargetSegment<'a> {
+    /// The data contained in the segment
     data: [u8; 65536],
+    /// Which of the data is actually valid
     range: Option<Range<u16>>,
+    /// Which segments are the source of the data in this target segment?
     sources: HashMap<&'a str, &'a Segment>,
 }
 
-impl<'a> MergingSegment<'a> {
+impl<'a> TargetSegment<'a> {
     pub fn range(&self) -> &Option<Range<u16>> {
         &self.range
     }
@@ -66,13 +70,15 @@ impl<'a> MergingSegment<'a> {
     }
 }
 
+/// SegmentMerger contains information about which segments should go to which output target
 pub struct SegmentMerger<'a> {
-    targets: HashMap<PathBuf, MergingSegment<'a>>,
+    targets: HashMap<PathBuf, TargetSegment<'a>>,
     default_target: PathBuf,
     errors: Vec<MosError>,
 }
 
 impl<'a> SegmentMerger<'a> {
+    /// Creates a new merger with a single default target
     pub fn new(default_target: PathBuf) -> Self {
         Self {
             targets: HashMap::new(),
@@ -81,24 +87,28 @@ impl<'a> SegmentMerger<'a> {
         }
     }
 
-    pub fn targets(&self) -> &HashMap<PathBuf, MergingSegment<'a>> {
+    /// Which targets are available?
+    pub fn targets(&self) -> &HashMap<PathBuf, TargetSegment<'a>> {
         &self.targets
     }
 
+    /// Have there been any errors during merging?
     pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }
 
+    /// The errors that occurred during merging
     pub fn errors(self) -> Vec<MosError> {
         self.errors
     }
 
+    /// Merge a segment into the existing merged segments, taking care to see it doesn't overlap with already present segments
     pub fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) -> MosResult<()> {
         if let Some(seg_range) = segment.target_range() {
             let target_name = &self.default_target;
             let target = match self.targets.entry(target_name.clone()) {
                 Entry::Occupied(o) => o.into_mut(),
-                Entry::Vacant(e) => e.insert(MergingSegment {
+                Entry::Vacant(e) => e.insert(TargetSegment {
                     data: [0; 65536],
                     range: None,
                     sources: HashMap::new(),

@@ -5,12 +5,16 @@ use nom::multi::many0;
 
 use crate::core::parser::*;
 
+/// A ConfigMap stores generic key-value pairs that are used for things like segment definitions
+///
+/// Internally this is just a HashMap storing actual [Token]s, but provides a few convenience methods on top of that.
 #[derive(Debug, Clone)]
 pub struct ConfigMap<'a> {
     items: HashMap<&'a str, Located<'a, Token<'a>>>,
 }
 
 impl<'a> ConfigMap<'a> {
+    /// Create a new ConfigMap based on the provided [Token::ConfigPair] and [Token::EolTrivia] tokens.
     pub fn new(items: Vec<Located<'a, Token<'a>>>) -> Self {
         let items = items
             .into_iter()
@@ -31,14 +35,39 @@ impl<'a> ConfigMap<'a> {
         Self { items }
     }
 
+    /// Get a reference to a key that must exist.
     pub fn value<'b>(&'b self, key: &'b str) -> &'b Located<Token> {
         self.try_value(key).unwrap()
     }
 
+    /// Get a reference to a key that may not exist.
     pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&'b Located<Token>> {
         self.items.get(key)
     }
 
+    /// Get a reference to the [IdentifierPath] contained within a key that must exist.
+    pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath<'b> {
+        match self.value(key).data.as_factor() {
+            ExpressionFactor::IdentifierValue { path, .. } => &path.data,
+            _ => panic!(),
+        }
+    }
+
+    /// Get a reference to the [IdentifierPath] contained within a key that may not exist.
+    pub fn try_value_as_identifier_path<'b>(
+        &'b self,
+        key: &'b str,
+    ) -> Option<&'b IdentifierPath<'b>> {
+        match self.try_value(key) {
+            Some(lt) => match lt.data.try_as_factor() {
+                Some(ExpressionFactor::IdentifierValue { path, .. }) => Some(&path.data),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Check if the provided keys are present. If not, errors will be generated based on the provided location.
     pub fn require<'b>(&self, keys: &[&str], location: Location<'b>) -> Vec<MosError> {
         keys.iter()
             .filter_map(|key| match self.items.contains_key(key) {
@@ -54,6 +83,8 @@ impl<'a> ConfigMap<'a> {
             .collect()
     }
 
+    /// Check if the provided keys are present and only contain a single identifier (and no deeper nested path).
+    /// If not, errors will be generated based on the provided location.
     pub fn require_single_identifier<'b>(
         &self,
         keys: &[&str],
@@ -84,26 +115,6 @@ impl<'a> ConfigMap<'a> {
             })
             .collect()
     }
-
-    pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath<'b> {
-        match self.value(key).data.as_factor() {
-            ExpressionFactor::IdentifierValue { path, .. } => &path.data,
-            _ => panic!(),
-        }
-    }
-
-    pub fn try_value_as_identifier_path<'b>(
-        &'b self,
-        key: &'b str,
-    ) -> Option<&'b IdentifierPath<'b>> {
-        match self.try_value(key) {
-            Some(lt) => match lt.data.try_as_factor() {
-                Some(ExpressionFactor::IdentifierValue { path, .. }) => Some(&path.data),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
 }
 
 impl<'a> PartialEq for ConfigMap<'a> {
@@ -114,13 +125,14 @@ impl<'a> PartialEq for ConfigMap<'a> {
     }
 }
 
+/// Tries to parse a single key-value pair within the map
 fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
     let value = alt((
         config_map,
         map(expression, |expr| {
-            Located::from(expr.location, Token::Expression(expr.data))
+            Located::new(expr.location, Token::Expression(expr.data))
         }),
     ));
 
@@ -129,11 +141,12 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
         move |(key, eq, value)| {
             let key = Box::new(key.flatten());
             let value = Box::new(value.flatten());
-            Located::from(location, Token::ConfigPair { key, eq, value })
+            Located::new(location, Token::ConfigPair { key, eq, value })
         },
     )(input)
 }
 
+/// Tries to parse a config map
 pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
 
@@ -144,7 +157,7 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
             ws(char('}')),
         )),
         move |(lparen, inner, rparen)| {
-            Located::from(
+            Located::new(
                 location,
                 Token::Config {
                     lparen,

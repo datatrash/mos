@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::ops::{AddAssign, Sub};
 
+/// A simple newtype that wraps a program counter
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ProgramCounter(u16);
 

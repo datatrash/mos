@@ -44,14 +44,20 @@ impl<'a> State<'a> {
     }
 }
 
+/// Any trivia we may encounter during parsing
 #[derive(Debug, Clone, PartialEq)]
 pub enum Trivia {
+    /// One or more spaces or tabs
     Whitespace(String),
+    /// A newline
     NewLine,
+    /// A C-style comment: `/* foo */`
     CStyle(String),
+    /// A C++-style comment: `// foo`
     CppStyle(String),
 }
 
+/// A Rust-style identifier that can be used to, well, identify things
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identifier<'a>(pub &'a str);
 
@@ -73,6 +79,7 @@ impl<'a> From<&Identifier<'a>> for &'a str {
     }
 }
 
+/// A location inside of a source file
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location<'a> {
     pub path: &'a Path,
@@ -80,6 +87,7 @@ pub struct Location<'a> {
     pub column: u32,
 }
 
+/// A version of [Location] that owns its data
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedLocation {
     pub path: PathBuf,
@@ -117,13 +125,14 @@ impl<'a> From<&LocatedSpan<'a>> for Location<'a> {
     }
 }
 
+/// Registers used for indexing
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Register {
+pub enum IndexRegister {
     X,
     Y,
 }
 
-impl Display for Register {
+impl Display for IndexRegister {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::X => write!(f, "X"),
@@ -132,21 +141,30 @@ impl Display for Register {
     }
 }
 
+/// A 6502 instruction
 #[derive(Debug, Clone, PartialEq)]
 pub struct Instruction<'a> {
     pub mnemonic: Located<'a, Mnemonic>,
+    /// The operand is optional because some instructions (e.g. `NOP`) don't have an operand.
     pub operand: Option<Box<Located<'a, Token<'a>>>>,
 }
 
+/// The addressing mode for the instruction
 #[derive(Debug, Clone, PartialEq)]
 pub enum AddressingMode {
+    /// Absolute or Zero-Page addressing (e.g. `LDA $34`)
     AbsoluteOrZP,
+    /// Immediate addressing (e.g. `LDA #123`)
     Immediate,
+    /// Implied (e.g. `NOP`)
     Implied,
+    /// Indirect (e.g. `LDA ($12,X)`
     Indirect,
+    /// Outer indirection (e.g. `LDA ($12),Y`)
     OuterIndirect,
 }
 
+/// The operand of an instruction
 #[derive(Debug, Clone, PartialEq)]
 pub struct Operand<'a> {
     pub expr: Box<Located<'a, Expression<'a>>>,
@@ -156,6 +174,7 @@ pub struct Operand<'a> {
     pub suffix: Option<Box<Located<'a, Token<'a>>>>,
 }
 
+/// A number, which can be hexadecimal (`$23AB`), decimal (`123`) or binary (`%11011`)
 #[derive(Debug, Clone, PartialEq)]
 pub enum NumberType {
     Hex,
@@ -173,6 +192,7 @@ impl Display for NumberType {
     }
 }
 
+/// An address modifier which can be used to get the low (`<`) or high (`>`) byte of an address
 #[derive(Debug, Clone, PartialEq)]
 pub enum AddressModifier {
     HighByte,
@@ -188,6 +208,7 @@ impl Display for AddressModifier {
     }
 }
 
+/// A path of multiple identifiers, usually written as being separated by dots (e.g. `foo.bar.baz`)
 #[derive(Clone, Debug, PartialEq)]
 pub struct IdentifierPath<'a>(Vec<Identifier<'a>>);
 
@@ -220,22 +241,38 @@ impl<'a> Display for IdentifierPath<'a> {
     }
 }
 
+/// Any kind of binary operation that can be found in an expression
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
+    /// Addition
     Add,
+    /// Subtraction
     Sub,
+    /// Multiplication
     Mul,
+    /// Division
     Div,
+    /// Shift left
     Shl,
+    /// Shift right
     Shr,
+    /// Exclusive or
     Xor,
+    /// Equals
     Eq,
+    /// Not equals
     Ne,
+    /// Greater than
     Gt,
+    /// Greater than or equal
     GtEq,
+    /// Less than
     Lt,
+    /// Less than or equal
     LtEq,
+    /// And
     And,
+    /// Or
     Or,
 }
 
@@ -261,6 +298,7 @@ impl Display for BinaryOp {
     }
 }
 
+/// A binary expression of the form `lhs op rhs`
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpression<'a> {
     pub op: Located<'a, BinaryOp>,
@@ -268,6 +306,7 @@ pub struct BinaryExpression<'a> {
     pub rhs: Box<Located<'a, Expression<'a>>>,
 }
 
+/// A factor that can be used on either side of an expression operation
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExpressionFactor<'a> {
     CurrentProgramCounter(Located<'a, char>),
@@ -293,6 +332,7 @@ pub enum ExpressionFactor<'a> {
 }
 
 bitflags::bitflags! {
+    /// Flags that can be used to modify the [ExpressionFactor] the flags belong to
     pub struct ExpressionFactorFlags: u8 {
         const NOT = 0b00000001;
         const NEG = 0b00000010;
@@ -315,6 +355,7 @@ impl Display for ExpressionFactorFlags {
     }
 }
 
+/// An expression consists of one or more factors, possibly contained within a binary (sub)expression
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<'a> {
     BinaryExpression(BinaryExpression<'a>),
@@ -326,6 +367,7 @@ pub enum Expression<'a> {
     },
 }
 
+/// User-defined variables
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum VariableType {
     Constant,
@@ -341,6 +383,7 @@ impl Display for VariableType {
     }
 }
 
+/// The size of a data directive (e.g. `.byte 1, 2, 3`)
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataSize {
     Byte,
@@ -368,6 +411,17 @@ impl Display for DataSize {
     }
 }
 
+/// An empty struct that is just there to provide an empty [std::fmt::Display] implementation
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmptyDisplay;
+
+impl Display for EmptyDisplay {
+    fn fmt(&self, _: &mut Formatter) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
+/// Tokens that, together, make up all possible source text
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token<'a> {
     Align {
@@ -398,7 +452,9 @@ pub enum Token<'a> {
         id: Box<Located<'a, Token<'a>>>,
         value: Option<Box<Located<'a, Token<'a>>>>,
     },
-    EolTrivia(Located<'a, char>),
+    /// Since during parsing the trivia that is attached to the tokens is the trivia to the left side of the token. If there is any trivia
+    /// to the right-hand side, until the end of the line, then this token is additionally emitted just to store this additional trivia.
+    EolTrivia(Located<'a, EmptyDisplay>),
     Eof,
     Error,
     Expression(Expression<'a>),
@@ -423,7 +479,7 @@ pub enum Token<'a> {
     },
     RegisterSuffix {
         comma: Located<'a, char>,
-        register: Located<'a, Register>,
+        register: Located<'a, IndexRegister>,
     },
     Segment {
         tag: Located<'a, &'a str>,
@@ -489,6 +545,9 @@ impl<'a> Token<'a> {
     }
 }
 
+/// A wrapper around any kind of data which adds location information and any trivia.
+///
+/// During parsing the trivia that is included with tokens is any trivia that is located to the left of the token.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Located<'a, T> {
     pub location: Location<'a>,
@@ -497,6 +556,7 @@ pub struct Located<'a, T> {
 }
 
 impl<'a, T> Located<'a, Located<'a, T>> {
+    /// Remove one layer of nesting for nested located types
     pub fn flatten(self) -> Located<'a, T> {
         Located {
             location: self.data.location.clone(),
@@ -506,33 +566,22 @@ impl<'a, T> Located<'a, Located<'a, T>> {
     }
 }
 
-/*#[derive(Debug, Clone, PartialEq)]
-pub struct Trivia<'a> {
-    pub location: Location<'a>,
-    pub comments: Vec<Comment>,
-}
-
-impl<'a> Display for Trivia<'a> {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        let triv = self.comments.iter().map(|t| format!("{}", t)).join("");
-        write!(f, "{}", triv)
-    }
-}*/
-
 impl<'a, T> Located<'a, T> {
+    /// Borrow the [Located] and map the data to something else
     pub fn map<U, F: Fn(&T) -> U>(&self, map_fn: F) -> Located<'a, U> {
-        Located::from_trivia(
+        Located::new_with_trivia(
             self.location.clone(),
             map_fn(&self.data),
             self.trivia.clone(),
         )
     }
 
+    /// Take ownership of the [Located] and map the data into something else
     pub fn map_into<U, F: FnOnce(T) -> U>(self, map_fn: F) -> Located<'a, U> {
-        Located::from_trivia(self.location, map_fn(self.data), self.trivia)
+        Located::new_with_trivia(self.location, map_fn(self.data), self.trivia)
     }
 
-    pub fn from<L: Into<Location<'a>>>(location: L, data: T) -> Self {
+    pub fn new<L: Into<Location<'a>>>(location: L, data: T) -> Self {
         Self {
             location: location.into(),
             data,
@@ -540,7 +589,7 @@ impl<'a, T> Located<'a, T> {
         }
     }
 
-    pub fn from_trivia<L: Into<Location<'a>>>(
+    pub fn new_with_trivia<L: Into<Location<'a>>>(
         location: L,
         data: T,
         trivia: Option<Box<Located<'a, Vec<Trivia>>>>,
@@ -606,6 +655,7 @@ impl<'a> Display for ExpressionFactor<'a> {
     }
 }
 
+/// Formats a list of [ArgItem], using its contained trivia to add the separating commas, etc
 fn format_arglist(args: &[ArgItem]) -> String {
     args.iter()
         .map(|(arg, comma)| {
@@ -618,6 +668,7 @@ fn format_arglist(args: &[ArgItem]) -> String {
         .join("")
 }
 
+/// Formats all the [Trivia] enclosed in a [Located]
 fn format_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> String {
     trivia
         .as_ref()
@@ -713,7 +764,7 @@ impl<'a> Display for Token<'a> {
             }
             Token::Eof => Ok(()),
             Token::EolTrivia(triv) => {
-                write!(f, "{}", triv)
+                writeln!(f, "{}", triv)
             }
             Token::Error => write!(f, "Error"),
             Token::Expression(e) => write!(f, "{}", e),
