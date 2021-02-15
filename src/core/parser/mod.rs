@@ -43,11 +43,11 @@ impl<'a> From<ParseError<'a>> for MosError {
     fn from(err: ParseError<'a>) -> Self {
         match err {
             ParseError::ExpectedError { location, message } => Self::Parser {
-                location: location.into(),
+                location: Some(location.into()),
                 message,
             },
             ParseError::UnexpectedError { location, message } => Self::Parser {
-                location: location.into(),
+                location: Some(location.into()),
                 message,
             },
         }

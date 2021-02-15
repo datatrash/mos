@@ -51,7 +51,7 @@ impl From<CodegenError> for MosError {
             CodegenError::SuperNotAllowed(location, _) => location,
         };
         MosError::Codegen {
-            location: location.clone(),
+            location: Some(location.clone()),
             message: format!("{}", error),
         }
     }
@@ -187,6 +187,13 @@ impl CodegenContext {
 
     pub fn register_fn(&mut self, name: &str, function: RegisteredFunction) {
         self.functions.insert(name.into(), function);
+    }
+
+    fn push_error<E: Into<MosError>>(&mut self, error: E) {
+        let error = error.into();
+        if !self.errors.contains(&error) {
+            self.errors.push(error);
+        }
     }
 
     fn evaluate_factor(
@@ -650,13 +657,11 @@ impl CodegenContext {
                 Ok(Some(val)) => Some(val),
                 _ => {
                     if error_on_failure {
-                        let err = CodegenError::InvalidDefinition(
+                        self.push_error(CodegenError::InvalidDefinition(
                             expr.location.into(),
                             OwnedIdentifier(identifier.into()),
                             error_msg.into(),
-                        )
-                        .into();
-                        self.errors.push(err);
+                        ));
                     }
                     None
                 }
@@ -735,7 +740,7 @@ impl CodegenContext {
                                 }
                             }
                             Err(e) => {
-                                self.errors.push(e.into());
+                                self.push_error(e);
                                 None
                             }
                         }
@@ -776,15 +781,10 @@ impl CodegenContext {
                             }
                             None => {
                                 if error_on_failure {
-                                    self.errors.push(
-                                        CodegenError::UnknownIdentifier(
-                                            location.into(),
-                                            OwnedIdentifierPath::new(&[OwnedIdentifier(
-                                                segment_name,
-                                            )]),
-                                        )
-                                        .into(),
-                                    );
+                                    self.push_error(CodegenError::UnknownIdentifier(
+                                        location.into(),
+                                        OwnedIdentifierPath::new(&[OwnedIdentifier(segment_name)]),
+                                    ));
                                     None
                                 } else {
                                     Some(Emittable::Segment(segment_name, location, inner))
@@ -839,18 +839,15 @@ impl CodegenContext {
         match value {
             Ok(Some(val)) => Some(val),
             Ok(None) => {
-                self.errors.push(
-                    CodegenError::InvalidDefinition(
-                        cfg_location.into(),
-                        OwnedIdentifier(key.into()),
-                        "missing value".into(),
-                    )
-                    .into(),
-                );
+                self.push_error(CodegenError::InvalidDefinition(
+                    cfg_location.into(),
+                    OwnedIdentifier(key.into()),
+                    "missing value".into(),
+                ));
                 None
             }
             Err(e) => {
-                self.errors.push(e);
+                self.push_error(e);
                 None
             }
         }
@@ -990,6 +987,12 @@ pub fn codegen<'a>(
 
         // If we haven't processed any tokens then the tokens that are left could not be resolved.
         if next_to_process.len() == to_process_len {
+            // Was the previous unsuccessful already, then we probably emitted some errors.
+            // We can break out of the code generation loop and report the error to the user.
+            if error_on_failure {
+                break;
+            }
+
             // Is it because there are no segments yet? Then create a default one.
             if ctx.segments.is_empty() {
                 log::trace!("Creating default segment");
@@ -1009,8 +1012,14 @@ pub fn codegen<'a>(
         to_process = next_to_process;
         num_passes += 1;
     }
+
     if num_passes == max_passes {
-        panic!("Endless loop detected");
+        ctx.push_error(MosError::Codegen {
+            location: None,
+            message:
+                "infinite recursion during code generation. This is a bug in MOS, please report it."
+                    .into(),
+        });
     }
 
     if ctx.errors.is_empty() {
