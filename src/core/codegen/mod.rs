@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::io::Error;
+use std::path::PathBuf;
 use std::str::FromStr;
 
+use fs_err as fs;
 use itertools::Itertools;
 use smallvec::{smallvec, SmallVec};
 
@@ -39,23 +42,44 @@ pub enum CodegenError {
     SuperNotAllowed(OwnedLocation, String),
     #[error("segment '{0}' is out of range: beyond ${1:04X}")]
     SegmentOutOfRange(String, ProgramCounter),
+    #[error("io")]
+    Io(CodegenIoError),
+}
+
+#[derive(Debug)]
+pub struct CodegenIoError(std::io::Error);
+
+impl From<std::io::Error> for CodegenError {
+    fn from(err: Error) -> Self {
+        CodegenError::Io(CodegenIoError(err))
+    }
+}
+
+impl PartialEq for CodegenIoError {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
 }
 
 impl From<CodegenError> for MosError {
     fn from(error: CodegenError) -> Self {
-        let location = match &error {
+        let message = format!("{}", error);
+        match error {
             CodegenError::UnknownIdentifier(location, _)
             | CodegenError::UnknownFunction(location, _)
             | CodegenError::BranchTooFar(location)
             | CodegenError::SymbolRedefinition(location, _)
             | CodegenError::OperandSizeMismatch(location)
             | CodegenError::InvalidDefinition(location, _, _)
-            | CodegenError::SuperNotAllowed(location, _) => Some(location.clone()),
-            CodegenError::SegmentOutOfRange(_, _) => None,
-        };
-        MosError::Codegen {
-            location,
-            message: format!("{}", error),
+            | CodegenError::SuperNotAllowed(location, _) => MosError::Codegen {
+                location: Some(location),
+                message,
+            },
+            CodegenError::SegmentOutOfRange(_, _) => MosError::Codegen {
+                location: None,
+                message,
+            },
+            CodegenError::Io(err) => MosError::Io(err.0),
         }
     }
 }
@@ -153,6 +177,7 @@ pub struct CodegenContext {
     symbols: SymbolTable,
     functions: HashMap<String, RegisteredFunction>,
     errors: Vec<MosError>,
+    source_root: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -177,6 +202,7 @@ impl CodegenContext {
             symbols: SymbolTable::new(),
             functions: HashMap::new(),
             errors: vec![],
+            source_root: None,
         }
     }
 
@@ -622,6 +648,12 @@ impl CodegenContext {
                 let values = values.iter().map(|(expr, _comma)| expr).collect_vec();
                 self.emit_data(&values, size.data.byte_len(), pc, error_on_failure)
             }
+            Token::Include { filename, .. } => {
+                let root = self.source_root.as_ref().unwrap();
+                let filename = root.join(filename.data);
+                let bytes = fs::read(filename)?;
+                Ok((false, bytes))
+            }
             _ => Ok((false, vec![])),
         }?;
 
@@ -964,6 +996,11 @@ pub fn codegen<'a>(
 ) -> MosResult<CodegenContext> {
     let mut ctx = CodegenContext::new(options);
     ctx.register_fn("defined", &is_defined);
+
+    // Try to determine the source root based on the location of the first token (if any)
+    if let Some(first) = ast.first() {
+        ctx.source_root = Some(first.location.path.parent().unwrap().to_path_buf());
+    }
 
     let mut to_process = ctx.generate_emittables(ast);
 
@@ -1355,6 +1392,20 @@ mod tests {
     }
 
     #[test]
+    fn include() -> TestResult {
+        let root = env!("CARGO_MANIFEST_DIR");
+        let input = &format!("{}/test/cli/build/include.bin", root);
+        let source = format!(".include \"{}\"", input);
+
+        let ctx = test_codegen(&source)?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            include_bytes!("../../../test/cli/build/include.bin")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn can_access_current_pc() -> TestResult {
         let ctx = test_codegen("lda * + 3\nlda *")?;
         assert_eq!(
@@ -1658,12 +1709,12 @@ mod tests {
         code_eq("beq foo\nfoo: nop", &[0xf0, 0x00, 0xea]);
     }
 
-    fn code_eq(code: &'static str, data: &[u8]) {
+    fn code_eq(code: &str, data: &[u8]) {
         let ctx = test_codegen(code).unwrap();
         assert_eq!(ctx.segments().current().range_data(), data);
     }
 
-    fn test_codegen(code: &'static str) -> MosResult<CodegenContext> {
+    fn test_codegen(code: &str) -> MosResult<CodegenContext> {
         let ast = parse(&Path::new("test.asm"), &code)?;
         codegen(ast, CodegenOptions::default())
     }

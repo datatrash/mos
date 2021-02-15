@@ -4,7 +4,7 @@ use std::rc::Rc;
 use itertools::Itertools;
 use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
-use nom::character::complete::{alpha1, alphanumeric1, char, hex_digit1, space1};
+use nom::character::complete::{alpha1, alphanumeric1, char, hex_digit1, none_of, space1};
 use nom::combinator::{all_consuming, map, opt, recognize, rest};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{pair, tuple};
@@ -642,6 +642,34 @@ fn align(input: LocatedSpan) -> IResult<Located<Token>> {
     )(input)
 }
 
+/// Tries to parse an include directive, of the form `.include "foo.bin"`
+fn include(input: LocatedSpan) -> IResult<Located<Token>> {
+    let location = Location::from(&input);
+
+    let filename = recognize(many1(none_of("\"\r\n")));
+
+    map_once(
+        tuple((
+            ws(tag_no_case(".include")),
+            ws(char('"')),
+            located(filename),
+            char('"'),
+        )),
+        move |(tag, lquote, filename, _)| {
+            let tag = tag.map_into(|_| ".include");
+            let filename = filename.map(|v| *v.fragment());
+            Located::new(
+                location,
+                Token::Include {
+                    tag,
+                    lquote,
+                    filename,
+                },
+            )
+        },
+    )(input)
+}
+
 /// Tries to parse all valid statement types
 fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((
@@ -656,6 +684,7 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
         segment,
         if_,
         align,
+        include,
         end_of_line,
     ))(input)
 }
@@ -1085,6 +1114,11 @@ mod test {
     #[test]
     fn parse_label() {
         check("   foo:   nop", "   foo:   NOP");
+    }
+
+    #[test]
+    fn parse_include() {
+        check("   .include    \"foo.bin\"", "   .INCLUDE    \"foo.bin\"");
     }
 
     #[test]

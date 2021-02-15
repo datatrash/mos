@@ -228,7 +228,6 @@ mod tests {
 
     use crate::core::parser::config_map::config_map;
     use crate::core::parser::{LocatedSpan, State};
-    use crate::errors::MosResult;
 
     #[test]
     fn parse_config_object() {

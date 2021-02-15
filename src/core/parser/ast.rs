@@ -519,6 +519,11 @@ pub enum Token<'a> {
         tag_else: Option<Located<'a, &'a str>>,
         else_: Option<Box<Located<'a, Token<'a>>>>,
     },
+    Include {
+        tag: Located<'a, &'a str>,
+        lquote: Located<'a, char>,
+        filename: Located<'a, &'a str>,
+    },
     Instruction(Instruction<'a>),
     Label {
         id: Located<'a, Identifier<'a>>,
@@ -842,6 +847,19 @@ impl<'a> Display for Token<'a> {
                     value,
                     if_,
                     else_
+                )
+            }
+            Token::Include {
+                tag,
+                lquote,
+                filename,
+            } => {
+                write!(
+                    f,
+                    "{}{}{}\"",
+                    tag.map(|t| t.to_uppercase()),
+                    lquote,
+                    filename,
                 )
             }
             Token::Instruction(i) => match &i.operand {
