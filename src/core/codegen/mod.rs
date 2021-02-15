@@ -686,25 +686,30 @@ impl CodegenContext {
                         );
 
                         let target_pc = self.evaluate_or_error(
-                            "target_address",
+                            "pc",
                             &cfg,
                             pc,
                             error_on_failure,
-                            "Could not determine target address for segment",
+                            "Could not determine target PC for segment",
                         );
-                        let target_pc = target_pc.map(|pc| ProgramCounter::new(pc as u16));
 
                         match start {
                             Some(start) => {
+                                let start = ProgramCounter::new(start as u16);
+                                let initial_pc = match target_pc {
+                                    Some(pc) => ProgramCounter::new(pc as u16),
+                                    None => start,
+                                };
+
                                 let name = cfg.value_as_identifier_path("name").single().0;
                                 let write = match cfg.try_value_as_identifier_path("write") {
                                     Some(val) => bool::from_str(val.single().0).unwrap_or(true),
                                     None => true,
                                 };
                                 let options = SegmentOptions {
-                                    initial_pc: start.into(),
+                                    initial_pc,
                                     write,
-                                    target_pc,
+                                    target_address: start,
                                 };
                                 let segment = Segment::new(options);
                                 self.segments.insert(name, segment);
@@ -925,15 +930,20 @@ impl CodegenContext {
         for segment_name in self.segments.keys() {
             let segment = self.segments.get(&segment_name);
             if let Some(range) = segment.range() {
+                let target_start = range.start as i64
+                    + (segment.options().target_address - segment.options().initial_pc);
+                let target_end = range.end as i64
+                    + (segment.options().target_address - segment.options().initial_pc);
+
                 self.symbols.register_path(
                     &["segments", segment_name, "start"],
-                    Symbol::System(range.start as i64),
+                    Symbol::System(target_start),
                     None,
                     true,
                 )?;
                 self.symbols.register_path(
                     &["segments", segment_name, "end"],
-                    Symbol::System(range.end as i64),
+                    Symbol::System(target_end),
                     None,
                     true,
                 )?;

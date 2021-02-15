@@ -1,5 +1,15 @@
-.define segment { name = a start = $4000 target_address = $1000 }
-.define segment { name = b start = $1020 }
+// Segment 'a' is assembled as if it is run from $4000, but it is stored in the target from $1000
+.define segment {
+    name = a
+    start = $1000
+    pc = $4000
+}
+
+// Segment 'b' starts right after segment a
+.define segment {
+    name = b
+    start = segments.a.end
+}
 
     lda data
     sta $d020

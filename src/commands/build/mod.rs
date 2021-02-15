@@ -93,6 +93,8 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
         for (path, m) in merger.targets() {
             if let Some(range) = &m.range() {
+                log::trace!("Writing: (${:04x} - ${:04x})", range.start, range.end);
+                log::trace!("Writing: {:?}", m.range_data());
                 let mut out = fs::File::create(target_dir.join(path))?;
                 out.write_all(&range.start.to_le_bytes())?;
                 out.write_all(&m.range_data())?;
@@ -123,6 +125,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::commands::{build_app, build_command};
+    use crate::enable_default_tracing;
 
     #[test]
     fn can_invoke_build() -> Result<()> {
@@ -155,6 +158,7 @@ mod tests {
 
     #[test]
     fn build_multiple_segments() -> Result<()> {
+        enable_default_tracing();
         let root = env!("CARGO_MANIFEST_DIR");
         let input = &format!("{}/test/cli/build/multiple_segments.asm", root);
 

@@ -43,6 +43,17 @@ impl<'a> TargetSegment<'a> {
             }
             None => self.range = Some(target_range.start as u16..target_range.end as u16),
         }
+
+        log::trace!(
+            "Merged segment '{}' (${:04x} - ${:04x}) to target (${:04x} - ${:04x}) -- Total merged range: (${:04x} - ${:04x})",
+            segment_name,
+            segment.range().as_ref().unwrap().start,
+            segment.range().as_ref().unwrap().end,
+            target_range.start,
+            target_range.end,
+            self.range.as_ref().unwrap().start,
+            self.range.as_ref().unwrap().end,
+        );
     }
 
     fn range_usize(&self, range: &Range<u16>) -> Range<usize> {
@@ -58,8 +69,8 @@ impl<'a> TargetSegment<'a> {
             .iter()
             .filter_map(|(segment_name, segment)| {
                 let sr = segment.range().as_ref().unwrap();
-                if (new_range.start >= sr.start && new_range.start <= sr.end)
-                    || (new_range.end >= sr.start && new_range.end <= sr.end)
+                if (new_range.start >= sr.start && new_range.start < sr.end)
+                    || (new_range.end > sr.start && new_range.end <= sr.end)
                 {
                     Some((segment_name, segment))
                 } else {

@@ -132,8 +132,8 @@ fn c_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
 }
 
 #[doc(hidden)]
-fn trivia_impl<'a>() -> impl FnMut(LocatedSpan<'a>) -> IResult<Trivia> {
-    move |input: LocatedSpan<'a>| {
+fn trivia_impl() -> impl FnMut(LocatedSpan) -> IResult<Trivia> {
+    move |input: LocatedSpan| {
         let (input, comment) = alt((
             map(space1, |span: LocatedSpan| {
                 Trivia::Whitespace(span.fragment().to_owned().into())

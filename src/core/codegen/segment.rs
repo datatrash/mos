@@ -20,7 +20,7 @@ pub struct Segment {
 pub struct SegmentOptions {
     pub initial_pc: ProgramCounter,
     pub write: bool,
-    pub target_pc: Option<ProgramCounter>,
+    pub target_address: ProgramCounter,
 }
 
 impl Default for SegmentOptions {
@@ -28,7 +28,7 @@ impl Default for SegmentOptions {
         Self {
             initial_pc: ProgramCounter::new(0x2000u16),
             write: true,
-            target_pc: None,
+            target_address: ProgramCounter::new(0x2000u16),
         }
     }
 }
@@ -91,18 +91,13 @@ impl Segment {
     }
 
     pub(crate) fn target_range(&self) -> Option<Range<u16>> {
-        self.range
-            .as_ref()
-            .map(|range| match self.options.target_pc {
-                Some(target) => {
-                    let offset = target - self.options.initial_pc;
-                    Range {
-                        start: (range.start as i64 + offset) as u16,
-                        end: (range.end as i64 + offset) as u16,
-                    }
-                }
-                None => range.clone(),
-            })
+        self.range.as_ref().map(|range| {
+            let offset = self.options.target_address - self.options.initial_pc;
+            Range {
+                start: (range.start as i64 + offset) as u16,
+                end: (range.end as i64 + offset) as u16,
+            }
+        })
     }
 
     pub(crate) fn range_data(&self) -> &[u8] {
@@ -130,7 +125,7 @@ mod tests {
     fn can_add_data() {
         let mut seg = Segment::new(SegmentOptions {
             initial_pc: 0xc000u16.into(),
-            target_pc: Some(0xb000u16.into()),
+            target_address: 0xb000u16.into(),
             ..Default::default()
         });
         let new_pc = seg.set(&[1, 2, 3]);
