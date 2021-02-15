@@ -1,13 +1,16 @@
 use std::ops::Range;
 
 use crate::core::codegen::{CodegenError, CodegenResult, ProgramCounter};
-use crate::core::parser::{ConfigMap, Location};
+use crate::core::parser::{ConfigMap, ConfigMapValidatorBuilder, Location};
 use crate::errors::MosError;
 
 pub fn require_segment_options_fields(cfg: &ConfigMap, location: &Location) -> Vec<MosError> {
-    let mut errors = cfg.require(&["name", "start"], location.clone());
-    errors.extend(cfg.require_single_identifier(&["name"], location.clone()));
-    errors
+    ConfigMapValidatorBuilder::default()
+        .require_single_value("name")
+        .require("start")
+        .allowed("pc")
+        .allowed("write")
+        .validate(cfg, location)
 }
 
 pub struct Segment {

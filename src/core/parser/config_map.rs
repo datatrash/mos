@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use nom::combinator::map;
 use nom::multi::many0;
@@ -66,11 +66,61 @@ impl<'a> ConfigMap<'a> {
             _ => None,
         }
     }
+}
 
-    /// Check if the provided keys are present. If not, errors will be generated based on the provided location.
-    pub fn require<'b>(&self, keys: &[&str], location: Location<'b>) -> Vec<MosError> {
-        keys.iter()
-            .filter_map(|key| match self.items.contains_key(key) {
+impl<'a> PartialEq for ConfigMap<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.items
+            .iter()
+            .all(|(k, v)| other.items.get(k) == Some(v))
+    }
+}
+
+pub struct ConfigMapValidatorBuilder {
+    allowed: HashSet<String>,
+    required: HashSet<String>,
+    required_single: HashSet<String>,
+}
+
+impl Default for ConfigMapValidatorBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConfigMapValidatorBuilder {
+    fn new() -> Self {
+        Self {
+            allowed: HashSet::new(),
+            required: HashSet::new(),
+            required_single: HashSet::new(),
+        }
+    }
+
+    pub fn allowed(mut self, key: &str) -> Self {
+        self.allowed.insert(key.into());
+        self
+    }
+
+    pub fn require(mut self, key: &str) -> Self {
+        self.allowed.insert(key.into());
+        self.required.insert(key.into());
+        self
+    }
+
+    pub fn require_single_value(mut self, key: &str) -> Self {
+        self.allowed.insert(key.into());
+        self.required.insert(key.into());
+        self.required_single.insert(key.into());
+        self
+    }
+
+    pub fn validate(self, cfg: &ConfigMap, location: &Location) -> Vec<MosError> {
+        // Check if the provided keys are present. If not, errors will be generated based on the provided location.
+        let required_fields = self
+            .required
+            .iter()
+            .filter_map(|key| match cfg.items.contains_key(key.as_str()) {
                 true => None,
                 false => Some(
                     ParseError::ExpectedError {
@@ -80,18 +130,14 @@ impl<'a> ConfigMap<'a> {
                     .into(),
                 ),
             })
-            .collect()
-    }
+            .collect_vec();
 
-    /// Check if the provided keys are present and only contain a single identifier (and no deeper nested path).
-    /// If not, errors will be generated based on the provided location.
-    pub fn require_single_identifier<'b>(
-        &self,
-        keys: &[&str],
-        location: Location<'b>,
-    ) -> Vec<MosError> {
-        keys.iter()
-            .filter_map(|key| match self.try_value_as_identifier_path(key) {
+        // Check if the provided keys are present and only contain a single identifier (and no deeper nested path).
+        // If not, errors will be generated based on the provided location.
+        let required_single_fields = self
+            .required_single
+            .iter()
+            .filter_map(|key| match cfg.try_value_as_identifier_path(key.as_str()) {
                 Some(path) => {
                     if path.len() != 1 {
                         Some(
@@ -105,23 +151,30 @@ impl<'a> ConfigMap<'a> {
                         None
                     }
                 }
-                None => Some(
-                    ParseError::ExpectedError {
+                None => None,
+            })
+            .collect_vec();
+
+        // Check fields that aren't valid in this config map at all
+        let incorrect_fields = cfg
+            .items
+            .iter()
+            .filter_map(|(key, _)| match self.allowed.contains(*key) {
+                true => None,
+                false => Some(
+                    ParseError::UnexpectedError {
                         location: location.clone(),
-                        message: format!("required field: {}", key),
+                        message: format!("unexpected field: {}", key),
                     }
                     .into(),
                 ),
             })
-            .collect()
-    }
-}
+            .collect_vec();
 
-impl<'a> PartialEq for ConfigMap<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.items
-            .iter()
-            .all(|(k, v)| other.items.get(k) == Some(v))
+        let mut result = required_fields;
+        result.extend(required_single_fields);
+        result.extend(incorrect_fields);
+        result
     }
 }
 
@@ -178,7 +231,7 @@ mod tests {
     use crate::errors::MosResult;
 
     #[test]
-    fn parse_config_object() -> MosResult<()> {
+    fn parse_config_object() {
         check(
             r"/*   */   
             {
@@ -197,8 +250,6 @@ mod tests {
             }
         }",
         );
-
-        Ok(())
     }
 
     fn check(source: &str, expected: &str) {
