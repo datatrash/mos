@@ -37,21 +37,24 @@ pub enum CodegenError {
     InvalidDefinition(OwnedLocation, OwnedIdentifier, String),
     #[error("'super' is only allowed at the start of a path: {1}")]
     SuperNotAllowed(OwnedLocation, String),
+    #[error("segment '{0}' is out of range: beyond ${1:04X}")]
+    SegmentOutOfRange(String, ProgramCounter),
 }
 
 impl From<CodegenError> for MosError {
     fn from(error: CodegenError) -> Self {
         let location = match &error {
-            CodegenError::UnknownIdentifier(location, _) => location,
-            CodegenError::UnknownFunction(location, _) => location,
-            CodegenError::BranchTooFar(location) => location,
-            CodegenError::SymbolRedefinition(location, _) => location,
-            CodegenError::OperandSizeMismatch(location) => location,
-            CodegenError::InvalidDefinition(location, _, _) => location,
-            CodegenError::SuperNotAllowed(location, _) => location,
+            CodegenError::UnknownIdentifier(location, _)
+            | CodegenError::UnknownFunction(location, _)
+            | CodegenError::BranchTooFar(location)
+            | CodegenError::SymbolRedefinition(location, _)
+            | CodegenError::OperandSizeMismatch(location)
+            | CodegenError::InvalidDefinition(location, _, _)
+            | CodegenError::SuperNotAllowed(location, _) => Some(location.clone()),
+            CodegenError::SegmentOutOfRange(_, _) => None,
         };
         MosError::Codegen {
-            location: Some(location.clone()),
+            location,
             message: format!("{}", error),
         }
     }
@@ -329,7 +332,7 @@ impl CodegenContext {
                             // If the current PC cannot be determined we'll just default to the target_pc. This will be fixed up later
                             // when the instruction is re-emitted.
                             let cur_pc =
-                                (pc.unwrap_or_else(|| target_pc.into()).as_usize() + 2) as i64;
+                                (pc.unwrap_or_else(|| target_pc.into()) + 2.into()).as_i64();
                             let mut offset = target_pc - cur_pc;
                             if offset >= -128 && offset <= 127 {
                                 if offset < 0 {
@@ -608,7 +611,7 @@ impl CodegenContext {
                 let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
                 match self.segments.try_current_mut() {
                     Some(segment) => {
-                        segment.set_current_pc(ProgramCounter::new(eval as u16));
+                        segment.set_current_pc(ProgramCounter::new(eval as usize));
                         Ok((false, vec![]))
                     }
                     None => Ok((true, vec![])),
@@ -632,7 +635,7 @@ impl CodegenContext {
                 );
                 let segment = self.segments.current_mut();
                 segment.set_current_pc(pc);
-                segment.set(&bytes);
+                segment.set(&bytes)?;
             }
         }
 
@@ -700,9 +703,9 @@ impl CodegenContext {
 
                         match start {
                             Some(start) => {
-                                let start = ProgramCounter::new(start as u16);
+                                let start = ProgramCounter::new(start as usize);
                                 let initial_pc = match target_pc {
-                                    Some(pc) => ProgramCounter::new(pc as u16),
+                                    Some(pc) => ProgramCounter::new(pc as usize),
                                     None => start,
                                 };
 
@@ -716,7 +719,7 @@ impl CodegenContext {
                                     write,
                                     target_address: start,
                                 };
-                                let segment = Segment::new(options);
+                                let segment = Segment::new(name, options);
                                 self.segments.insert(name, segment);
                                 None
                             }
@@ -926,21 +929,16 @@ impl CodegenContext {
         // For every segment that we have, register appropriate symbols
         for segment_name in self.segments.keys() {
             let segment = self.segments.get(&segment_name);
-            if let Some(range) = segment.range() {
-                let target_start = range.start as i64
-                    + (segment.options().target_address - segment.options().initial_pc);
-                let target_end = range.end as i64
-                    + (segment.options().target_address - segment.options().initial_pc);
-
+            if let Some(target_range) = segment.target_range() {
                 self.symbols.register_path(
                     &["segments", segment_name, "start"],
-                    Symbol::System(target_start),
+                    Symbol::System(target_range.start as i64),
                     None,
                     true,
                 )?;
                 self.symbols.register_path(
                     &["segments", segment_name, "end"],
-                    Symbol::System(target_end),
+                    Symbol::System(target_range.end as i64),
                     None,
                     true,
                 )?;
@@ -1000,7 +998,8 @@ pub fn codegen<'a>(
                     initial_pc: ctx.options.pc,
                     ..Default::default()
                 };
-                ctx.segments.insert("default", Segment::new(options));
+                ctx.segments
+                    .insert("default", Segment::new("default", options));
             } else {
                 // Emit an error on the next resolve failure
                 error_on_failure = true;
@@ -1368,10 +1367,7 @@ mod tests {
     #[test]
     fn can_set_current_pc() -> TestResult {
         let ctx = test_codegen("* = $1234\nnop")?;
-        assert_eq!(
-            ctx.segments().current().range(),
-            &Some(0x1234u16..0x1235u16)
-        );
+        assert_eq!(ctx.segments().current().range(), &Some(0x1234..0x1235));
         assert_eq!(ctx.segments().current().range_data(), vec![0xea]);
         Ok(())
     }

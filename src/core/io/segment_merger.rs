@@ -14,34 +14,34 @@ pub struct TargetSegment<'a> {
     /// The data contained in the segment
     data: [u8; 65536],
     /// Which of the data is actually valid
-    range: Option<Range<u16>>,
+    range: Option<Range<usize>>,
     /// Which segments are the source of the data in this target segment?
     sources: HashMap<&'a str, &'a Segment>,
 }
 
 impl<'a> TargetSegment<'a> {
-    pub fn range(&self) -> &Option<Range<u16>> {
+    pub fn range(&self) -> &Option<Range<usize>> {
         &self.range
     }
 
     pub fn range_data(&self) -> &[u8] {
         match &self.range {
-            Some(range) => &self.data[self.range_usize(range)],
+            Some(range) => &self.data[range.clone()],
             None => &[],
         }
     }
 
     fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) {
-        let target_range = self.range_usize(&segment.target_range().unwrap());
+        let target_range = segment.target_range().unwrap();
         self.sources.insert(segment_name, segment);
         self.data[target_range.clone()].copy_from_slice(segment.range_data());
 
         match &mut self.range {
             Some(br) => {
-                br.start = min(br.start, target_range.start as u16);
-                br.end = max(br.end, target_range.end as u16);
+                br.start = min(br.start, target_range.start);
+                br.end = max(br.end, target_range.end);
             }
-            None => self.range = Some(target_range.start as u16..target_range.end as u16),
+            None => self.range = Some(target_range.clone()),
         }
 
         log::trace!(
@@ -56,15 +56,8 @@ impl<'a> TargetSegment<'a> {
         );
     }
 
-    fn range_usize(&self, range: &Range<u16>) -> Range<usize> {
-        Range {
-            start: range.start as usize,
-            end: range.end as usize,
-        }
-    }
-
     #[allow(clippy::suspicious_operation_groupings)]
-    fn overlaps_with_sources(&self, new_range: &Range<u16>) -> Vec<(&&'a str, &&'a Segment)> {
+    fn overlaps_with_sources(&self, new_range: &Range<usize>) -> Vec<(&&'a str, &&'a Segment)> {
         self.sources
             .iter()
             .filter_map(|(segment_name, segment)| {

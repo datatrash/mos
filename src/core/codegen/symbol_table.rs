@@ -48,7 +48,7 @@ impl Scope {
                         Some(prefix) => format!("{}.{}", prefix, path),
                         None => path.to_string(),
                     };
-                    Some(format!("al C:{:X} .{}", pc.as_usize(), full_path))
+                    Some(format!("al C:{:X} .{}", pc, full_path))
                 }
                 _ => None,
             })
