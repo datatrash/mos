@@ -1142,6 +1142,21 @@ mod tests {
     }
 
     #[test]
+    fn overflowing_expressions() -> TestResult {
+        let ctx = test_codegen(
+            r"
+        lda #1-2
+        lda $ffff + 3
+        ",
+        )?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xa9, 0xff, 0xad, 2, 0]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn can_use_variables() -> TestResult {
         let ctx = test_codegen(".var foo=49152\nlda #>foo")?;
         assert_eq!(ctx.segments().current().range_data(), vec![0xa9, 0xc0]);
