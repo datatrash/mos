@@ -171,6 +171,11 @@ impl SegmentMap {
 
 pub type RegisteredFunction = &'static dyn Fn(Vec<Option<i64>>) -> CodegenResult<Option<i64>>;
 
+pub enum EmitResult {
+    Success,
+    TryLater,
+}
+
 pub struct CodegenContext {
     options: CodegenOptions,
     segments: SegmentMap,
@@ -384,7 +389,7 @@ impl CodegenContext {
         pc: Option<ProgramCounter>,
         location: &Location,
         error_on_failure: bool,
-    ) -> CodegenResult<(bool, Vec<u8>)> {
+    ) -> CodegenResult<(EmitResult, Vec<u8>)> {
         type MM = Mnemonic;
         type AM = AddressingMode;
         use smallvec::smallvec as v;
@@ -547,7 +552,12 @@ impl CodegenContext {
             None => (true, smallvec![possible_opcodes[0].0]),
         };
 
-        Ok((!expression_is_valid, bytes.to_vec()))
+        let result = match expression_is_valid {
+            true => EmitResult::Success,
+            false => EmitResult::TryLater,
+        };
+
+        Ok((result, bytes.to_vec()))
     }
 
     fn emit_data(
@@ -556,14 +566,14 @@ impl CodegenContext {
         data_length: usize,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<(bool, Vec<u8>)> {
+    ) -> CodegenResult<(EmitResult, Vec<u8>)> {
         // Did any of the emitted exprs fail to evaluate? Then re-evaluate all of them later.
         let mut any_failed = false;
 
-        let mut result = vec![];
+        let mut bytes = vec![];
         for expr in exprs {
             let evaluated = self.evaluate(expr, pc, error_on_failure)?;
-            let bytes: Vec<u8> = match evaluated {
+            let data: Vec<u8> = match evaluated {
                 Some(val) => match data_length {
                     1 => vec![val as u8],
                     2 => (val as u16).to_le_bytes().to_vec(),
@@ -580,10 +590,15 @@ impl CodegenContext {
                     }
                 }
             };
-            result.extend(bytes);
+            bytes.extend(data);
         }
 
-        Ok((any_failed, result))
+        let result = match any_failed {
+            true => EmitResult::TryLater,
+            false => EmitResult::Success,
+        };
+
+        Ok((result, bytes))
     }
 
     fn emit_single(
@@ -592,14 +607,14 @@ impl CodegenContext {
         location: &Location,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
-    ) -> CodegenResult<(bool, Vec<u8>)> {
-        let (emit_later, bytes) = match token {
+    ) -> CodegenResult<(EmitResult, Vec<u8>)> {
+        let (result, bytes) = match token {
             Token::Label { id, .. } => match pc {
                 Some(pc) => self
                     .symbols
                     .register(&id.data, Symbol::Label(pc), Some(&id.location), false)
-                    .map(|_| (false, vec![])),
-                None => Ok((true, vec![])),
+                    .map(|_| (EmitResult::Success, vec![])),
+                None => Ok((EmitResult::TryLater, vec![])),
             },
             Token::Align { value, .. } => match self.evaluate(value, pc, error_on_failure)? {
                 Some(align) => match pc {
@@ -607,11 +622,11 @@ impl CodegenContext {
                         let padding = (align - (pc.as_i64() % align)) as usize;
                         let mut v = Vec::new();
                         v.resize(padding, 0u8);
-                        Ok((false, v))
+                        Ok((EmitResult::Success, v))
                     }
-                    None => Ok((true, vec![])),
+                    None => Ok((EmitResult::TryLater, vec![])),
                 },
-                None => Ok((true, vec![])),
+                None => Ok((EmitResult::TryLater, vec![])),
             },
             Token::VariableDefinition { ty, id, value, .. } => {
                 let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
@@ -631,16 +646,16 @@ impl CodegenContext {
                     ),
                 };
 
-                result.map(|_| (false, vec![]))
+                result.map(|_| (EmitResult::Success, vec![]))
             }
             Token::ProgramCounterDefinition { value, .. } => {
                 let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
                 match self.segments.try_current_mut() {
                     Some(segment) => {
                         segment.set_current_pc(ProgramCounter::new(eval as usize));
-                        Ok((false, vec![]))
+                        Ok((EmitResult::Success, vec![]))
                     }
-                    None => Ok((true, vec![])),
+                    None => Ok((EmitResult::TryLater, vec![])),
                 }
             }
             Token::Instruction(i) => self.emit_instruction(i, pc, location, error_on_failure),
@@ -652,9 +667,9 @@ impl CodegenContext {
                 let root = self.source_root.as_ref().unwrap();
                 let filename = root.join(filename.data);
                 let bytes = fs::read(filename)?;
-                Ok((false, bytes))
+                Ok((EmitResult::Success, bytes))
             }
-            _ => Ok((false, vec![])),
+            _ => Ok((EmitResult::Success, vec![])),
         }?;
 
         if let Some(pc) = pc {
@@ -671,9 +686,14 @@ impl CodegenContext {
             }
         }
 
-        // We need to handle this emittable again later if the emittable has indicated this by itself (emit_later) or if there was no
+        // We need to handle this emittable again later if the emittable has indicated this by itself (result) or if there was no
         // active segment we could emit to (pc.is_none()).
-        Ok((emit_later || pc.is_none(), bytes))
+        let result = match &pc {
+            Some(_) => result,
+            None => EmitResult::TryLater,
+        };
+
+        Ok((result, bytes))
     }
 
     fn evaluate_or_error(
@@ -767,13 +787,12 @@ impl CodegenContext {
                             None => pc,
                         };
                         match self.emit_single(&token, &location, pc, error_on_failure) {
-                            Ok((emit_later, _bytes)) => {
-                                if emit_later {
+                            Ok((result, _bytes)) => match result {
+                                EmitResult::TryLater => {
                                     Some(Emittable::Single(pc, location, token))
-                                } else {
-                                    None
                                 }
-                            }
+                                EmitResult::Success => None,
+                            },
                             Err(e) => {
                                 self.push_error(e);
                                 None
