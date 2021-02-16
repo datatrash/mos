@@ -634,6 +634,15 @@ impl<'a, T> Located<'a, T> {
         )
     }
 
+    /// Borrow the [Located] and map the data to something else using an FnOnce
+    pub fn map_once<U, F: FnOnce(&T) -> U>(&self, map_fn: F) -> Located<'a, U> {
+        Located::new_with_trivia(
+            self.location.clone(),
+            map_fn(&self.data),
+            self.trivia.clone(),
+        )
+    }
+
     /// Take ownership of the [Located] and map the data into something else
     pub fn map_into<U, F: FnOnce(T) -> U>(self, map_fn: F) -> Located<'a, U> {
         Located::new_with_trivia(self.location, map_fn(self.data), self.trivia)

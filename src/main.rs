@@ -59,7 +59,7 @@ fn get_app() -> App<'static> {
                 .about("Disables colorized output"),
         )
         .subcommand(build_app())
-    //.subcommand(format_app())
+        .subcommand(format_app())
 }
 
 fn main() {
@@ -77,7 +77,7 @@ fn main() {
 
     let result = match args.subcommand() {
         Some(("build", args)) => build_command(args),
-        //Some(("format", args)) => format_command(args),
+        Some(("format", args)) => format_command(args),
         _ => panic!("Unknown subcommand"),
     };
 
