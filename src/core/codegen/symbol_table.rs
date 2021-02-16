@@ -85,7 +85,7 @@ impl SymbolTable {
         let id = id.into();
         if !allow_same_type_redefinition {
             let location = location.unwrap();
-            if let Some(existing) = self.lookup_in_current_scope(location, &[id])? {
+            if let Some(existing) = self.lookup(location, &[id], false)? {
                 let is_same_type =
                     std::mem::discriminant(existing) == std::mem::discriminant(&value);
 
@@ -130,13 +130,12 @@ impl SymbolTable {
     }
 
     // Look up a symbol in the symbol table.
-    // If `check_target_scope_only` is set, the lookup will not bubble up to parent scopes if the
-    // symbol is not found.
-    fn lookup_internal(
+    // If `bubble_up` is set, the lookup will bubble up to parent scopes if the symbol is not found in the current scope.
+    fn lookup(
         &self,
         location: &Location,
         path: &[&str],
-        check_target_scope_only: bool,
+        bubble_up: bool,
     ) -> CodegenResult<Option<&Symbol>> {
         if path.is_empty() {
             return Ok(None);
@@ -179,7 +178,7 @@ impl SymbolTable {
                 return Ok(Some(symbol));
             }
 
-            if check_target_scope_only {
+            if !bubble_up {
                 // Didn't find it in the current scope, so bail out
                 return Ok(None);
             }
@@ -193,25 +192,9 @@ impl SymbolTable {
         }
     }
 
-    pub(super) fn lookup(
-        &self,
-        location: &Location,
-        path: &[&str],
-    ) -> CodegenResult<Option<&Symbol>> {
-        self.lookup_internal(location, path, false)
-    }
-
-    pub(super) fn lookup_in_current_scope(
-        &self,
-        location: &Location,
-        path: &[&str],
-    ) -> CodegenResult<Option<&Symbol>> {
-        self.lookup_internal(location, path, true)
-    }
-
     pub(super) fn value(&self, location: &Location, path: &[&str]) -> CodegenResult<Option<i64>> {
         Ok(self
-            .lookup(location, path)?
+            .lookup(location, path, true)?
             .map(|s| match s {
                 Symbol::Label(pc) => Some(pc.as_i64()),
                 Symbol::Variable(val) | Symbol::Constant(val) | Symbol::System(val) => Some(*val),
@@ -306,49 +289,58 @@ mod tests {
         st.enter(&scope);
         reg(&mut st, "A", 100)?;
 
-        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(100)));
+        assert_eq!(
+            st.lookup(&loc(), &["A"], true)?,
+            Some(&Symbol::Constant(100))
+        );
 
         let scope = st.add_child_scope(Some("bar"));
         st.enter(&scope);
         reg(&mut st, "A", 555)?;
-        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(555)));
+        assert_eq!(
+            st.lookup(&loc(), &["A"], true)?,
+            Some(&Symbol::Constant(555))
+        );
         st.leave();
 
-        assert_eq!(st.lookup(&loc(), &["B"])?, Some(&Symbol::Constant(2)));
+        assert_eq!(st.lookup(&loc(), &["B"], true)?, Some(&Symbol::Constant(2)));
         assert_eq!(
-            st.lookup(&loc(), &["super", "A"])?,
+            st.lookup(&loc(), &["super", "A"], true)?,
             Some(&Symbol::Constant(1))
         );
         assert_eq!(
-            st.lookup(&loc(), &["super", "foo", "A"])?,
+            st.lookup(&loc(), &["super", "foo", "A"], true)?,
             Some(&Symbol::Constant(100))
         );
 
         st.leave();
 
         assert_eq!(
-            st.lookup(&loc(), &["foo", "bar", "A"])?,
+            st.lookup(&loc(), &["foo", "bar", "A"], true)?,
             Some(&Symbol::Constant(555))
         );
 
-        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(1)));
+        assert_eq!(st.lookup(&loc(), &["A"], true)?, Some(&Symbol::Constant(1)));
         assert_eq!(
-            st.lookup(&loc(), &["foo", "A"])?,
+            st.lookup(&loc(), &["foo", "A"], true)?,
             Some(&Symbol::Constant(100))
         );
         assert_eq!(
-            st.lookup(&loc(), &["super", "A"])?,
+            st.lookup(&loc(), &["super", "A"], true)?,
             Some(&Symbol::Constant(1))
         );
 
-        assert_eq!(st.lookup(&loc(), &["foo2", "A"])?, None);
+        assert_eq!(st.lookup(&loc(), &["foo2", "A"], true)?, None);
         let scope = st.add_child_scope(Some("foo2"));
         st.enter(&scope);
         reg(&mut st, "A", 200)?;
-        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(200)));
+        assert_eq!(
+            st.lookup(&loc(), &["A"], true)?,
+            Some(&Symbol::Constant(200))
+        );
         st.leave();
         assert_eq!(
-            st.lookup(&loc(), &["foo2", "A"])?,
+            st.lookup(&loc(), &["foo2", "A"], true)?,
             Some(&Symbol::Constant(200))
         );
 
@@ -360,8 +352,14 @@ mod tests {
         let mut st = SymbolTable::new();
         st.register_path(&["a", "a"], Symbol::Constant(1), Some(&loc()), false)?;
         st.register_path(&["a", "b"], Symbol::Constant(2), Some(&loc()), false)?;
-        assert_eq!(st.lookup(&loc(), &["a", "a"])?, Some(&Symbol::Constant(1)));
-        assert_eq!(st.lookup(&loc(), &["a", "b"])?, Some(&Symbol::Constant(2)));
+        assert_eq!(
+            st.lookup(&loc(), &["a", "a"], true)?,
+            Some(&Symbol::Constant(1))
+        );
+        assert_eq!(
+            st.lookup(&loc(), &["a", "b"], true)?,
+            Some(&Symbol::Constant(2))
+        );
         Ok(())
     }
 
@@ -370,7 +368,7 @@ mod tests {
         let mut st = SymbolTable::new();
         st.register_path(&["foo", "bar"], Symbol::Constant(1), Some(&loc()), false)?;
         assert_eq!(
-            st.lookup(&loc(), &["foo", "super", "foo", "bar"])
+            st.lookup(&loc(), &["foo", "super", "foo", "bar"], true)
                 .err()
                 .unwrap()
                 .to_string(),
@@ -386,12 +384,18 @@ mod tests {
         let scope = st.add_child_scope(None);
         st.enter(&scope);
         reg(&mut st, "A", 100)?;
-        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(100)));
+        assert_eq!(
+            st.lookup(&loc(), &["A"], true)?,
+            Some(&Symbol::Constant(100))
+        );
         st.leave();
         let scope = st.add_child_scope(None);
         st.enter(&scope);
         reg(&mut st, "A", 200)?;
-        assert_eq!(st.lookup(&loc(), &["A"])?, Some(&Symbol::Constant(200)));
+        assert_eq!(
+            st.lookup(&loc(), &["A"], true)?,
+            Some(&Symbol::Constant(200))
+        );
         st.leave();
         Ok(())
     }
