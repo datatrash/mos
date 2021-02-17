@@ -429,10 +429,18 @@ fn label(input: LocatedSpan) -> IResult<Located<Token>> {
         tuple((
             ws(identifier_name),
             expect(ws(char(':')), "labels should end with ':'"),
+            opt(braces),
         )),
-        move |(id, colon)| {
+        move |(id, colon, braces)| {
             let id = id.flatten().map_into(|i| i.into_identifier());
-            Located::new(location, Token::Label { id, colon })
+            Located::new(
+                location,
+                Token::Label {
+                    id,
+                    colon,
+                    braces: braces.map(Box::new),
+                },
+            )
         },
     )(input)
 }
@@ -1103,17 +1111,17 @@ mod test {
     }
 
     #[test]
-    fn parse_data() -> MosResult<()> {
+    fn parse_data() {
         check(
             ".byte 123\n.word foo\n.dword 12345678\n.word 1 + 2,   3, 4 * 4",
             ".BYTE 123\n.WORD foo\n.DWORD 12345678\n.WORD 1 + 2,   3, 4 * 4",
         );
-        Ok(())
     }
 
     #[test]
     fn parse_label() {
         check("   foo:   nop", "   foo:   NOP");
+        check("   foo:   {nop }", "   foo:   {NOP }");
     }
 
     #[test]
@@ -1123,13 +1131,13 @@ mod test {
 
     #[test]
     fn parse_fn_call() {
-        let factor = invoke("func()", |span| fn_call(span));
+        let factor = invoke("func()", fn_call);
         assert_eq!(factor.to_string(), "func()");
 
-        let factor = invoke("func   (   a)", |span| fn_call(span));
+        let factor = invoke("func   (   a)", fn_call);
         assert_eq!(factor.to_string(), "func   (   a)");
 
-        let factor = invoke("func   (a   ,   b   )", |span| fn_call(span));
+        let factor = invoke("func   (a   ,   b   )", fn_call);
         assert_eq!(factor.to_string(), "func   (a   ,   b   )");
     }
 

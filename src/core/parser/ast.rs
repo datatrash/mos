@@ -109,6 +109,17 @@ pub struct Location<'a> {
     pub column: u32,
 }
 
+impl<'a> Location<'a> {
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self {
+            path: "test.asm".as_ref(),
+            line: 0,
+            column: 0,
+        }
+    }
+}
+
 /// A version of [Location] that owns its data
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedLocation {
@@ -528,6 +539,7 @@ pub enum Token<'a> {
     Label {
         id: Located<'a, Identifier<'a>>,
         colon: Option<Located<'a, char>>,
+        braces: Option<Box<Located<'a, Token<'a>>>>,
     },
     Operand(Operand<'a>),
     ProgramCounterDefinition {
@@ -877,12 +889,16 @@ impl<'a> Display for Token<'a> {
                 }
                 None => write!(f, "{}", i.mnemonic),
             },
-            Token::Label { id, colon } => {
+            Token::Label { id, colon, braces } => {
+                let braces = match braces {
+                    Some(s) => format!("{}", s),
+                    None => "".to_string(),
+                };
                 let colon = match colon {
                     Some(c) => format!("{}", c),
                     None => "".to_string(),
                 };
-                write!(f, "{}{}", id, colon)
+                write!(f, "{}{}{}", id, colon, braces)
             }
             Token::Operand(o) => {
                 let suffix = match &o.suffix {

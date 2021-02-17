@@ -188,6 +188,7 @@ pub struct CodegenContext {
 #[derive(Debug)]
 pub enum Emittable<'a> {
     Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
+    Label(Located<'a, Identifier<'a>>),
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
@@ -609,13 +610,6 @@ impl CodegenContext {
         error_on_failure: bool,
     ) -> CodegenResult<(EmitResult, Vec<u8>)> {
         let (result, bytes) = match token {
-            Token::Label { id, .. } => match pc {
-                Some(pc) => self
-                    .symbols
-                    .register(&id.data, Symbol::Label(pc), Some(&id.location), false)
-                    .map(|_| (EmitResult::Success, vec![])),
-                None => Ok((EmitResult::TryLater, vec![])),
-            },
             Token::Align { value, .. } => match self.evaluate(value, pc, error_on_failure)? {
                 Some(align) => match pc {
                     Some(pc) => {
@@ -736,6 +730,23 @@ impl CodegenContext {
                 log::trace!("Processing emittable: {:?}", emittable);
                 let pc = self.segments.try_current().map(|seg| seg.current_pc());
                 match emittable {
+                    Emittable::Label(id) => match pc {
+                        Some(pc) => {
+                            match self.symbols.register(
+                                &id.data,
+                                Symbol::Label(pc),
+                                Some(&id.location),
+                                false,
+                            ) {
+                                Ok(_) => None,
+                                Err(e) => {
+                                    self.push_error(e);
+                                    None
+                                }
+                            }
+                        }
+                        None => Some(Emittable::Label(id)),
+                    },
                     Emittable::SegmentDefinition(cfg) => {
                         let start = self.evaluate_or_error(
                             "start",
@@ -908,7 +919,6 @@ impl CodegenContext {
     }
 
     fn generate_emittables<'a>(&mut self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
-        let mut active_label = None;
         ast.into_iter()
             .filter_map(|lt| match lt.data {
                 Token::Definition { id, value, .. } => {
@@ -920,13 +930,12 @@ impl CodegenContext {
                     };
                     let cfg = cfg.data.into_config_map();
 
-                    active_label = None;
                     match definition_type {
                         "segment" => {
                             // Perform some sanity checks
                             let errors = require_segment_options_fields(&cfg, &cfg_location);
                             if errors.is_empty() {
-                                Some(Emittable::SegmentDefinition(cfg))
+                                Some(vec![Emittable::SegmentDefinition(cfg)])
                             } else {
                                 self.errors.extend(errors);
                                 None
@@ -938,20 +947,44 @@ impl CodegenContext {
                 Token::Segment { id, inner, .. } => {
                     let segment_name = id.data.as_identifier().0;
                     let inner = inner.map(|b| b.data.into_braces()).unwrap_or_else(Vec::new);
-                    Some(Emittable::Segment(
+                    Some(vec![Emittable::Segment(
                         segment_name.into(),
                         id.location.clone(),
                         self.generate_emittables(inner),
-                    ))
+                    )])
                 }
                 Token::Braces { inner, .. } => {
-                    let scope_name = self.symbols.add_child_scope(active_label);
+                    let scope_name = self.symbols.add_child_scope(None);
                     self.symbols.enter(&scope_name);
                     let e = Emittable::Nested(scope_name, self.generate_emittables(inner.data));
                     self.symbols.leave();
+                    Some(vec![e])
+                }
+                Token::Label { id, braces, .. } => {
+                    match braces {
+                        Some(braces) => {
+                            // The label contains braces, so also emit the inner data
+                            let braces_emittable = match braces.data {
+                                Token::Braces { inner, .. } => {
+                                    let scope_name = self.symbols.add_child_scope(Some(id.data.0));
+                                    self.symbols.enter(&scope_name);
+                                    let e = Emittable::Nested(
+                                        scope_name,
+                                        self.generate_emittables(inner.data),
+                                    );
+                                    self.symbols.leave();
+                                    e
+                                }
+                                _ => panic!(),
+                            };
 
-                    active_label = None;
-                    Some(e)
+                            Some(vec![Emittable::Label(id), braces_emittable])
+                        }
+                        None => {
+                            // No braces, so just emit the label
+                            Some(vec![Emittable::Label(id)])
+                        }
+                    }
                 }
                 Token::If {
                     value, if_, else_, ..
@@ -960,19 +993,11 @@ impl CodegenContext {
                     let else_ = else_
                         .map(|e| self.generate_emittables(vec![*e]))
                         .unwrap_or_else(Vec::new);
-                    Some(Emittable::If(value, if_, else_))
+                    Some(vec![Emittable::If(value, if_, else_)])
                 }
-                _ => {
-                    // When a label is found we set it as an active label. If it is immediately followed by braces the label name will be
-                    // used to set the name of the braces' scope. If it is not followed by braces we unset the active label to make sure
-                    // any nested scope doesn't accidentally get the labels' name.
-                    match &lt.data {
-                        Token::Label { id, .. } => active_label = Some(id.data.0),
-                        _ => active_label = None,
-                    };
-                    Some(Emittable::Single(None, lt.location, lt.data))
-                }
+                _ => Some(vec![Emittable::Single(None, lt.location, lt.data)]),
             })
+            .flatten()
             .collect_vec()
     }
 
@@ -1119,13 +1144,12 @@ mod tests {
     }
 
     #[test]
-    fn can_detect_operand_size_mismatch() -> TestResult {
+    fn can_detect_operand_size_mismatch() {
         let err = test_codegen("lda (foo,x)\nfoo: nop").err().unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:1:1: error: operand size mismatch"
         );
-        Ok(())
     }
 
     #[test]
@@ -1294,17 +1318,16 @@ mod tests {
     }
 
     #[test]
-    fn cannot_use_unknown_segments() -> TestResult {
+    fn cannot_use_unknown_segments() {
         let err = test_codegen(".segment foo").err().unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:1:10: error: unknown identifier: foo"
         );
-        Ok(())
     }
 
     #[test]
-    fn segments_have_required_fields() -> TestResult {
+    fn segments_have_required_fields() {
         let err = test_codegen(".define segment { foo = bar }").err().unwrap();
         assert_eq!(
             err.to_string()
@@ -1316,7 +1339,6 @@ mod tests {
                 .contains("test.asm:1:18: error: required field: start"),
             true
         );
-        Ok(())
     }
 
     #[test]
@@ -1345,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_redefine_constants() -> TestResult {
+    fn cannot_redefine_constants() {
         let err = test_codegen(".const foo=49152\n.const foo=foo + 5")
             .err()
             .unwrap();
@@ -1353,17 +1375,15 @@ mod tests {
             err.to_string(),
             "test.asm:2:8: error: cannot redefine symbol: foo"
         );
-        Ok(())
     }
 
     #[test]
-    fn cannot_redefine_variable_types() -> TestResult {
+    fn cannot_redefine_variable_types() {
         let err = test_codegen(".const foo=49152\nfoo: nop").err().unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:2:1: error: cannot redefine symbol: foo"
         );
-        Ok(())
     }
 
     #[test]
@@ -1478,7 +1498,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_access_forward_declared_labels_within_nested_scope() -> TestResult {
+    fn cannot_access_forward_declared_labels_within_nested_scope() {
         let err = test_codegen("jmp my_label\n{ my_label: nop }")
             .err()
             .unwrap();
@@ -1486,7 +1506,6 @@ mod tests {
             err.to_string(),
             "test.asm:1:5: error: unknown identifier: my_label"
         );
-        Ok(())
     }
 
     #[test]

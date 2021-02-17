@@ -269,8 +269,6 @@ impl SymbolTable {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use itertools::Itertools;
 
     use crate::commands::SymbolType;
@@ -419,10 +417,6 @@ mod tests {
     }
 
     fn loc<'a>() -> Location<'a> {
-        Location {
-            path: &Path::new("test.asm"),
-            line: 0,
-            column: 0,
-        }
+        Location::empty()
     }
 }

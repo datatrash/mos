@@ -3,7 +3,6 @@
 use std::fmt::Display;
 use std::io::Write;
 use std::ops::Deref;
-use std::rc::Rc;
 
 use clap::{App, Arg, ArgMatches};
 use fs_err::{read_to_string, OpenOptions};
@@ -12,10 +11,12 @@ use itertools::Itertools;
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::{
     parse, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, NumberType, Token,
+    Trivia,
 };
 use crate::errors::MosResult;
 use crate::LINE_ENDING;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Casing {
     Uppercase,
     Lowercase,
@@ -30,71 +31,220 @@ impl Casing {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct MnemonicOptions {
+    one_per_line: bool,
     casing: Casing,
     register_casing: Casing,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BraceNewLineOptions {
+    double_newline_after_rparen: bool,
+}
+
+impl Default for BraceNewLineOptions {
+    fn default() -> Self {
+        Self {
+            double_newline_after_rparen: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BracePosition {
+    SameLine(BraceNewLineOptions),
+    NewLine(BraceNewLineOptions),
+    AsIs,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BraceOptions {
+    position: BracePosition,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WhitespaceOptions {
+    trim: bool,
+    indent: usize,
+    space_between_kvp: bool,
+    space_between_expression_factors: bool,
+    space_before_eol_trivia: bool,
+    collapse_multiple_empty_lines: bool,
+    newline_before_if: bool,
+    newline_before_variables: bool,
+    newline_before_pc: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct Options {
     mnemonics: MnemonicOptions,
+    braces: BraceOptions,
+    whitespace: WhitespaceOptions,
+}
+
+impl Options {
+    fn passthrough() -> Self {
+        Self {
+            mnemonics: MnemonicOptions {
+                one_per_line: false,
+                casing: Casing::Lowercase,
+                register_casing: Casing::Lowercase,
+            },
+            braces: BraceOptions {
+                position: BracePosition::AsIs,
+            },
+            whitespace: WhitespaceOptions {
+                trim: false,
+                indent: 0,
+                space_between_kvp: false,
+                space_between_expression_factors: false,
+                space_before_eol_trivia: false,
+                collapse_multiple_empty_lines: false,
+                newline_before_if: false,
+                newline_before_variables: false,
+                newline_before_pc: false,
+            },
+        }
+    }
+
+    fn default_no_indent() -> Self {
+        let mut options = Options::default();
+        options.whitespace.indent = 0;
+        options
+    }
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             mnemonics: MnemonicOptions {
+                one_per_line: true,
                 casing: Casing::Lowercase,
                 register_casing: Casing::Lowercase,
+            },
+            braces: BraceOptions {
+                position: BracePosition::SameLine(BraceNewLineOptions {
+                    double_newline_after_rparen: true,
+                }),
+            },
+            whitespace: WhitespaceOptions {
+                trim: true,
+                indent: 4,
+                space_between_kvp: true,
+                space_between_expression_factors: true,
+                space_before_eol_trivia: true,
+                collapse_multiple_empty_lines: true,
+                newline_before_if: true,
+                newline_before_variables: true,
+                newline_before_pc: true,
             },
         }
     }
 }
 
-struct Formatter<'a> {
-    ast: Rc<Vec<Located<'a, Token<'a>>>>,
+struct CodeFormatter<'a> {
+    ast: &'a [Located<'a, Token<'a>>],
     options: Options,
-    state: Vec<FormatterState>,
-}
-
-struct FormatterState {
     index: usize,
+    indent: usize,
+    output: Vec<(usize, String)>,
 }
 
-impl<'a> Formatter<'a> {
+impl<'a> CodeFormatter<'a> {
     fn new(ast: &'a [Located<'a, Token<'a>>], options: Options) -> Self {
-        let ast = Rc::new(ast.to_vec());
         Self {
             ast,
             options,
-            state: vec![],
+            index: 0,
+            indent: 0,
+            output: vec![],
+        }
+    }
+
+    fn nested(&self, ast: &'a [Located<'a, Token<'a>>], options: Options) -> Self {
+        Self {
+            ast,
+            options,
+            index: 0,
+            indent: self.indent + self.options.whitespace.indent,
+            output: vec![],
+        }
+    }
+
+    fn parent_located<'c>(&self) -> Option<&'c Located<'a, Token<'a>>> {
+        self.ast.get(self.index)
+    }
+
+    fn parent_token(&self) -> Option<&Token> {
+        self.parent_located().map(|lt| &lt.data)
+    }
+
+    fn prev_non_trivia_token(&self) -> Option<&Token> {
+        let mut idx = self.index;
+        loop {
+            if idx == 0 {
+                return None;
+            }
+
+            idx -= 1;
+            let token = self.ast.get(idx).unwrap_or_else(|| {
+                panic!("idx: {} // len: {}", idx, self.ast.len());
+            });
+            match &token.data {
+                Token::EolTrivia(_) | Token::Eof => (),
+                _ => {
+                    return Some(&token.data);
+                }
+            }
         }
     }
 
     fn format(&mut self) -> String {
-        self.format_tokens(&self.ast.clone())
+        self.index = 0;
+        for item in self.ast {
+            let str = self.format_token(item);
+
+            if !str.is_empty() {
+                // Determine the indent level for this token.
+                // If it was EolTrivia we don't want to indent, since it gets tacked on to the end of the previous token
+                // which is already indented.
+                let indent_level = match item.data {
+                    Token::EolTrivia(_) => 0,
+                    _ => self.indent,
+                };
+                self.output.push((indent_level, str));
+            }
+            self.index += 1;
+        }
+
+        indent_str(&self.output)
     }
 
-    fn format_tokens(&mut self, tokens: &[Located<Token>]) -> String {
-        self.state.push(FormatterState { index: 0 });
-
-        let result = tokens
-            .iter()
-            .map(|lt| self.format_token(lt))
-            .collect_vec()
-            .join("");
-
-        self.state.pop();
+    fn with_options<F: FnOnce(&mut Self) -> T, T>(&mut self, f: F) -> T {
+        let old = self.options;
+        let result = f(self);
+        self.options = old;
         result
     }
 
-    fn format_token<'f>(&mut self, lt: &'f Located<Token>) -> String {
+    fn preceding_newline_len(&self) -> usize {
+        let items: Vec<&str> = self.output.iter().map(|(_, s)| s.as_str()).collect();
+        preceding_newline_len(&items)
+    }
+
+    fn format_token<'f: 'a>(&mut self, lt: &'f Located<Token>) -> String {
         let result = match &lt.data {
             Token::Align { tag, value } => {
+                let ws = self.options.whitespace.space_between_kvp;
                 let tag = self.format_located(tag);
-                let value = format!(
-                    "{}{}",
-                    self.format_trivia(value),
-                    self.format_expression(&value.data)
+                let value = space_prefix_if(
+                    format!(
+                        "{}{}",
+                        self.format_trivia(value),
+                        self.format_expression(&value.data)
+                    ),
+                    ws,
                 );
                 format!("{}{}", tag, value)
             }
@@ -108,19 +258,97 @@ impl<'a> Formatter<'a> {
                 inner,
                 rparen,
             } => {
-                let lparen = self.format_display(lparen);
-                let inner = self.format_tokens(&inner.data);
-                let rparen = self.format_display(rparen);
+                let inner = self.nested(&inner.data, self.options).format();
+
+                let inner = if self.options.whitespace.trim {
+                    // When we trim, we need to re-indent afterwards
+                    let inner = vec![(
+                        self.indent + self.options.whitespace.indent,
+                        inner.trim().to_string(),
+                    )];
+                    indent_str(&inner)
+                } else {
+                    inner
+                };
+
+                // Right paren needs a newline only if the inner tokens don't already end with a newline
+                let rparen_newline_prefix: String =
+                    if inner.ends_with(LINE_ENDING) || inner.is_empty() {
+                        "".into()
+                    } else {
+                        LINE_ENDING.into()
+                    };
+
+                let (lparen, rparen) = self.with_options(|f| {
+                    f.options.whitespace.trim = true;
+
+                    match f.options.braces.position {
+                        BracePosition::SameLine(newline_options) => {
+                            // Left paren needs a newline or a space depending on parent token
+                            let lparen_newline_prefix: String = match f.parent_token() {
+                                Some(Token::If { .. })
+                                | Some(Token::Label { .. })
+                                | Some(Token::Segment { .. })
+                                | Some(Token::Definition { .. }) => " ".into(),
+                                _ => LINE_ENDING.into(),
+                            };
+
+                            let lparen = format!(
+                                "{}{}{{{}",
+                                lparen_newline_prefix,
+                                space_prefix(f.format_trivia(&lparen).trim_start().to_string()),
+                                LINE_ENDING,
+                            );
+                            let rparen =
+                                format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
+
+                            let rparen = if newline_options.double_newline_after_rparen {
+                                format!("{r}{le}{le}", r = rparen, le = LINE_ENDING)
+                            } else {
+                                rparen
+                            };
+
+                            (lparen, rparen)
+                        }
+                        BracePosition::NewLine(newline_options) => {
+                            let lparen = format!(
+                                "{}{}{{{}",
+                                LINE_ENDING,
+                                f.format_trivia(&lparen).trim_start().to_string(),
+                                LINE_ENDING,
+                            );
+                            let rparen =
+                                format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
+
+                            let rparen = if newline_options.double_newline_after_rparen {
+                                format!("{r}{le}{le}", r = rparen, le = LINE_ENDING)
+                            } else {
+                                rparen
+                            };
+
+                            (lparen, rparen)
+                        }
+                        BracePosition::AsIs => {
+                            let lparen = f.format_display(&lparen);
+                            let rparen = f.format_display(&rparen);
+                            (lparen, rparen)
+                        }
+                    }
+                });
+
                 format!("{}{}{}", lparen, inner, rparen)
             }
             Token::ConfigPair { key, eq, value } => {
                 let key = self.format_token(key);
-                let value = self.format_token(value);
+                let ws = self.options.whitespace.space_between_kvp;
+                let eq = space_prefix_if(self.format_located(eq), ws);
+                let value = space_prefix_if(self.format_token(value), ws);
                 format!("{}{}{}", key, eq, value)
             }
             Token::Data { values, size } => {
-                let values = self.format_args(values);
+                let ws = self.options.whitespace.space_between_kvp;
                 let size = self.format_located(size);
+                let values = space_prefix_if(self.format_args(values), ws);
                 format!("{}{}", size, values)
             }
             Token::Definition { tag, id, value } => {
@@ -128,8 +356,24 @@ impl<'a> Formatter<'a> {
                 format!("{}{}{}", tag, id, value)
             }
             Token::EolTrivia(eol) => {
-                let eol = eol.map_once(|_| LINE_ENDING);
-                self.format_located(&eol)
+                let preceding_newline_len = self.preceding_newline_len();
+
+                if self.options.whitespace.collapse_multiple_empty_lines
+                    && preceding_newline_len > 0
+                {
+                    // Do nothing
+                    "".into()
+                } else {
+                    let eol = eol.map_once(|_| LINE_ENDING);
+                    let eol = self.format_located(&eol);
+
+                    // If the trivia isn't just newlines, add a space (i.e. "nop // hello" instead of "nop//hello")
+                    if !eol.trim().is_empty() && self.options.whitespace.space_before_eol_trivia {
+                        format!(" {}", eol)
+                    } else {
+                        eol
+                    }
+                }
             }
             Token::Eof => "".to_string(),
             Token::Error => panic!("Should not be formatting ASTs that contain errors"),
@@ -142,16 +386,37 @@ impl<'a> Formatter<'a> {
                 tag_else,
                 else_,
             } => {
+                let ws = self.options.whitespace.space_between_kvp;
                 let tag_if = self.format_located(tag_if);
-                let value = format!(
-                    "{}{}",
-                    self.format_trivia(value),
-                    self.format_expression(&value.data)
+                let value = space_prefix_if(
+                    format!(
+                        "{}{}",
+                        self.format_trivia(value),
+                        self.format_expression(&value.data)
+                    ),
+                    ws,
                 );
-                let if_ = self.format_token(if_);
-                let tag_else = self.format_optional_located(tag_else);
+                let if_ = self.with_options(|f| {
+                    // No newline after the 'if' block, if there is an else block
+                    if else_.is_some() {
+                        match &mut f.options.braces.position {
+                            BracePosition::SameLine(opts) | BracePosition::NewLine(opts) => {
+                                opts.double_newline_after_rparen = false;
+                            }
+                            BracePosition::AsIs => (),
+                        };
+                    }
+                    f.format_token(if_)
+                });
+                let tag_else = space_prefix_if(self.format_optional_located(tag_else), ws);
                 let else_ = self.format_optional_token(else_);
-                format!("{}{}{}{}{}", tag_if, value, if_, tag_else, else_)
+                let result = format!("{}{}{}{}{}", tag_if, value, if_, tag_else, else_);
+
+                if self.options.whitespace.newline_before_if && self.preceding_newline_len() <= 1 {
+                    format!("{}{}", LINE_ENDING, result)
+                } else {
+                    result
+                }
             }
             Token::Include {
                 tag,
@@ -159,7 +424,7 @@ impl<'a> Formatter<'a> {
                 filename,
             } => {
                 let tag = self.format_located(tag);
-                let lquote = self.format_located(lquote);
+                let lquote = space_prefix(self.format_located(lquote));
                 let filename = self.format_located(filename);
                 format!("{}{}{}\"", tag, lquote, filename)
             }
@@ -169,14 +434,46 @@ impl<'a> Formatter<'a> {
                     .mnemonics
                     .casing
                     .format(&i.mnemonic.data.to_string());
+
                 let mnemonic = self.format_located(&i.mnemonic.map_once(|_| mnemonic_data));
-                let operand = self.format_optional_token(&i.operand);
-                format!("{}{}{}", self.format_trivia(lt), mnemonic, operand)
+
+                // Was the previous token an instruction?
+                let mnemonic = match self.prev_non_trivia_token() {
+                    Some(Token::Instruction(_)) => {
+                        // Yes. Let's make sure the instructions are split correctly.
+                        if self.options.mnemonics.one_per_line {
+                            // We need to add a line ending if there were no previous newlines
+                            if self.preceding_newline_len() == 0 {
+                                format!("{}{}", LINE_ENDING, mnemonic.trim_start())
+                            } else {
+                                // Had newlines, so we don't need to add a newline
+                                mnemonic.trim_start().into()
+                            }
+                        } else if self.format_trivia(&i.mnemonic).is_empty() {
+                            format!(" {}", mnemonic)
+                        } else {
+                            mnemonic
+                        }
+                    }
+                    _ => {
+                        // No. So let's trim any preceding whitespace, if requested.
+                        if self.options.whitespace.trim {
+                            mnemonic.trim_start().into()
+                        } else {
+                            mnemonic
+                        }
+                    }
+                };
+
+                let operand = self.with_options(|f| f.format_optional_token(&i.operand));
+                let operand = space_prefix(operand);
+                format!("{}{}", mnemonic, operand)
             }
-            Token::Label { id, colon } => {
+            Token::Label { id, colon, braces } => {
                 let id = self.format_located(id);
                 let colon = self.format_optional_located(colon);
-                format!("{}{}", id, colon)
+                let braces = self.format_optional_token(braces);
+                format!("{}{}{}", id, colon, braces)
             }
             Token::Operand(o) => {
                 let lchar = self.format_optional_located(&o.lchar);
@@ -208,14 +505,30 @@ impl<'a> Formatter<'a> {
                 }
             }
             Token::ProgramCounterDefinition { star, eq, value } => {
+                let ws = self.options.whitespace.space_between_kvp;
                 let star = self.format_located(star);
-                let eq = self.format_located(eq);
-                let value = format!(
-                    "{}{}",
-                    self.format_trivia(value),
-                    self.format_expression(&value.data)
+                let eq = space_prefix_if(self.format_located(eq), ws);
+                let value = space_prefix_if(
+                    format!(
+                        "{}{}",
+                        self.format_trivia(value),
+                        self.format_expression(&value.data)
+                    ),
+                    ws,
                 );
-                format!("{}{}{}", star, eq, value)
+                let result = format!("{}{}{}", star, eq, value);
+
+                // If the previous instruction was not a PC definition, add a newline
+                if self.options.whitespace.newline_before_pc
+                    && !matches!(
+                        self.prev_non_trivia_token(),
+                        Some(Token::ProgramCounterDefinition { .. })
+                    )
+                {
+                    format!("{}{}", LINE_ENDING, result)
+                } else {
+                    result
+                }
             }
             Token::RegisterSuffix { comma, register } => {
                 let comma = self.format_located(comma);
@@ -229,21 +542,38 @@ impl<'a> Formatter<'a> {
                 format!("{}{}", comma, register)
             }
             Token::Segment { tag, id, inner } => {
+                let ws = self.options.whitespace.space_between_kvp;
                 let tag = self.format_located(tag);
-                let id = self.format_token(id);
+                let id = space_prefix_if(self.format_token(id), ws);
                 let inner = self.format_optional_token(inner);
                 format!("{}{}{}", tag, id, inner)
             }
             Token::VariableDefinition { ty, id, eq, value } => {
+                let ws = self.options.whitespace.space_between_kvp;
                 let ty = self.format_located(ty);
-                let id = self.format_located(id);
-                let eq = self.format_located(eq);
-                let value = format!(
-                    "{}{}",
-                    self.format_trivia(&value),
-                    self.format_expression(&value.data)
+                let id = space_prefix_if(self.format_located(id), ws);
+                let eq = space_prefix_if(self.format_located(eq), ws);
+                let value = space_prefix_if(
+                    format!(
+                        "{}{}",
+                        self.format_trivia(&value),
+                        self.format_expression(&value.data)
+                    ),
+                    ws,
                 );
-                format!("{}{}{}{}", ty, id, eq, value)
+                let result = format!("{}{}{}{}", ty, id, eq, value);
+
+                // If the previous instruction was not a variable definition, add a newline
+                if self.options.whitespace.newline_before_variables
+                    && !matches!(
+                        self.prev_non_trivia_token(),
+                        Some(Token::VariableDefinition { .. })
+                    )
+                {
+                    format!("{}{}", LINE_ENDING, result)
+                } else {
+                    result
+                }
             }
         };
 
@@ -260,18 +590,51 @@ impl<'a> Formatter<'a> {
             .unwrap_or_else(|| "".to_string())
     }
 
-    fn format_optional_token<'f, T: Deref<Target = Located<'f, Token<'f>>>>(
+    fn format_optional_token<T: Deref<Target = Located<'a, Token<'a>>>>(
         &mut self,
-        lt: &'f Option<T>,
+        lt: &'a Option<T>,
     ) -> String {
         lt.as_ref()
             .map(|t| self.format_token(t.deref()))
             .unwrap_or_else(|| "".to_string())
     }
 
-    fn format_trivia<'f, T>(&self, lt: &Located<'f, T>) -> String {
+    fn format_trivia<T>(&self, lt: &Located<T>) -> String {
         match &lt.trivia {
-            Some(t) => t.data.iter().map(|item| format!("{}", item)).join(""),
+            Some(t) => {
+                if self.options.whitespace.trim {
+                    let mut last_trivia_was_space = true;
+                    let mut result: String = "".into();
+                    for item in &t.data {
+                        let triv = match item {
+                            Trivia::Whitespace(_) => {
+                                if last_trivia_was_space {
+                                    "".into()
+                                } else {
+                                    last_trivia_was_space = true;
+                                    " ".into()
+                                }
+                            }
+                            Trivia::NewLine => "".into(),
+                            _ => {
+                                if last_trivia_was_space {
+                                    last_trivia_was_space = false;
+                                    format!("{}", item)
+                                } else {
+                                    // Leave some whitespace between comments
+                                    format!(" {}", item)
+                                }
+                            }
+                        };
+                        result = format!("{}{}", result, triv);
+                    }
+
+                    result
+                } else {
+                    // Just concat the trivia
+                    t.data.iter().map(|item| format!("{}", item)).join("")
+                }
+            }
             None => "".to_string(),
         }
     }
@@ -287,7 +650,7 @@ impl<'a> Formatter<'a> {
             .unwrap_or_else(|| "".to_string())
     }
 
-    fn format_expression(&mut self, expr: &Expression) -> String {
+    fn format_expression(&mut self, expr: &'a Expression) -> String {
         match expr {
             Expression::BinaryExpression(be) => {
                 let op = self.format_located(&be.op);
@@ -301,7 +664,13 @@ impl<'a> Formatter<'a> {
                     self.format_trivia(&be.rhs),
                     self.format_expression(&be.rhs.data)
                 );
-                format!("{}{}{}", lhs, op, rhs)
+                let ws = self.options.whitespace.space_between_expression_factors;
+                format!(
+                    "{}{}{}",
+                    lhs,
+                    space_prefix_if(op, ws),
+                    space_prefix_if(rhs, ws)
+                )
             }
             Expression::Factor {
                 factor,
@@ -321,7 +690,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn format_expression_factor(&mut self, factor: &ExpressionFactor) -> String {
+    fn format_expression_factor(&mut self, factor: &'a ExpressionFactor) -> String {
         match factor {
             ExpressionFactor::CurrentProgramCounter(star) => self.format_located(star),
             ExpressionFactor::ExprParens {
@@ -385,9 +754,42 @@ impl<'a> Formatter<'a> {
     }
 }
 
+fn space_prefix<S: AsRef<str>>(val: S) -> String {
+    let val = val.as_ref();
+    if !val.trim().is_empty() && !val.starts_with(' ') {
+        format!(" {}", val.trim())
+    } else {
+        val.into()
+    }
+}
+
+fn space_prefix_if<S: AsRef<str>>(val: S, condition: bool) -> String {
+    let val = val.as_ref();
+    if condition {
+        space_prefix(val)
+    } else {
+        val.into()
+    }
+}
+
+fn contains_newline_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> bool {
+    match trivia {
+        Some(trivia) => trivia
+            .data
+            .iter()
+            .any(|item| matches!(item, Trivia::NewLine)),
+        None => false,
+    }
+}
+
 fn format<'a>(ast: &[Located<'a, Token<'a>>], options: Options) -> String {
-    let mut fmt = Formatter::new(ast, options);
-    fmt.format()
+    let mut fmt = CodeFormatter::new(ast, options);
+    let result = fmt.format();
+    if options.whitespace.trim {
+        result.trim().into()
+    } else {
+        result
+    }
 }
 
 pub fn format_app() -> App<'static> {
@@ -417,19 +819,269 @@ pub fn format_command(args: &ArgMatches) -> MosResult<()> {
     Ok(())
 }
 
+fn preceding_newline_len(lines: &[&str]) -> usize {
+    let mut sum = 0;
+    for line in lines.iter().rev() {
+        let trimmed = line.trim_end_matches(LINE_ENDING);
+        let endings = (line.len() - trimmed.len()) / LINE_ENDING.len();
+        sum += endings;
+
+        // We only want to continue if the previous line consisted entirely out of line endings
+        let line_as_line_endings_len = line.len() / LINE_ENDING.len();
+        if line_as_line_endings_len != endings {
+            return sum;
+        }
+    }
+    sum
+}
+
+fn generate_indent_prefix(indent: usize) -> String {
+    let mut indent_prefix = "".to_string();
+    for _ in 0..indent {
+        indent_prefix += " "
+    }
+    indent_prefix
+}
+
+/// Indents multiple strings with their associated indent level, each string containing multiple lines.
+fn indent_str(input: &[(usize, String)]) -> String {
+    // We now have a vector containing indent levels and big strings containing multiple lines.
+    input
+        .iter()
+        .map(|(indent, lines)| {
+            // Now, per string, we're going to:
+            // - Determine if there was at least 1 newline at the end
+            //   This final newline is going to be removed during the join(), so we need to re-add it
+            // - Indent all the lines and join them
+            // - Re-add the final newline, if needed
+            let ending_newline = preceding_newline_len(&[lines]) > 0;
+            let indented = lines
+                .lines()
+                .map(|line| {
+                    if line.trim().is_empty() {
+                        // Don't try to indent lines consisting of trivia
+                        line.to_string()
+                    } else {
+                        // Determine this line's indent level. If it is not idented enough, we will indent it.
+                        let trimmed_line = line.trim_start_matches(' ');
+                        let cur_indent = line.len() - trimmed_line.len();
+                        if cur_indent < *indent {
+                            format!("{}{}", generate_indent_prefix(*indent), trimmed_line)
+                        } else {
+                            line.to_string()
+                        }
+                    }
+                })
+                .join(LINE_ENDING);
+
+            if ending_newline {
+                indented + LINE_ENDING
+            } else {
+                indented
+            }
+        })
+        .join("")
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::commands::format::{format, Options};
+    use itertools::Itertools;
+
+    use crate::commands::*;
     use crate::core::parser::parse;
     use crate::errors::MosResult;
+
+    use super::{format, indent_str, preceding_newline_len, Options};
+
+    #[test]
+    fn test_preceding_newline_len() {
+        // Replace \n with LINE_ENDING
+        fn nl(input: &[&str]) -> usize {
+            use crate::LINE_ENDING;
+
+            let input = input
+                .iter()
+                .map(|line| line.replace("\n", LINE_ENDING))
+                .collect_vec();
+
+            preceding_newline_len(&input.iter().map(|s| s.as_str()).collect_vec())
+        }
+
+        assert_eq!(nl(&["a"]), 0);
+        assert_eq!(nl(&["a", "\n"]), 1);
+        assert_eq!(nl(&["a", "\nb"]), 0);
+        assert_eq!(nl(&["a", "\nb", "\n\n"]), 2);
+        assert_eq!(nl(&["a", "\nb", "\n", "\n"]), 2);
+    }
+
+    #[test]
+    fn test_indent_str() {
+        eq(
+            indent_str(&vec![(0, "a\n  b\n    c".into())]),
+            "a\n  b\n    c",
+        );
+        eq(
+            indent_str(&vec![(1, "a\n  b\n    c".into())]),
+            " a\n  b\n    c",
+        );
+        eq(
+            indent_str(&vec![(4, "a\n  b\n    c".into())]),
+            "    a\n    b\n    c",
+        );
+    }
+
+    #[test]
+    fn default_formatting_splits_instructions() -> MosResult<()> {
+        let ast = parse("test.asm".as_ref(), "lda #123 sta 123\nstx 123\nrol")?;
+        eq(
+            format(&ast, Options::default()),
+            "lda #123\nsta 123\nstx 123\nrol",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn whitespace_trim() -> MosResult<()> {
+        let ast = parse(
+            "test.asm".as_ref(),
+            "/* hello */    /* foo */  lda #123 rol",
+        )?;
+        let mut options = Options::passthrough();
+
+        options.whitespace.trim = true;
+        eq(format(&ast, options), "/* hello */ /* foo */ lda #123 rol");
+
+        Ok(())
+    }
+
+    #[test]
+    fn braces() -> MosResult<()> {
+        let ast = parse("test.asm".as_ref(), ".segment a {}nop")?;
+        let mut options = Options::passthrough();
+
+        options.braces.position = BracePosition::SameLine(BraceNewLineOptions::default());
+        eq(format(&ast, options), ".segment a {\n}\n\nnop");
+
+        options.braces.position = BracePosition::NewLine(BraceNewLineOptions::default());
+        eq(format(&ast, options), ".segment a\n{\n}\n\nnop");
+
+        Ok(())
+    }
+
+    #[test]
+    fn braces_after_pc() -> MosResult<()> {
+        let ast = parse("test.asm".as_ref(), "* = $1000\n{ nop }")?;
+        let mut options = Options::passthrough();
+        options.whitespace.trim = true;
+        options.whitespace.space_between_kvp = true;
+
+        options.braces.position = BracePosition::SameLine(BraceNewLineOptions::default());
+        eq(format(&ast, options), "* = $1000\n{\nnop\n}");
+
+        options.braces.position = BracePosition::NewLine(BraceNewLineOptions::default());
+        eq(format(&ast, options), "* = $1000\n{\nnop\n}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn braces_with_content() -> MosResult<()> {
+        let ast = parse(
+            "test.asm".as_ref(),
+            ".segment a\n\n\n\n  {\n\nnop\n\n\n}nop",
+        )?;
+
+        let mut options = Options::passthrough();
+        options.braces.position = BracePosition::SameLine(BraceNewLineOptions::default());
+        eq(format(&ast, options), ".segment a {\n\n\nnop\n\n\n}\n\nnop");
+        options.braces.position = BracePosition::NewLine(BraceNewLineOptions::default());
+        eq(
+            format(&ast, options),
+            ".segment a\n{\n\n\nnop\n\n\n}\n\nnop",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_formatting_collapses_newlines_after_rparen() -> MosResult<()> {
+        let ast = parse("test.asm".as_ref(), ".segment a {\nbrk\n}\n\n\n\nnop")?;
+        eq(
+            format(&ast, Options::default_no_indent()),
+            ".segment a {\nbrk\n}\n\nnop",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_formatting_braces_indent() -> MosResult<()> {
+        let ast = parse("test.asm".as_ref(), ".if foo {\nnop /* hi */\n}")?;
+        eq(
+            format(&ast, Options::default()),
+            ".if foo {\n    nop /* hi */\n}",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_formatting_label_indent() -> MosResult<()> {
+        let ast = parse("test.asm".as_ref(), "foo:\n\n{\nnop\nbrk\n\nrol}asl")?;
+        eq(
+            format(&ast, Options::default()),
+            "foo: {\n    nop\n    brk\n    rol\n}\n\nasl",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_formatting_newline_before_if() -> MosResult<()> {
+        let ast = parse(
+            "test.asm".as_ref(),
+            "nop\n.if test { nop }\n.if test { brk }\n\n\n\n\n.if test { rol }",
+        )?;
+        eq(
+            format(&ast, Options::default_no_indent()),
+            "nop\n\n.if test {\nnop\n}\n\n.if test {\nbrk\n}\n\n.if test {\nrol\n}",
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn default_formatting_options() -> MosResult<()> {
+        let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
+        let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
+        let ast = parse("test.asm".as_ref(), source)?;
+        let actual = format(&ast, Options::default());
+        println!("{}", actual);
+        eq(actual, expected);
+        Ok(())
+    }
 
     #[test]
     fn passthrough_formatting_should_result_in_original() -> MosResult<()> {
         let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../../test/cli/format/valid-unformatted.asm");
         let ast = parse("test.asm".as_ref(), source)?;
-        let actual = format(&ast, Options::default());
-        assert_eq!(actual, expected);
+        let actual = format(&ast, Options::passthrough());
+
+        eq(actual, expected);
+
         Ok(())
+    }
+
+    // Cross-platform eq
+    fn eq<S: AsRef<str>, T: AsRef<str>>(actual: S, expected: T) {
+        use crate::LINE_ENDING;
+
+        // Split the result into lines to work around cross-platform line ending normalization issues
+        assert_eq!(
+            actual.as_ref().lines().join(LINE_ENDING),
+            expected.as_ref().lines().join(LINE_ENDING)
+        );
     }
 }

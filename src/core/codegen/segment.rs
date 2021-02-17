@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_exceed_max_range_with_multiple_bytes() -> MosResult<()> {
+    fn cannot_exceed_max_range_with_multiple_bytes() {
         let mut seg = Segment::new(
             "a",
             SegmentOptions {
@@ -198,7 +198,5 @@ mod tests {
         // Two bytes don't fit anymore
         let err = seg.set(&[1, 2]).err().unwrap();
         assert_eq!(err.to_string(), "segment 'a' is out of range: beyond $FFFF");
-
-        Ok(())
     }
 }
