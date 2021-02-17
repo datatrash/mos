@@ -954,11 +954,7 @@ impl CodegenContext {
                     )])
                 }
                 Token::Braces { inner, .. } => {
-                    let scope_name = self.symbols.add_child_scope(None);
-                    self.symbols.enter(&scope_name);
-                    let e = Emittable::Nested(scope_name, self.generate_emittables(inner.data));
-                    self.symbols.leave();
-                    Some(vec![e])
+                    Some(vec![self.create_braces_emittable(None, inner.data)])
                 }
                 Token::Label { id, braces, .. } => {
                     match braces {
@@ -966,14 +962,7 @@ impl CodegenContext {
                             // The label contains braces, so also emit the inner data
                             let braces_emittable = match braces.data {
                                 Token::Braces { inner, .. } => {
-                                    let scope_name = self.symbols.add_child_scope(Some(id.data.0));
-                                    self.symbols.enter(&scope_name);
-                                    let e = Emittable::Nested(
-                                        scope_name,
-                                        self.generate_emittables(inner.data),
-                                    );
-                                    self.symbols.leave();
-                                    e
+                                    self.create_braces_emittable(Some(id.data.0), inner.data)
                                 }
                                 _ => panic!(),
                             };
@@ -1021,6 +1010,18 @@ impl CodegenContext {
             }
         }
         Ok(())
+    }
+
+    fn create_braces_emittable<'a>(
+        &mut self,
+        scope_name: Option<&str>,
+        ast: Vec<Located<'a, Token<'a>>>,
+    ) -> Emittable<'a> {
+        let scope_name = self.symbols.add_child_scope(scope_name);
+        self.symbols.enter(&scope_name);
+        let e = Emittable::Nested(scope_name, self.generate_emittables(ast));
+        self.symbols.leave();
+        e
     }
 }
 
