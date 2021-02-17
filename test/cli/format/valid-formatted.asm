@@ -33,6 +33,7 @@
 }
 
 .align 8
+
 data: {
     /* here it is */
     .byte 1 // hello

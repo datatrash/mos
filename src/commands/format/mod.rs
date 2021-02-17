@@ -37,29 +37,17 @@ pub struct MnemonicOptions {
     register_casing: Casing,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct BraceNewLineOptions {
-    double_newline_after_rparen: bool,
-}
-
-impl Default for BraceNewLineOptions {
-    fn default() -> Self {
-        Self {
-            double_newline_after_rparen: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BracePosition {
-    SameLine(BraceNewLineOptions),
-    NewLine(BraceNewLineOptions),
+    SameLine,
+    NewLine,
     AsIs,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct BraceOptions {
     position: BracePosition,
+    double_newline_after_closing_brace: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +61,7 @@ pub struct WhitespaceOptions {
     newline_before_if: bool,
     newline_before_variables: bool,
     newline_before_pc: bool,
+    newline_before_label: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +81,7 @@ impl Options {
             },
             braces: BraceOptions {
                 position: BracePosition::AsIs,
+                double_newline_after_closing_brace: false,
             },
             whitespace: WhitespaceOptions {
                 trim: false,
@@ -103,6 +93,7 @@ impl Options {
                 newline_before_if: false,
                 newline_before_variables: false,
                 newline_before_pc: false,
+                newline_before_label: false,
             },
         }
     }
@@ -123,9 +114,8 @@ impl Default for Options {
                 register_casing: Casing::Lowercase,
             },
             braces: BraceOptions {
-                position: BracePosition::SameLine(BraceNewLineOptions {
-                    double_newline_after_rparen: true,
-                }),
+                position: BracePosition::SameLine,
+                double_newline_after_closing_brace: true,
             },
             whitespace: WhitespaceOptions {
                 trim: true,
@@ -137,6 +127,7 @@ impl Default for Options {
                 newline_before_if: true,
                 newline_before_variables: true,
                 newline_before_pc: true,
+                newline_before_label: true,
             },
         }
     }
@@ -281,7 +272,7 @@ impl<'a> CodeFormatter<'a> {
                     f.options.whitespace.trim = true;
 
                     match f.options.braces.position {
-                        BracePosition::SameLine(newline_options) => {
+                        BracePosition::SameLine => {
                             // Left paren needs a newline or a space depending on parent token
                             let lparen_newline_prefix: String = match f.parent_token() {
                                 Some(Token::If { .. })
@@ -300,27 +291,15 @@ impl<'a> CodeFormatter<'a> {
                             let rparen =
                                 format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
 
-                            let rparen = if newline_options.double_newline_after_rparen {
-                                format!("{}\n\n", rparen)
-                            } else {
-                                rparen
-                            };
-
                             (lparen, rparen)
                         }
-                        BracePosition::NewLine(newline_options) => {
+                        BracePosition::NewLine => {
                             let lparen = format!(
                                 "\n{}{{\n",
                                 f.format_trivia(&lparen).trim_start().to_string(),
                             );
                             let rparen =
                                 format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
-
-                            let rparen = if newline_options.double_newline_after_rparen {
-                                format!("{}\n\n", rparen)
-                            } else {
-                                rparen
-                            };
 
                             (lparen, rparen)
                         }
@@ -331,6 +310,14 @@ impl<'a> CodeFormatter<'a> {
                         }
                     }
                 });
+
+                let rparen = if self.options.braces.double_newline_after_closing_brace
+                    && self.options.braces.position != BracePosition::AsIs
+                {
+                    format!("{}\n\n", rparen)
+                } else {
+                    rparen
+                };
 
                 format!("{}{}{}", lparen, inner, rparen)
             }
@@ -395,12 +382,7 @@ impl<'a> CodeFormatter<'a> {
                 let if_ = self.with_options(|f| {
                     // No newline after the 'if' block, if there is an else block
                     if else_.is_some() {
-                        match &mut f.options.braces.position {
-                            BracePosition::SameLine(opts) | BracePosition::NewLine(opts) => {
-                                opts.double_newline_after_rparen = false;
-                            }
-                            BracePosition::AsIs => (),
-                        };
+                        f.options.braces.double_newline_after_closing_brace = false;
                     }
                     f.format_token(if_)
                 });
@@ -469,7 +451,16 @@ impl<'a> CodeFormatter<'a> {
                 let id = self.format_located(id);
                 let colon = self.format_optional_located(colon);
                 let braces = self.format_optional_token(braces);
-                format!("{}{}{}", id, colon, braces)
+                let result = format!("{}{}{}", id, colon, braces);
+
+                // If the previous instruction was not a label definition, add a newline
+                if self.options.whitespace.newline_before_label
+                    && !matches!(self.prev_non_trivia_token(), Some(Token::Label { .. }))
+                {
+                    format!("\n{}", result)
+                } else {
+                    result
+                }
             }
             Token::Operand(o) => {
                 let lchar = self.format_optional_located(&o.lchar);
@@ -943,11 +934,12 @@ mod tests {
     fn braces() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), ".segment a {}nop")?;
         let mut options = Options::passthrough();
+        options.braces.double_newline_after_closing_brace = true;
 
-        options.braces.position = BracePosition::SameLine(BraceNewLineOptions::default());
+        options.braces.position = BracePosition::SameLine;
         eq(format(&ast, options), ".segment a {\n}\n\nnop");
 
-        options.braces.position = BracePosition::NewLine(BraceNewLineOptions::default());
+        options.braces.position = BracePosition::NewLine;
         eq(format(&ast, options), ".segment a\n{\n}\n\nnop");
 
         Ok(())
@@ -960,10 +952,10 @@ mod tests {
         options.whitespace.trim = true;
         options.whitespace.space_between_kvp = true;
 
-        options.braces.position = BracePosition::SameLine(BraceNewLineOptions::default());
+        options.braces.position = BracePosition::SameLine;
         eq(format(&ast, options), "* = $1000\n{\nnop\n}");
 
-        options.braces.position = BracePosition::NewLine(BraceNewLineOptions::default());
+        options.braces.position = BracePosition::NewLine;
         eq(format(&ast, options), "* = $1000\n{\nnop\n}");
 
         Ok(())
@@ -977,9 +969,10 @@ mod tests {
         )?;
 
         let mut options = Options::passthrough();
-        options.braces.position = BracePosition::SameLine(BraceNewLineOptions::default());
+        options.braces.double_newline_after_closing_brace = true;
+        options.braces.position = BracePosition::SameLine;
         eq(format(&ast, options), ".segment a {\n\n\nnop\n\n\n}\n\nnop");
-        options.braces.position = BracePosition::NewLine(BraceNewLineOptions::default());
+        options.braces.position = BracePosition::NewLine;
         eq(
             format(&ast, options),
             ".segment a\n{\n\n\nnop\n\n\n}\n\nnop",
