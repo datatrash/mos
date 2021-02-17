@@ -14,7 +14,6 @@ use crate::core::parser::{
     Trivia,
 };
 use crate::errors::MosResult;
-use crate::LINE_ENDING;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Casing {
@@ -272,12 +271,11 @@ impl<'a> CodeFormatter<'a> {
                 };
 
                 // Right paren needs a newline only if the inner tokens don't already end with a newline
-                let rparen_newline_prefix: String =
-                    if inner.ends_with(LINE_ENDING) || inner.is_empty() {
-                        "".into()
-                    } else {
-                        LINE_ENDING.into()
-                    };
+                let rparen_newline_prefix: String = if inner.ends_with('\n') || inner.is_empty() {
+                    "".into()
+                } else {
+                    "\n".into()
+                };
 
                 let (lparen, rparen) = self.with_options(|f| {
                     f.options.whitespace.trim = true;
@@ -290,20 +288,20 @@ impl<'a> CodeFormatter<'a> {
                                 | Some(Token::Label { .. })
                                 | Some(Token::Segment { .. })
                                 | Some(Token::Definition { .. }) => " ".into(),
-                                _ => LINE_ENDING.into(),
+                                _ => "\n".into(),
                             };
 
                             let lparen = format!(
                                 "{}{}{{{}",
                                 lparen_newline_prefix,
                                 space_prefix(f.format_trivia(&lparen).trim_start().to_string()),
-                                LINE_ENDING,
+                                "\n",
                             );
                             let rparen =
                                 format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
 
                             let rparen = if newline_options.double_newline_after_rparen {
-                                format!("{r}{le}{le}", r = rparen, le = LINE_ENDING)
+                                format!("{}\n\n", rparen)
                             } else {
                                 rparen
                             };
@@ -312,16 +310,14 @@ impl<'a> CodeFormatter<'a> {
                         }
                         BracePosition::NewLine(newline_options) => {
                             let lparen = format!(
-                                "{}{}{{{}",
-                                LINE_ENDING,
+                                "\n{}{{\n",
                                 f.format_trivia(&lparen).trim_start().to_string(),
-                                LINE_ENDING,
                             );
                             let rparen =
                                 format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
 
                             let rparen = if newline_options.double_newline_after_rparen {
-                                format!("{r}{le}{le}", r = rparen, le = LINE_ENDING)
+                                format!("{}\n\n", rparen)
                             } else {
                                 rparen
                             };
@@ -364,7 +360,7 @@ impl<'a> CodeFormatter<'a> {
                     // Do nothing
                     "".into()
                 } else {
-                    let eol = eol.map_once(|_| LINE_ENDING);
+                    let eol = eol.map_once(|_| "\n");
                     let eol = self.format_located(&eol);
 
                     // If the trivia isn't just newlines, add a space (i.e. "nop // hello" instead of "nop//hello")
@@ -413,7 +409,7 @@ impl<'a> CodeFormatter<'a> {
                 let result = format!("{}{}{}{}{}", tag_if, value, if_, tag_else, else_);
 
                 if self.options.whitespace.newline_before_if && self.preceding_newline_len() <= 1 {
-                    format!("{}{}", LINE_ENDING, result)
+                    format!("\n{}", result)
                 } else {
                     result
                 }
@@ -444,7 +440,7 @@ impl<'a> CodeFormatter<'a> {
                         if self.options.mnemonics.one_per_line {
                             // We need to add a line ending if there were no previous newlines
                             if self.preceding_newline_len() == 0 {
-                                format!("{}{}", LINE_ENDING, mnemonic.trim_start())
+                                format!("\n{}", mnemonic.trim_start())
                             } else {
                                 // Had newlines, so we don't need to add a newline
                                 mnemonic.trim_start().into()
@@ -525,7 +521,7 @@ impl<'a> CodeFormatter<'a> {
                         Some(Token::ProgramCounterDefinition { .. })
                     )
                 {
-                    format!("{}{}", LINE_ENDING, result)
+                    format!("\n{}", result)
                 } else {
                     result
                 }
@@ -570,7 +566,7 @@ impl<'a> CodeFormatter<'a> {
                         Some(Token::VariableDefinition { .. })
                     )
                 {
-                    format!("{}{}", LINE_ENDING, result)
+                    format!("\n{}", result)
                 } else {
                     result
                 }
@@ -809,6 +805,7 @@ pub fn format_command(args: &ArgMatches) -> MosResult<()> {
         let ast = parse(input_name.as_ref(), &source)?;
         let _code = codegen(ast.clone(), CodegenOptions::default())?;
         let formatted = format(&ast, Options::default());
+        let formatted = formatted.replace("\n", crate::LINE_ENDING);
         let mut output_file = OpenOptions::new()
             .truncate(true)
             .write(true)
@@ -822,13 +819,12 @@ pub fn format_command(args: &ArgMatches) -> MosResult<()> {
 fn preceding_newline_len(lines: &[&str]) -> usize {
     let mut sum = 0;
     for line in lines.iter().rev() {
-        let trimmed = line.trim_end_matches(LINE_ENDING);
-        let endings = (line.len() - trimmed.len()) / LINE_ENDING.len();
+        let trimmed = line.trim_end_matches('\n');
+        let endings = line.len() - trimmed.len();
         sum += endings;
 
         // We only want to continue if the previous line consisted entirely out of line endings
-        let line_as_line_endings_len = line.len() / LINE_ENDING.len();
-        if line_as_line_endings_len != endings {
+        if line.len() != endings {
             return sum;
         }
     }
@@ -872,10 +868,10 @@ fn indent_str(input: &[(usize, String)]) -> String {
                         }
                     }
                 })
-                .join(LINE_ENDING);
+                .join("\n");
 
             if ending_newline {
-                indented + LINE_ENDING
+                indented + "\n"
             } else {
                 indented
             }
@@ -895,23 +891,11 @@ mod tests {
 
     #[test]
     fn test_preceding_newline_len() {
-        // Replace \n with LINE_ENDING
-        fn nl(input: &[&str]) -> usize {
-            use crate::LINE_ENDING;
-
-            let input = input
-                .iter()
-                .map(|line| line.replace("\n", LINE_ENDING))
-                .collect_vec();
-
-            preceding_newline_len(&input.iter().map(|s| s.as_str()).collect_vec())
-        }
-
-        assert_eq!(nl(&["a"]), 0);
-        assert_eq!(nl(&["a", "\n"]), 1);
-        assert_eq!(nl(&["a", "\nb"]), 0);
-        assert_eq!(nl(&["a", "\nb", "\n\n"]), 2);
-        assert_eq!(nl(&["a", "\nb", "\n", "\n"]), 2);
+        assert_eq!(preceding_newline_len(&["a"]), 0);
+        assert_eq!(preceding_newline_len(&["a", "\n"]), 1);
+        assert_eq!(preceding_newline_len(&["a", "\nb"]), 0);
+        assert_eq!(preceding_newline_len(&["a", "\nb", "\n\n"]), 2);
+        assert_eq!(preceding_newline_len(&["a", "\nb", "\n", "\n"]), 2);
     }
 
     #[test]
