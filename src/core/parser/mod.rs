@@ -5,7 +5,7 @@ use itertools::Itertools;
 use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take_till1, take_until};
 use nom::character::complete::{alpha1, alphanumeric1, char, hex_digit1, none_of, space1};
-use nom::combinator::{all_consuming, map, opt, recognize, rest};
+use nom::combinator::{all_consuming, map, not, opt, recognize, rest};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{pair, tuple};
 
@@ -389,19 +389,33 @@ fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
     alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
 }
 
-/// Tries to parse a 6502 instruction consisting of a mnemonic and an operand (e.g. `LDA #123`)
+/// Tries to parse a 6502 instruction consisting of a mnemonic and optionally an operand (e.g. `LDA #123`)
 fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
     let location = Location::from(&input);
+    let implied_location = location.clone();
 
-    let instruction = tuple((ws(mnemonic), opt(operand)));
-
-    map_once(instruction, move |(mnemonic, operand)| {
-        let instruction = Instruction {
-            mnemonic,
-            operand: operand.map(Box::new),
-        };
-        Located::new(location, Token::Instruction(instruction))
-    })(input)
+    alt((
+        map(
+            tuple((ws(implied_mnemonic), not(operand))),
+            move |(mnemonic, _)| {
+                let instruction = Instruction {
+                    mnemonic,
+                    operand: None,
+                };
+                Located::new(implied_location.clone(), Token::Instruction(instruction))
+            },
+        ),
+        map(
+            tuple((ws(mnemonic), operand)),
+            move |(mnemonic, operand)| {
+                let instruction = Instruction {
+                    mnemonic,
+                    operand: Some(Box::new(operand)),
+                };
+                Located::new(location.clone(), Token::Instruction(instruction))
+            },
+        ),
+    ))(input)
 }
 
 /// When encountering an error, try to eat enough characters so that parsing may continue from a relatively clean state again
