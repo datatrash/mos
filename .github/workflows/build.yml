@@ -13,6 +13,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+      - uses: Swatinem/rust-cache@v1
       - uses: actions-rs/cargo@v1
         with:
           command: check
@@ -28,6 +29,7 @@ jobs:
           toolchain: stable
           override: true
       - run: rustup component add rustfmt
+      - uses: Swatinem/rust-cache@v1
       - uses: actions-rs/cargo@v1
         with:
           command: fmt
@@ -93,6 +95,8 @@ jobs:
           profile: minimal
           override: true
           target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v1
 
       - name: Use Cross
         if: matrix.os != 'windows-2019'
