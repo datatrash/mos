@@ -20,8 +20,10 @@ log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"
 loggerv = "0.7"
 nom = "6"
 nom_locate = "3"
+serde = { version = "1", features = ["derive"] }
 smallvec = "1"
 thiserror = "1"
+toml = "0.5"
 
 [dev-dependencies]
 simple_logger = "1.11"

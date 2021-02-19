@@ -7,15 +7,16 @@ use std::ops::Deref;
 use clap::{App, Arg, ArgMatches};
 use fs_err::{read_to_string, OpenOptions};
 use itertools::Itertools;
+use serde::Deserialize;
 
-use crate::core::codegen::{codegen, CodegenOptions};
+use crate::config::Config;
 use crate::core::parser::{
     parse, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, NumberType, Token,
     Trivia,
 };
 use crate::errors::MosResult;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 pub enum Casing {
     Uppercase,
     Lowercase,
@@ -30,48 +31,88 @@ impl Casing {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
 pub struct MnemonicOptions {
-    one_per_line: bool,
-    casing: Casing,
-    register_casing: Casing,
+    pub one_per_line: bool,
+    pub casing: Casing,
+    pub register_casing: Casing,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+impl Default for MnemonicOptions {
+    fn default() -> Self {
+        Self {
+            one_per_line: true,
+            casing: Casing::Lowercase,
+            register_casing: Casing::Lowercase,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum BracePosition {
     SameLine,
     NewLine,
     AsIs,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
 pub struct BraceOptions {
-    position: BracePosition,
-    double_newline_after_closing_brace: bool,
+    pub position: BracePosition,
+    pub double_newline_after_closing_brace: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+impl Default for BraceOptions {
+    fn default() -> Self {
+        Self {
+            position: BracePosition::SameLine,
+            double_newline_after_closing_brace: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
 pub struct WhitespaceOptions {
-    trim: bool,
-    indent: usize,
-    space_between_kvp: bool,
-    space_between_expression_factors: bool,
-    space_before_eol_trivia: bool,
-    collapse_multiple_empty_lines: bool,
-    newline_before_if: bool,
-    newline_before_variables: bool,
-    newline_before_pc: bool,
-    newline_before_label: bool,
+    pub trim: bool,
+    pub indent: usize,
+    pub space_between_kvp: bool,
+    pub space_between_expression_factors: bool,
+    pub space_before_eol_trivia: bool,
+    pub collapse_multiple_empty_lines: bool,
+    pub newline_before_if: bool,
+    pub newline_before_variables: bool,
+    pub newline_before_pc: bool,
+    pub newline_before_label: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Options {
-    mnemonics: MnemonicOptions,
-    braces: BraceOptions,
-    whitespace: WhitespaceOptions,
+impl Default for WhitespaceOptions {
+    fn default() -> Self {
+        Self {
+            trim: true,
+            indent: 4,
+            space_between_kvp: true,
+            space_between_expression_factors: true,
+            space_before_eol_trivia: true,
+            collapse_multiple_empty_lines: true,
+            newline_before_if: true,
+            newline_before_variables: true,
+            newline_before_pc: true,
+            newline_before_label: true,
+        }
+    }
 }
 
-impl Options {
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub struct FormattingOptions {
+    pub mnemonics: MnemonicOptions,
+    pub braces: BraceOptions,
+    pub whitespace: WhitespaceOptions,
+}
+
+impl FormattingOptions {
     fn passthrough() -> Self {
         Self {
             mnemonics: MnemonicOptions {
@@ -99,50 +140,32 @@ impl Options {
     }
 
     fn default_no_indent() -> Self {
-        let mut options = Options::default();
+        let mut options = FormattingOptions::default();
         options.whitespace.indent = 0;
         options
     }
 }
 
-impl Default for Options {
+impl Default for FormattingOptions {
     fn default() -> Self {
         Self {
-            mnemonics: MnemonicOptions {
-                one_per_line: true,
-                casing: Casing::Lowercase,
-                register_casing: Casing::Lowercase,
-            },
-            braces: BraceOptions {
-                position: BracePosition::SameLine,
-                double_newline_after_closing_brace: true,
-            },
-            whitespace: WhitespaceOptions {
-                trim: true,
-                indent: 4,
-                space_between_kvp: true,
-                space_between_expression_factors: true,
-                space_before_eol_trivia: true,
-                collapse_multiple_empty_lines: true,
-                newline_before_if: true,
-                newline_before_variables: true,
-                newline_before_pc: true,
-                newline_before_label: true,
-            },
+            mnemonics: MnemonicOptions::default(),
+            braces: BraceOptions::default(),
+            whitespace: WhitespaceOptions::default(),
         }
     }
 }
 
 struct CodeFormatter<'a> {
     ast: &'a [Located<'a, Token<'a>>],
-    options: Options,
+    options: FormattingOptions,
     index: usize,
     indent: usize,
     output: Vec<(usize, String)>,
 }
 
 impl<'a> CodeFormatter<'a> {
-    fn new(ast: &'a [Located<'a, Token<'a>>], options: Options) -> Self {
+    fn new(ast: &'a [Located<'a, Token<'a>>], options: FormattingOptions) -> Self {
         Self {
             ast,
             options,
@@ -152,7 +175,7 @@ impl<'a> CodeFormatter<'a> {
         }
     }
 
-    fn nested(&self, ast: &'a [Located<'a, Token<'a>>], options: Options) -> Self {
+    fn nested(&self, ast: &'a [Located<'a, Token<'a>>], options: FormattingOptions) -> Self {
         Self {
             ast,
             options,
@@ -769,7 +792,7 @@ fn contains_newline_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> bool {
     }
 }
 
-fn format<'a>(ast: &[Located<'a, Token<'a>>], options: Options) -> String {
+fn format<'a>(ast: &[Located<'a, Token<'a>>], options: FormattingOptions) -> String {
     let mut fmt = CodeFormatter::new(ast, options);
     let result = fmt.format();
     if options.whitespace.trim {
@@ -788,14 +811,15 @@ pub fn format_app() -> App<'static> {
     )
 }
 
-pub fn format_command(args: &ArgMatches) -> MosResult<()> {
+pub fn format_command(args: &ArgMatches, cfg: Option<Config>) -> MosResult<()> {
+    let formatting_options = cfg.map(|cfg| cfg.formatting).unwrap_or_default();
+
     let input_names = args.values_of("input").unwrap().collect_vec();
 
     for input_name in input_names {
         let source = read_to_string(input_name)?;
         let ast = parse(input_name.as_ref(), &source)?;
-        let _code = codegen(ast.clone(), CodegenOptions::default())?;
-        let formatted = format(&ast, Options::default());
+        let formatted = format(&ast, formatting_options);
         let formatted = formatted.replace("\n", crate::LINE_ENDING);
         let mut output_file = OpenOptions::new()
             .truncate(true)
@@ -878,7 +902,7 @@ mod tests {
     use crate::core::parser::parse;
     use crate::errors::MosResult;
 
-    use super::{format, indent_str, preceding_newline_len, Options};
+    use super::{format, indent_str, preceding_newline_len, FormattingOptions};
 
     #[test]
     fn test_preceding_newline_len() {
@@ -909,7 +933,7 @@ mod tests {
     fn default_formatting_splits_instructions() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), "lda #123 sta 123\nstx 123\nrol")?;
         eq(
-            format(&ast, Options::default()),
+            format(&ast, FormattingOptions::default()),
             "lda #123\nsta 123\nstx 123\nrol",
         );
 
@@ -922,7 +946,7 @@ mod tests {
             "test.asm".as_ref(),
             "/* hello */    /* foo */  lda #123 rol",
         )?;
-        let mut options = Options::passthrough();
+        let mut options = FormattingOptions::passthrough();
 
         options.whitespace.trim = true;
         eq(format(&ast, options), "/* hello */ /* foo */ lda #123 rol");
@@ -933,7 +957,7 @@ mod tests {
     #[test]
     fn braces() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), ".segment a {}nop")?;
-        let mut options = Options::passthrough();
+        let mut options = FormattingOptions::passthrough();
         options.braces.double_newline_after_closing_brace = true;
 
         options.braces.position = BracePosition::SameLine;
@@ -948,7 +972,7 @@ mod tests {
     #[test]
     fn braces_after_pc() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), "* = $1000\n{ nop }")?;
-        let mut options = Options::passthrough();
+        let mut options = FormattingOptions::passthrough();
         options.whitespace.trim = true;
         options.whitespace.space_between_kvp = true;
 
@@ -968,7 +992,7 @@ mod tests {
             ".segment a\n\n\n\n  {\n\nnop\n\n\n}nop",
         )?;
 
-        let mut options = Options::passthrough();
+        let mut options = FormattingOptions::passthrough();
         options.braces.double_newline_after_closing_brace = true;
         options.braces.position = BracePosition::SameLine;
         eq(format(&ast, options), ".segment a {\n\n\nnop\n\n\n}\n\nnop");
@@ -985,7 +1009,7 @@ mod tests {
     fn default_formatting_collapses_newlines_after_rparen() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), ".segment a {\nbrk\n}\n\n\n\nnop")?;
         eq(
-            format(&ast, Options::default_no_indent()),
+            format(&ast, FormattingOptions::default_no_indent()),
             ".segment a {\nbrk\n}\n\nnop",
         );
 
@@ -996,7 +1020,7 @@ mod tests {
     fn default_formatting_braces_indent() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), ".if foo {\nnop /* hi */\n}")?;
         eq(
-            format(&ast, Options::default()),
+            format(&ast, FormattingOptions::default()),
             ".if foo {\n    nop /* hi */\n}",
         );
 
@@ -1007,7 +1031,7 @@ mod tests {
     fn default_formatting_label_indent() -> MosResult<()> {
         let ast = parse("test.asm".as_ref(), "foo:\n\n{\nnop\nbrk\n\nrol}asl")?;
         eq(
-            format(&ast, Options::default()),
+            format(&ast, FormattingOptions::default()),
             "foo: {\n    nop\n    brk\n    rol\n}\n\nasl",
         );
 
@@ -1021,7 +1045,7 @@ mod tests {
             "nop\n.if test { nop }\n.if test { brk }\n\n\n\n\n.if test { rol }",
         )?;
         eq(
-            format(&ast, Options::default_no_indent()),
+            format(&ast, FormattingOptions::default_no_indent()),
             "nop\n\n.if test {\nnop\n}\n\n.if test {\nbrk\n}\n\n.if test {\nrol\n}",
         );
 
@@ -1033,7 +1057,7 @@ mod tests {
         let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
         let ast = parse("test.asm".as_ref(), source)?;
-        let actual = format(&ast, Options::default());
+        let actual = format(&ast, FormattingOptions::default());
         println!("{}", actual);
         eq(actual, expected);
         Ok(())
@@ -1044,7 +1068,7 @@ mod tests {
         let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../../test/cli/format/valid-unformatted.asm");
         let ast = parse("test.asm".as_ref(), source)?;
-        let actual = format(&ast, Options::passthrough());
+        let actual = format(&ast, FormattingOptions::passthrough());
 
         eq(actual, expected);
 

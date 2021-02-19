@@ -289,10 +289,6 @@ impl<'a> IdentifierPath<'a> {
         self.0.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     pub fn single(&self) -> &Identifier {
         assert_eq!(self.len(), 1);
         self.0.first().unwrap()

@@ -7,19 +7,20 @@ pub type MosResult<T> = Result<T, MosError>;
 #[allow(dead_code)]
 #[derive(thiserror::Error, Debug)]
 pub enum MosError {
-    Parser {
-        location: Option<OwnedLocation>,
-        message: String,
-    },
+    BuildError(String),
+    Clap(#[from] clap::Error),
     Codegen {
         location: Option<OwnedLocation>,
         message: String,
     },
-    BuildError(String),
     Io(#[from] std::io::Error),
-    Clap(#[from] clap::Error),
-    Unknown,
+    Parser {
+        location: Option<OwnedLocation>,
+        message: String,
+    },
     Multiple(Vec<MosError>),
+    Toml(#[from] toml::de::Error),
+    Unknown,
 }
 
 impl PartialEq for MosError {
@@ -90,6 +91,7 @@ impl MosError {
             }
             MosError::Io(err) => format!("{}", err),
             MosError::Clap(err) => format!("{}", err),
+            MosError::Toml(err) => format!("{}", err),
             MosError::BuildError(message) => {
                 let err = if use_color {
                     Red.paint("error:")

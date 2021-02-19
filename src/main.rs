@@ -2,15 +2,22 @@
 
 //#![deny(missing_docs)]
 
-use clap::{App, AppSettings, Arg};
+use std::path::Path;
+
+use clap::{App, AppSettings, Arg, ArgMatches};
+use fs_err as fs;
 
 use crate::commands::*;
+use crate::config::Config;
 use crate::core::parser;
+use crate::errors::MosResult;
 
 /// Contains the available CLI commands and their associated logic
 mod commands;
+/// Configuration file handling
+mod config;
 /// Contains all main business logic
-pub mod core;
+mod core;
 /// Error handling
 mod errors;
 
@@ -62,6 +69,23 @@ fn get_app() -> App<'static> {
         .subcommand(format_app())
 }
 
+fn run(args: ArgMatches) -> MosResult<()> {
+    let mos_toml = Path::new("mos.toml");
+    let cfg = match mos_toml.exists() {
+        true => {
+            let toml = fs::read_to_string(mos_toml)?;
+            Some(Config::from_toml(&toml)?)
+        }
+        false => None,
+    };
+
+    match args.subcommand() {
+        Some(("build", args)) => build_command(args),
+        Some(("format", args)) => format_command(args, cfg),
+        _ => panic!("Unknown subcommand"),
+    }
+}
+
 fn main() {
     #[cfg(windows)]
     ansi_term::enable_ansi_support().unwrap();
@@ -75,13 +99,7 @@ fn main() {
         .init()
         .unwrap();
 
-    let result = match args.subcommand() {
-        Some(("build", args)) => build_command(args),
-        Some(("format", args)) => format_command(args),
-        _ => panic!("Unknown subcommand"),
-    };
-
-    match result {
+    match run(args) {
         Ok(()) => (),
         Err(e) => {
             log::error!("{}", e.format(true));
