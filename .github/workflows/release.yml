@@ -23,10 +23,13 @@ jobs:
   create-release:
     name: create-release
     runs-on: ubuntu-latest
-    #env:
-      # Set to force version number, e.g., when no tag exists.
-      #MOS_VERSION: TEST-0.0.0
     steps:
+      - name: Force release version number on the dev-workflows branch
+        run: |
+          if [[ $GITHUB_REF = 'refs/heads/dev-workflows' ]]; then
+              echo "MOS_VERSION=TEST-0.0.0" >> "$GITHUB_ENV"
+          fi
+
       - name: Create artifacts directory
         run: mkdir artifacts
 
@@ -95,7 +98,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1

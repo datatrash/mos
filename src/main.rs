@@ -28,6 +28,11 @@ pub const LINE_ENDING: &str = "\r\n";
 /// A platform-specific newline
 pub const LINE_ENDING: &str = "\n";
 
+mod built_info {
+    #![allow(dead_code)]
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 #[cfg(test)]
 pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::SimpleLogger>(
     customizer: F,
@@ -51,7 +56,7 @@ pub fn enable_default_tracing() {
 fn get_app() -> App<'static> {
     App::new("mos")
         .about("https://mos.datatra.sh")
-        .version(git_version::git_version!())
+        .version(built_info::GIT_VERSION.unwrap_or("unknown"))
         .global_setting(AppSettings::ColoredHelp)
         .global_setting(AppSettings::ArgRequiredElseHelp)
         .arg(
