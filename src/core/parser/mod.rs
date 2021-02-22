@@ -85,11 +85,17 @@ where
         match parser(input) {
             Ok((remaining, out)) => Ok((remaining, Some(out))),
             Err(nom::Err::Error(_)) | Err(nom::Err::Failure(_)) => {
-                let err = ParseError::ExpectedError {
-                    location: Location::from(&i),
-                    message: error_msg.to_string(),
-                };
-                i.extra.report_error(err);
+                let error_msg = error_msg.to_string();
+                if error_msg.is_empty() {
+                    // We're eating this error, assuming a more descriptive error
+                    // is generated downstream
+                } else {
+                    let err = ParseError::ExpectedError {
+                        location: Location::from(&i),
+                        message: error_msg.to_string(),
+                    };
+                    i.extra.report_error(err);
+                }
                 Ok((i, None))
             }
             Err(err) => Err(err),
@@ -396,16 +402,6 @@ fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
 
     alt((
         map(
-            tuple((ws(implied_mnemonic), not(operand))),
-            move |(mnemonic, _)| {
-                let instruction = Instruction {
-                    mnemonic,
-                    operand: None,
-                };
-                Located::new(implied_location.clone(), Token::Instruction(instruction))
-            },
-        ),
-        map(
             tuple((ws(mnemonic), operand)),
             move |(mnemonic, operand)| {
                 let instruction = Instruction {
@@ -413,6 +409,22 @@ fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
                     operand: Some(Box::new(operand)),
                 };
                 Located::new(location.clone(), Token::Instruction(instruction))
+            },
+        ),
+        map(
+            tuple((
+                ws(implied_mnemonic),
+                expect(
+                    not(operand),
+                    "", /* Eating the error since the unexpected operand itself will also generate an error */
+                ),
+            )),
+            move |(mnemonic, _)| {
+                let instruction = Instruction {
+                    mnemonic,
+                    operand: None,
+                };
+                Located::new(implied_location.clone(), Token::Instruction(instruction))
             },
         ),
     ))(input)
@@ -1155,12 +1167,26 @@ mod test {
         assert_eq!(factor.to_string(), "func   (a   ,   b   )");
     }
 
+    #[test]
+    fn error_when_using_operand_with_implied_mnemonic() {
+        check_err("inx $1234", "test.asm:1:5: error: unexpected '$1234'");
+    }
+
     fn check(src: &str, expected: &str) {
         let expr = match parse(&Path::new("test.asm"), src) {
             Ok(expr) => expr,
             Err(e) => panic!("Errors: {:?}", e),
         };
         let actual = expr.into_iter().map(|e| format!("{}", e)).join("");
+        assert_eq!(actual, expected.to_string());
+    }
+
+    fn check_err(src: &str, expected: &str) {
+        let e = match parse(&Path::new("test.asm"), src) {
+            Err(e) => e,
+            Ok(_) => panic!("Expected an error, but no errors found!"),
+        };
+        let actual = e.to_string();
         assert_eq!(actual, expected.to_string());
     }
 
