@@ -1054,19 +1054,18 @@ mod tests {
 
     #[test]
     fn default_formatting_options() -> MosResult<()> {
-        let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
-        let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
+        let source = include_str!("../../test/cli/format/valid-unformatted.asm");
+        let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse("test.asm".as_ref(), source)?;
         let actual = format(&ast, FormattingOptions::default());
-        println!("{}", actual);
         eq(actual, expected);
         Ok(())
     }
 
     #[test]
     fn passthrough_formatting_should_result_in_original() -> MosResult<()> {
-        let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
-        let expected = include_str!("../../../test/cli/format/valid-unformatted.asm");
+        let source = include_str!("../../test/cli/format/valid-unformatted.asm");
+        let expected = include_str!("../../test/cli/format/valid-unformatted.asm");
         let ast = parse("test.asm".as_ref(), source)?;
         let actual = format(&ast, FormattingOptions::passthrough());
 
