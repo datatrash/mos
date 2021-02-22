@@ -24,9 +24,6 @@ smallvec = "1"
 thiserror = "1"
 toml = "0.5"
 
-[build-dependencies]
-built = { version = "0.4", features = ["git2"] }
-
 [dev-dependencies]
 simple_logger = "1"
 tempfile = "3"
