@@ -16,7 +16,8 @@ use crate::core::parser::{
 };
 use crate::errors::MosResult;
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub enum Casing {
     Uppercase,
     Lowercase,
@@ -31,8 +32,8 @@ impl Casing {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct MnemonicOptions {
     pub one_per_line: bool,
     pub casing: Casing,
@@ -49,15 +50,16 @@ impl Default for MnemonicOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub enum BracePosition {
     SameLine,
     NewLine,
     AsIs,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct BraceOptions {
     pub position: BracePosition,
     pub double_newline_after_closing_brace: bool,
@@ -72,14 +74,14 @@ impl Default for BraceOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct WhitespaceOptions {
     pub trim: bool,
     pub indent: usize,
     pub space_between_kvp: bool,
     pub space_between_expression_factors: bool,
-    pub space_before_eol_trivia: bool,
+    pub space_before_end_of_line_comments: bool,
     pub collapse_multiple_empty_lines: bool,
     pub newline_before_if: bool,
     pub newline_before_variables: bool,
@@ -94,7 +96,7 @@ impl Default for WhitespaceOptions {
             indent: 4,
             space_between_kvp: true,
             space_between_expression_factors: true,
-            space_before_eol_trivia: true,
+            space_before_end_of_line_comments: true,
             collapse_multiple_empty_lines: true,
             newline_before_if: true,
             newline_before_variables: true,
@@ -104,8 +106,8 @@ impl Default for WhitespaceOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FormattingOptions {
     pub mnemonics: MnemonicOptions,
     pub braces: BraceOptions,
@@ -129,7 +131,7 @@ impl FormattingOptions {
                 indent: 0,
                 space_between_kvp: false,
                 space_between_expression_factors: false,
-                space_before_eol_trivia: false,
+                space_before_end_of_line_comments: false,
                 collapse_multiple_empty_lines: false,
                 newline_before_if: false,
                 newline_before_variables: false,
@@ -374,7 +376,9 @@ impl<'a> CodeFormatter<'a> {
                     let eol = self.format_located(&eol);
 
                     // If the trivia isn't just newlines, add a space (i.e. "nop // hello" instead of "nop//hello")
-                    if !eol.trim().is_empty() && self.options.whitespace.space_before_eol_trivia {
+                    if !eol.trim().is_empty()
+                        && self.options.whitespace.space_before_end_of_line_comments
+                    {
                         format!(" {}", eol)
                     } else {
                         eol
@@ -819,7 +823,7 @@ pub fn format_command(args: &ArgMatches, cfg: Option<Config>) -> MosResult<()> {
     for input_name in input_names {
         let source = read_to_string(input_name)?;
         let ast = parse(input_name.as_ref(), &source)?;
-        let formatted = format(&ast, formatting_options);
+        let formatted = format(&ast, formatting_options.unwrap_or_default());
         let formatted = formatted.replace("\n", crate::LINE_ENDING);
         let mut output_file = OpenOptions::new()
             .truncate(true)
@@ -900,7 +904,7 @@ mod tests {
 
     use crate::commands::*;
     use crate::core::parser::parse;
-    use crate::errors::MosResult;
+    use crate::errors::{MosError, MosResult};
 
     use super::{format, indent_str, preceding_newline_len, FormattingOptions};
 
@@ -1070,6 +1074,15 @@ mod tests {
         let actual = format(&ast, FormattingOptions::passthrough());
 
         eq(actual, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn can_read_config() -> MosResult<()> {
+        let toml = include_str!("../../test/cli/format/mos-default-formatting.toml");
+        let cfg: FormattingOptions = toml::from_str(toml).map_err(MosError::from)?;
+        assert_eq!(cfg, FormattingOptions::default());
 
         Ok(())
     }
