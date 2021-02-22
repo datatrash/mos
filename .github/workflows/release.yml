@@ -23,9 +23,9 @@ jobs:
   create-release:
     name: create-release
     runs-on: ubuntu-latest
-    env:
+    #env:
       # Set to force version number, e.g., when no tag exists.
-      MOS_VERSION: TEST-0.0.0
+      #MOS_VERSION: TEST-0.0.0
     steps:
       - name: Create artifacts directory
         run: mkdir artifacts
@@ -95,7 +95,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v2
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Install Rust
         uses: actions-rs/toolchain@v1
@@ -148,7 +148,7 @@ jobs:
           staging="mos-${{ env.RELEASE_VERSION }}-${{ matrix.target }}"
           mkdir -p "$staging"
 
-          cp {CHANGELOG.md,LICENSE,README.md} "$staging/"
+          cp {LICENSE,README.md} "$staging/"
 
           if [ "${{ matrix.os }}" = "windows-2019" ]; then
             cp "${{ env.TARGET_DIR }}/release/mos.exe" "$staging/"
