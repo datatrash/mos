@@ -85,14 +85,14 @@ where
         match parser(input) {
             Ok((remaining, out)) => Ok((remaining, Some(out))),
             Err(nom::Err::Error(_)) | Err(nom::Err::Failure(_)) => {
-                let error_msg = error_msg.to_string();
-                if error_msg.is_empty() {
+                let message = error_msg.to_string();
+                if message.is_empty() {
                     // We're eating this error, assuming a more descriptive error
                     // is generated downstream
                 } else {
                     let err = ParseError::ExpectedError {
                         location: Location::from(&i),
-                        message: error_msg.to_string(),
+                        message,
                     };
                     i.extra.report_error(err);
                 }
