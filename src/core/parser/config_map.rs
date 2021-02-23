@@ -125,6 +125,7 @@ impl ConfigMapValidatorBuilder {
                 false => Some(
                     ParseError::ExpectedError {
                         location: location.clone(),
+                        length: 1,
                         message: format!("required field: {}", key),
                     }
                     .into(),
@@ -143,6 +144,7 @@ impl ConfigMapValidatorBuilder {
                         Some(
                             ParseError::ExpectedError {
                                 location: location.clone(),
+                                length: 1,
                                 message: format!("expected single identifier: {}", key),
                             }
                             .into(),
@@ -164,6 +166,7 @@ impl ConfigMapValidatorBuilder {
                 false => Some(
                     ParseError::UnexpectedError {
                         location: location.clone(),
+                        length: 1,
                         message: format!("unexpected field: {}", key),
                     }
                     .into(),

@@ -29,11 +29,13 @@ pub enum ParseError<'a> {
     #[error("{message}")]
     ExpectedError {
         location: Location<'a>,
+        length: usize,
         message: String,
     },
     #[error("{message}")]
     UnexpectedError {
         location: Location<'a>,
+        length: usize,
         message: String,
     },
 }
@@ -42,12 +44,22 @@ pub enum ParseError<'a> {
 impl<'a> From<ParseError<'a>> for MosError {
     fn from(err: ParseError<'a>) -> Self {
         match err {
-            ParseError::ExpectedError { location, message } => Self::Parser {
+            ParseError::ExpectedError {
+                location,
+                length,
+                message,
+            } => Self::Parser {
                 location: Some(location.into()),
+                length,
                 message,
             },
-            ParseError::UnexpectedError { location, message } => Self::Parser {
+            ParseError::UnexpectedError {
+                location,
+                length,
+                message,
+            } => Self::Parser {
                 location: Some(location.into()),
+                length,
                 message,
             },
         }
@@ -92,6 +104,7 @@ where
                 } else {
                     let err = ParseError::ExpectedError {
                         location: Location::from(&i),
+                        length: i.fragment().len(),
                         message,
                     };
                     i.extra.report_error(err);
@@ -439,6 +452,7 @@ fn error(input: LocatedSpan) -> IResult<Located<Token>> {
         |span| {
             let err = ParseError::UnexpectedError {
                 location: Location::from(&span.data),
+                length: span.data.fragment().len(),
                 message: format!("unexpected '{}'", span.data.fragment()),
             };
             span.data.extra.report_error(err);

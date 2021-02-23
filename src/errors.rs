@@ -1,4 +1,6 @@
+use crossbeam_channel::SendError;
 use itertools::Itertools;
+use lsp_server::{Message, ProtocolError};
 
 use crate::core::parser::OwnedLocation;
 
@@ -16,10 +18,13 @@ pub enum MosError {
     Io(#[from] std::io::Error),
     Parser {
         location: Option<OwnedLocation>,
+        length: usize,
         message: String,
     },
     Multiple(Vec<MosError>),
     Toml(#[from] toml::de::Error),
+    Protocol(#[from] ProtocolError),
+    Crossbeam(#[from] SendError<Message>),
     Unknown,
 }
 
@@ -29,13 +34,15 @@ impl PartialEq for MosError {
             (
                 MosError::Parser {
                     location: lloc,
+                    length: llen,
                     message: lmsg,
                 },
                 MosError::Parser {
                     location: rloc,
+                    length: rlen,
                     message: rmsg,
                 },
-            ) => lloc == rloc && lmsg == rmsg,
+            ) => lloc == rloc && llen == rlen && lmsg == rmsg,
             (
                 MosError::Codegen {
                     location: lloc,
@@ -70,7 +77,12 @@ impl MosError {
         use ansi_term::Colour::Red;
 
         match self {
-            MosError::Parser { location, message } | MosError::Codegen { location, message } => {
+            MosError::Parser {
+                location,
+                length: _,
+                message,
+            }
+            | MosError::Codegen { location, message } => {
                 let location = match location {
                     Some(location) => {
                         format!(
@@ -92,6 +104,8 @@ impl MosError {
             MosError::Io(err) => format!("{}", err),
             MosError::Clap(err) => format!("{}", err),
             MosError::Toml(err) => format!("{}", err),
+            MosError::Protocol(err) => format!("{}", err),
+            MosError::Crossbeam(err) => format!("{}", err),
             MosError::BuildError(message) => {
                 let err = if use_color {
                     Red.paint("error:")

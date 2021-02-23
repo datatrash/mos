@@ -53,7 +53,6 @@ fn get_app() -> App<'static> {
         .about("https://mos.datatra.sh")
         .version(option_env!("RELEASE_VERSION").unwrap_or("unknown"))
         .global_setting(AppSettings::ColoredHelp)
-        .global_setting(AppSettings::ArgRequiredElseHelp)
         .arg(
             Arg::new("verbose")
                 .short('v')
@@ -67,6 +66,7 @@ fn get_app() -> App<'static> {
         )
         .subcommand(build_app())
         .subcommand(format_app())
+        .subcommand(lsp_app())
 }
 
 fn mos_toml_path<P: Into<PathBuf>>(
@@ -110,7 +110,11 @@ fn run(args: ArgMatches) -> MosResult<()> {
     match args.subcommand() {
         Some(("build", args)) => build_command(args),
         Some(("format", args)) => format_command(args, cfg),
-        _ => panic!("Unknown subcommand"),
+        Some(("lsp", args)) => lsp_command(args),
+        _ => {
+            let _ = get_app().print_help()?;
+            Ok(())
+        }
     }
 }
 
