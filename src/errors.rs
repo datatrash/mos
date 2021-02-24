@@ -18,7 +18,6 @@ pub enum MosError {
     Io(#[from] std::io::Error),
     Parser {
         location: Option<OwnedLocation>,
-        length: usize,
         message: String,
     },
     Multiple(Vec<MosError>),
@@ -34,15 +33,13 @@ impl PartialEq for MosError {
             (
                 MosError::Parser {
                     location: lloc,
-                    length: llen,
                     message: lmsg,
                 },
                 MosError::Parser {
                     location: rloc,
-                    length: rlen,
                     message: rmsg,
                 },
-            ) => lloc == rloc && llen == rlen && lmsg == rmsg,
+            ) => lloc == rloc && lmsg == rmsg,
             (
                 MosError::Codegen {
                     location: lloc,
@@ -77,12 +74,7 @@ impl MosError {
         use ansi_term::Colour::Red;
 
         match self {
-            MosError::Parser {
-                location,
-                length: _,
-                message,
-            }
-            | MosError::Codegen { location, message } => {
+            MosError::Parser { location, message } | MosError::Codegen { location, message } => {
                 let location = match location {
                     Some(location) => {
                         format!(

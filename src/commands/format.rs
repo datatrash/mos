@@ -476,7 +476,7 @@ impl<'a> CodeFormatter<'a> {
             }
             Token::Label { id, colon, braces } => {
                 let id = self.format_located(id);
-                let colon = self.format_optional_located(colon);
+                let colon = self.format_located(colon);
                 let braces = self.format_optional_token(braces);
                 let result = format!("{}{}{}", id, colon, braces);
 

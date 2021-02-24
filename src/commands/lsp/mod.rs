@@ -104,28 +104,15 @@ fn to_diagnostics(e: MosError) -> Vec<Diagnostic> {
     match e {
         MosError::Parser {
             ref location,
-            ref length,
             ref message,
-        } => match location {
-            Some(l) => {
-                let start = Position::new(l.line - 1, l.column - 1);
-                let end = Position::new(l.line - 1, l.column + *length as u32);
-                let range = Range::new(start, end);
-                let d = Diagnostic::new_simple(range, message.clone());
-                vec![d]
-            }
-            None => {
-                eprintln!("Parser error without a location: {:?}", e);
-                vec![]
-            }
-        },
-        MosError::Codegen {
+        }
+        | MosError::Codegen {
             ref location,
             ref message,
         } => match location {
             Some(l) => {
                 let start = Position::new(l.line - 1, l.column - 1);
-                let end = Position::new(l.line - 1, l.column);
+                let end = Position::new(l.line - 1, l.column - 1 + l.fragment.len() as u32);
                 let range = Range::new(start, end);
                 let d = Diagnostic::new_simple(range, message.clone());
                 vec![d]

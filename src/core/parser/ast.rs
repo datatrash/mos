@@ -105,6 +105,7 @@ impl<'a> From<&Identifier<'a>> for &'a str {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Location<'a> {
     pub path: &'a Path,
+    pub fragment: &'a str,
     pub line: u32,
     pub column: u32,
 }
@@ -114,6 +115,7 @@ impl<'a> Location<'a> {
     pub fn empty() -> Self {
         Self {
             path: "test.asm".as_ref(),
+            fragment: "",
             line: 0,
             column: 0,
         }
@@ -124,6 +126,7 @@ impl<'a> Location<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedLocation {
     pub path: PathBuf,
+    pub fragment: String,
     pub line: u32,
     pub column: u32,
 }
@@ -132,6 +135,7 @@ impl<'a> From<Location<'a>> for OwnedLocation {
     fn from(l: Location<'a>) -> Self {
         Self {
             path: l.path.to_path_buf(),
+            fragment: l.fragment.to_owned(),
             line: l.line,
             column: l.column,
         }
@@ -142,6 +146,7 @@ impl<'a> From<&'a Location<'a>> for OwnedLocation {
     fn from(l: &'a Location<'a>) -> Self {
         Self {
             path: l.path.to_path_buf(),
+            fragment: l.fragment.to_owned(),
             line: l.line,
             column: l.column,
         }
@@ -152,6 +157,7 @@ impl<'a> From<&LocatedSpan<'a>> for Location<'a> {
     fn from(span: &LocatedSpan<'a>) -> Self {
         Self {
             path: span.extra.path,
+            fragment: span.fragment(),
             line: span.location_line(),
             column: span.get_column() as u32,
         }
@@ -534,7 +540,7 @@ pub enum Token<'a> {
     Instruction(Instruction<'a>),
     Label {
         id: Located<'a, Identifier<'a>>,
-        colon: Option<Located<'a, char>>,
+        colon: Located<'a, char>,
         braces: Option<Box<Located<'a, Token<'a>>>>,
     },
     Operand(Operand<'a>),
@@ -888,10 +894,6 @@ impl<'a> Display for Token<'a> {
             Token::Label { id, colon, braces } => {
                 let braces = match braces {
                     Some(s) => format!("{}", s),
-                    None => "".to_string(),
-                };
-                let colon = match colon {
-                    Some(c) => format!("{}", c),
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", id, colon, braces)
