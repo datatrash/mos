@@ -16,7 +16,6 @@ export function activate(_context: vscode.ExtensionContext) {
 
     let clientOptions: LanguageClientOptions = {
         documentSelector: [{scheme: 'file', language: 'asm'}],
-        synchronize: {}
     };
 
     // Create the language client and start the client.

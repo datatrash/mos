@@ -20,6 +20,8 @@ mod config;
 mod core;
 /// Error handling
 mod errors;
+/// Language Server Protocol implementation
+mod lsp;
 
 #[cfg(windows)]
 /// A platform-specific newline.

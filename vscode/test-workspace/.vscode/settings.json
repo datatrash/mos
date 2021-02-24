@@ -1,4 +1,4 @@
 {
     "git.ignoreLimitWarning": true
-    //"mos.trace.server": "verbose"
+    ,"mos.trace.server": "verbose"
 }
