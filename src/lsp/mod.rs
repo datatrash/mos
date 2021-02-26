@@ -1,20 +1,36 @@
 mod diagnostics;
+mod highlighting;
+mod traits;
 
-use crate::errors::MosResult;
+use crate::errors::{MosError, MosResult};
 use crate::lsp::diagnostics::{DidChange, DidOpen};
-use lsp_server::{Connection, IoThreads, Message};
+use crate::lsp::highlighting::FullRequest;
+use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
-use lsp_types::{InitializeParams, ServerCapabilities};
+use lsp_types::{InitializeParams, ServerCapabilities, TextDocumentSyncKind, Url};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-struct LspContext {
-    connection: Arc<Connection>,
-    io_threads: IoThreads,
-    documents: HashMap<String, String>,
+use crate::core::parser::{Located, Token};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::path::PathBuf;
+pub use traits::*;
+
+pub struct ParsedAst<'a> {
+    path: PathBuf,
+    source: String,
+    ast: Vec<Located<'a, Token<'a>>>,
+    error: Option<MosError>,
 }
 
-impl LspContext {
+pub struct LspContext<'a> {
+    connection: Arc<Connection>,
+    io_threads: IoThreads,
+    documents: HashMap<Url, Box<ParsedAst<'a>>>,
+}
+
+impl<'a> LspContext<'a> {
     fn new() -> Self {
         let (connection, io_threads) = Connection::stdio();
 
@@ -35,73 +51,60 @@ impl LspContext {
         Ok(())
     }
 
+    fn send_response<R: DeserializeOwned + Serialize>(
+        &self,
+        id: RequestId,
+        result: R,
+    ) -> MosResult<()> {
+        let result = serde_json::to_value(&result).unwrap();
+        let response = lsp_server::Response {
+            id,
+            result: Some(result),
+            error: None,
+        };
+        self.connection.sender.send(Message::Response(response))?;
+        Ok(())
+    }
+
     fn join(self) -> MosResult<()> {
         self.io_threads.join()?;
         Ok(())
     }
 }
 
-trait RequestHandler {}
-
-trait NotificationHandler {
-    fn customize(&self, caps: &mut ServerCapabilities);
-    fn method(&self) -> &'static str;
-    fn handle(&self, ctx: &mut LspContext, req: lsp_server::Notification) -> MosResult<()>;
+pub struct LspServer<'a> {
+    context: LspContext<'a>,
+    request_handlers: HashMap<&'static str, Box<dyn UntypedRequestHandler>>,
+    notification_handlers: HashMap<&'static str, Box<dyn UntypedNotificationHandler>>,
 }
 
-#[macro_export]
-macro_rules! impl_notification_handler {
-    ($ty:ty) => {
-        impl NotificationHandler for $ty {
-            fn customize(&self, caps: &mut ServerCapabilities) {
-                TypedNotificationHandler::customize(self, caps)
-            }
-
-            fn method(&self) -> &'static str {
-                TypedNotificationHandler::method(self)
-            }
-
-            fn handle(&self, ctx: &mut LspContext, req: lsp_server::Notification) -> MosResult<()> {
-                let method = TypedNotificationHandler::method(self);
-                let params = req.extract(method).unwrap();
-                TypedNotificationHandler::handle(self, ctx, params)
-            }
-        }
-    };
-}
-
-trait TypedNotificationHandler<N: Notification> {
-    fn customize(&self, _caps: &mut ServerCapabilities) {}
-    fn method(&self) -> &'static str {
-        N::METHOD
-    }
-    fn handle(&self, ctx: &mut LspContext, params: N::Params) -> MosResult<()>;
-}
-
-pub struct LspServer {
-    context: LspContext,
-    _request_handlers: HashMap<&'static str, Box<dyn RequestHandler>>,
-    notification_handlers: HashMap<&'static str, Box<dyn NotificationHandler>>,
-}
-
-impl LspServer {
+impl<'a> LspServer<'a> {
     pub fn new() -> Self {
-        let _request_handlers = HashMap::new();
+        let request_handlers = HashMap::new();
         let notification_handlers = HashMap::new();
 
         Self {
             context: LspContext::new(),
-            _request_handlers,
+            request_handlers,
             notification_handlers,
         }
     }
 
     pub fn register_handlers(&mut self) {
+        self.register_request_handler(FullRequest {});
         self.register_notification_handler(DidOpen {});
         self.register_notification_handler(DidChange {});
     }
 
-    fn register_notification_handler<T: 'static + NotificationHandler>(&mut self, handler: T) {
+    fn register_request_handler<T: 'static + UntypedRequestHandler>(&mut self, handler: T) {
+        self.request_handlers
+            .insert(handler.method(), Box::new(handler));
+    }
+
+    fn register_notification_handler<T: 'static + UntypedNotificationHandler>(
+        &mut self,
+        handler: T,
+    ) {
         self.notification_handlers
             .insert(handler.method(), Box::new(handler));
     }
@@ -109,11 +112,11 @@ impl LspServer {
     pub fn start(mut self) -> MosResult<()> {
         eprintln!("Starting MOS language server");
 
-        let mut caps = ServerCapabilities::default();
-        self.notification_handlers
-            .values()
-            .for_each(|h| h.customize(&mut caps));
-
+        let caps = ServerCapabilities {
+            semantic_tokens_provider: Some(highlighting::caps().into()),
+            text_document_sync: Some(TextDocumentSyncKind::Full.into()),
+            ..Default::default()
+        };
         let server_capabilities = serde_json::to_value(&caps).unwrap();
         let initialization_params = self.context.connection.initialize(server_capabilities)?;
         self.main_loop(initialization_params)?;
@@ -126,25 +129,31 @@ impl LspServer {
     fn main_loop(&mut self, params: serde_json::Value) -> MosResult<()> {
         let _params: InitializeParams = serde_json::from_value(params).unwrap();
         for msg in &self.context.connection.clone().receiver {
-            eprintln!("got msg: {:?}", msg);
+            //eprintln!("got msg: {:?}", msg);
             match msg {
                 Message::Request(req) => {
                     if self.context.connection.handle_shutdown(&req)? {
                         return Ok(());
                     }
-                    eprintln!("got request: {:?}", req);
+                    match self.request_handlers.get(req.method.as_str()) {
+                        Some(handler) => {
+                            handler.handle(&mut self.context, req)?;
+                        }
+                        None => {
+                            eprintln!("unknown request: {:?}", req);
+                        }
+                    }
                 }
-                Message::Response(resp) => {
-                    eprintln!("got response: {:?}", resp);
+                Message::Response(_resp) => {
+                    //eprintln!("got response: {:?}", resp);
                 }
                 Message::Notification(not) => {
-                    eprintln!("got notification: {:?}", not);
                     match self.notification_handlers.get(not.method.as_str()) {
                         Some(handler) => {
                             handler.handle(&mut self.context, not)?;
                         }
                         None => {
-                            eprintln!("unknown notification type: {}", not.method);
+                            eprintln!("unknown notification: {:?}", not);
                         }
                     }
                 }

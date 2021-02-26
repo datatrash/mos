@@ -386,7 +386,6 @@ dependencies = [
  "lsp-types",
  "nom",
  "nom_locate",
- "paste",
  "serde",
  "serde_json",
  "simple_logger",
@@ -444,12 +443,6 @@ name = "os_str_bytes"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afb2e1c3ee07430c2cf76151675e583e0f19985fa6efae47d6848a3e2c824f85"
-
-[[package]]
-name = "paste"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5d65c4d95931acda4498f675e332fcbdc9a06705cd07086c510e9b6009cd1c1"
 
 [[package]]
 name = "percent-encoding"

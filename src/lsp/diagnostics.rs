@@ -2,12 +2,13 @@ use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::parse;
 use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
-use crate::lsp::{LspContext, NotificationHandler, TypedNotificationHandler};
+use crate::lsp::{LspContext, NotificationHandler, ParsedAst};
 use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, PublishDiagnostics};
 use lsp_types::{
     Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position,
-    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncKind,
+    PublishDiagnosticsParams, Range, Url,
 };
+use std::path::PathBuf;
 
 pub struct DidOpen {}
 pub struct DidChange {}
@@ -15,61 +16,73 @@ pub struct DidChange {}
 impl_notification_handler!(DidOpen);
 impl_notification_handler!(DidChange);
 
-impl TypedNotificationHandler<DidOpenTextDocument> for DidOpen {
-    fn customize(&self, caps: &mut ServerCapabilities) {
-        caps.text_document_sync = Some(TextDocumentSyncKind::Full.into());
-    }
+fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
+    let path = PathBuf::from(uri.path());
+    let source = source.to_string();
+    let mut parsed = Box::new(ParsedAst {
+        path,
+        source,
+        ast: vec![],
+        error: None,
+    });
 
-    fn handle(&self, ctx: &mut LspContext, params: DidOpenTextDocumentParams) -> MosResult<()> {
-        ctx.documents.insert(
-            params.text_document.uri.as_ref().to_string(),
-            params.text_document.text.clone(),
-        );
-        publish_diagnostics(
-            ctx,
-            params.text_document.uri.as_ref(),
-            &params.text_document.text,
-        )?;
-        Ok(())
-    }
-}
-
-impl TypedNotificationHandler<DidChangeTextDocument> for DidChange {
-    fn handle(&self, ctx: &mut LspContext, params: DidChangeTextDocumentParams) -> MosResult<()> {
-        let text_changes = params.content_changes.first().unwrap();
-        ctx.documents.insert(
-            params.text_document.uri.as_ref().to_string(),
-            text_changes.text.clone(),
-        );
-        publish_diagnostics(ctx, params.text_document.uri.as_ref(), &text_changes.text)?;
-        Ok(())
-    }
-}
-
-fn publish_diagnostics(ctx: &LspContext, uri: &str, source: &str) -> MosResult<()> {
-    let ast = parse(uri.as_ref(), source);
-    let diagnostics = match ast {
-        Ok(ast) => {
-            let code = codegen(ast, CodegenOptions::default());
-            match code {
-                Ok(_) => vec![],
-                Err(e) => to_diagnostics(e),
-            }
-        }
-        Err(e) => to_diagnostics(e),
+    let parse_result = unsafe {
+        // Since we know 'parsed' won't move in memory anymore since it's a Box, we can do partial borrows here
+        let path = &parsed.path as *const PathBuf;
+        let source = &parsed.source as *const String;
+        parse(path.as_ref().unwrap(), source.as_ref().unwrap().as_str())
     };
 
+    match parse_result {
+        Ok(ast) => match codegen(ast.clone(), CodegenOptions::default()) {
+            Ok(_) => {
+                parsed.ast = ast;
+            }
+            Err(e) => {
+                parsed.error = Some(e);
+            }
+        },
+        Err(e) => {
+            parsed.error = Some(e);
+        }
+    }
+
+    ctx.documents.insert(uri.clone(), parsed);
+}
+
+impl NotificationHandler<DidOpenTextDocument> for DidOpen {
+    fn handle(&self, ctx: &mut LspContext, params: DidOpenTextDocumentParams) -> MosResult<()> {
+        insert_parsed_document(ctx, &params.text_document.uri, &params.text_document.text);
+        publish_diagnostics(ctx, &params.text_document.uri)?;
+        Ok(())
+    }
+}
+
+impl NotificationHandler<DidChangeTextDocument> for DidChange {
+    fn handle(&self, ctx: &mut LspContext, params: DidChangeTextDocumentParams) -> MosResult<()> {
+        let text_changes = params.content_changes.first().unwrap();
+        insert_parsed_document(ctx, &params.text_document.uri, &text_changes.text);
+        publish_diagnostics(ctx, &params.text_document.uri)?;
+        Ok(())
+    }
+}
+
+fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
+    let ast = ctx.documents.get(uri).unwrap();
     let params = PublishDiagnosticsParams::new(
-        uri.parse().unwrap(),
-        diagnostics,
+        uri.clone(),
+        ast.error
+            .as_ref()
+            .map(|e| to_diagnostics(e))
+            .unwrap_or_default(),
         None, // todo: handle document version
     );
     ctx.publish_notification::<PublishDiagnostics>(params)?;
     Ok(())
 }
 
-fn to_diagnostics(e: MosError) -> Vec<Diagnostic> {
-    match e {
+fn to_diagnostics(error: &MosError) -> Vec<Diagnostic> {
+    match error {
         MosError::Parser {
             ref location,
             ref message,
@@ -86,13 +99,13 @@ fn to_diagnostics(e: MosError) -> Vec<Diagnostic> {
                 vec![d]
             }
             None => {
-                eprintln!("Parser error without a location: {:?}", e);
+                eprintln!("Parser error without a location: {:?}", error);
                 vec![]
             }
         },
-        MosError::Multiple(errors) => errors.into_iter().map(to_diagnostics).flatten().collect(),
+        MosError::Multiple(errors) => errors.iter().map(to_diagnostics).flatten().collect(),
         _ => {
-            eprintln!("Unknown parsing error: {:?}", e);
+            eprintln!("Unknown parsing error: {:?}", error);
             vec![]
         }
     }

@@ -187,13 +187,13 @@ where
     F: FnMut(LocatedSpan<'a>) -> IResult<T>,
 {
     move |input: LocatedSpan<'a>| {
-        let location = Location::from(&input);
-
         let (input, trivia) = if multiline {
             opt(multiline_trivia)(input)
         } else {
             opt(trivia)(input)
         }?;
+
+        let location = Location::from(&input);
         let (input, data) = inner(input)?;
         let result = Located::new_with_trivia(location, data, trivia);
 
