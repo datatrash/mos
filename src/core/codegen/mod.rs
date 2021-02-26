@@ -238,7 +238,7 @@ impl CodegenContext {
         error_on_failure: bool,
     ) -> CodegenResult<Option<i64>> {
         match &lt.data {
-            ExpressionFactor::Number { value, .. } => Ok(Some(value.data)),
+            ExpressionFactor::Number { value, .. } => Ok(Some(value.data.value())),
             ExpressionFactor::CurrentProgramCounter(_) => Ok(pc.map(|p| p.as_i64())),
             ExpressionFactor::IdentifierValue { path, modifier } => {
                 let symbol_value = self.symbols.value(&lt.location, &path.data.to_str_vec())?;

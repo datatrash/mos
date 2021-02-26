@@ -11,8 +11,7 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::core::parser::{
-    parse, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, NumberType, Token,
-    Trivia,
+    parse, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, Token, Trivia,
 };
 use crate::errors::MosResult;
 
@@ -739,17 +738,6 @@ impl<'a> CodeFormatter<'a> {
                 format!("{}{}", modifier, path)
             }
             ExpressionFactor::Number { ty, value } => {
-                let value = value.map(|v| match &ty.data {
-                    NumberType::Hex => {
-                        if *v < 256 {
-                            format!("{:02x}", v)
-                        } else {
-                            format!("{:04x}", v)
-                        }
-                    }
-                    NumberType::Bin => format!("{:b}", v),
-                    NumberType::Dec => format!("{}", v),
-                });
                 let value = self.format_located(&value);
                 let ty = self.format_located(ty);
                 format!("{}{}", ty, value)

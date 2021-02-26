@@ -393,8 +393,36 @@ pub enum ExpressionFactor<'a> {
     },
     Number {
         ty: Located<'a, NumberType>,
-        value: Located<'a, i64>,
+        value: Located<'a, Number<'a>>,
     },
+}
+
+/// A wrapper that stores the original number string and its radix, so that any zero-prefixes are kept
+#[derive(Debug, PartialEq)]
+pub struct Number<'a> {
+    radix: u32,
+    data: &'a str,
+}
+
+impl<'a> Display for Number<'a> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.data)
+    }
+}
+
+impl<'a> Number<'a> {
+    pub fn value(&self) -> i64 {
+        i64::from_str_radix(self.data, self.radix).ok().unwrap()
+    }
+
+    pub fn from_type(ty: NumberType, data: &'a str) -> Self {
+        let radix = match ty {
+            NumberType::Hex => 16,
+            NumberType::Dec => 10,
+            NumberType::Bin => 2,
+        };
+        Self { radix, data }
+    }
 }
 
 bitflags::bitflags! {
@@ -727,11 +755,7 @@ impl<'a> Display for ExpressionFactor<'a> {
                 };
                 write!(f, "{}{}", modifier, path)
             }
-            Self::Number { ty, value } => match ty.data {
-                NumberType::Hex => write!(f, "{}{:x}", ty, value),
-                NumberType::Bin => write!(f, "{}{:b}", ty, value),
-                NumberType::Dec => write!(f, "{}{}", ty, value),
-            },
+            Self::Number { ty, value } => write!(f, "{}{}", ty, value),
         }
     }
 }

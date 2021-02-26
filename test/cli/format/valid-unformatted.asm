@@ -1,6 +1,6 @@
         // woof
 .define segment { name=default
-start=$2000 + 4 -4}
+start=$2000 + 4 -%00100}
 
     .include   "foo.bin"
 .const   test   /* test value */   =1

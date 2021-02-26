@@ -752,37 +752,28 @@ fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
 fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     let location = Location::from(&input);
 
-    map(
+    map_once(
         alt((
             tuple((
                 map(ws(char('$')), |ty| ty.map_into(|_| NumberType::Hex)),
-                ws(map(recognize(many1(hex_digit1)), |n| {
-                    let location = Location::from(&n);
-                    Located::new(
-                        location,
-                        i64::from_str_radix(n.fragment(), 16).ok().unwrap(),
-                    )
-                })),
+                ws(recognize(many1(hex_digit1))),
             )),
             tuple((
                 map(ws(char('%')), |ty| ty.map_into(|_| NumberType::Bin)),
-                ws(map(recognize(many1(is_a("01"))), |n| {
-                    let location = Location::from(&n);
-                    Located::new(location, i64::from_str_radix(n.fragment(), 2).ok().unwrap())
-                })),
+                ws(recognize(many1(is_a("01")))),
             )),
             tuple((
-                value(Located::new(location, NumberType::Dec)),
-                ws(map(recognize(many1(is_a("0123456789"))), |n| {
-                    let location = Location::from(&n);
-                    Located::new(
-                        location,
-                        i64::from_str_radix(n.fragment(), 10).ok().unwrap(),
-                    )
-                })),
+                value(Located::new(location.clone(), NumberType::Dec)),
+                ws(recognize(many1(is_a("0123456789")))),
             )),
         )),
-        |(ty, value)| value.map_into(move |value| ExpressionFactor::Number { ty, value }),
+        move |(ty, value)| {
+            let loc = value.location;
+            let trv = value.trivia;
+            let num = Number::from_type(ty.data.clone(), value.data.fragment());
+            let value = Located::new_with_trivia(loc, num, trv);
+            Located::new(location, ExpressionFactor::Number { ty, value })
+        },
     )(input)
 }
 
