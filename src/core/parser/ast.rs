@@ -45,7 +45,7 @@ impl<'a> State<'a> {
 }
 
 /// Any trivia we may encounter during parsing
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Trivia {
     /// One or more spaces or tabs
     Whitespace(String),
@@ -181,7 +181,7 @@ impl Display for IndexRegister {
 }
 
 /// A 6502 instruction
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Instruction<'a> {
     pub mnemonic: Located<'a, Mnemonic>,
     /// The operand is optional because some instructions (e.g. `NOP`) don't have an operand.
@@ -204,7 +204,7 @@ pub enum AddressingMode {
 }
 
 /// The operand of an instruction
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct Operand<'a> {
     pub expr: Box<Located<'a, Expression<'a>>>,
     pub lchar: Option<Located<'a, char>>,
@@ -365,7 +365,7 @@ impl Display for BinaryOp {
 }
 
 /// A binary expression of the form `lhs op rhs`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct BinaryExpression<'a> {
     pub op: Located<'a, BinaryOp>,
     pub lhs: Box<Located<'a, Expression<'a>>>,
@@ -373,7 +373,7 @@ pub struct BinaryExpression<'a> {
 }
 
 /// A factor that can be used on either side of an expression operation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ExpressionFactor<'a> {
     CurrentProgramCounter(Located<'a, char>),
     ExprParens {
@@ -422,7 +422,7 @@ impl Display for ExpressionFactorFlags {
 }
 
 /// An expression consists of one or more factors, possibly contained within a binary (sub)expression
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Expression<'a> {
     BinaryExpression(BinaryExpression<'a>),
     Factor {
@@ -488,7 +488,7 @@ impl Display for EmptyDisplay {
 }
 
 /// Tokens that, together, make up all possible source text
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Token<'a> {
     Align {
         tag: Located<'a, &'a str>,
@@ -567,6 +567,20 @@ pub enum Token<'a> {
 }
 
 impl<'a> Token<'a> {
+    pub(crate) fn as_braces(&self) -> &Vec<Located<'a, Token<'a>>> {
+        match self {
+            Token::Braces { inner, .. } => &inner.data,
+            _ => panic!(),
+        }
+    }
+
+    pub(crate) fn as_config_map(&'a self) -> ConfigMap<'a> {
+        match self {
+            Token::Config { inner, .. } => ConfigMap::new(&inner.data),
+            _ => panic!(),
+        }
+    }
+
     pub(crate) fn as_identifier(&self) -> &Identifier<'a> {
         match self {
             Token::IdentifierName(id) => id,
@@ -598,20 +612,6 @@ impl<'a> Token<'a> {
     pub(crate) fn into_identifier(self) -> Identifier<'a> {
         match self {
             Token::IdentifierName(id) => id,
-            _ => panic!(),
-        }
-    }
-
-    pub(crate) fn into_config_map(self) -> ConfigMap<'a> {
-        match self {
-            Token::Config { inner, .. } => ConfigMap::new(inner.data),
-            _ => panic!(),
-        }
-    }
-
-    pub(crate) fn into_braces(self) -> Vec<Located<'a, Token<'a>>> {
-        match self {
-            Token::Braces { inner, .. } => inner.data,
             _ => panic!(),
         }
     }

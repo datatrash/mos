@@ -4,30 +4,31 @@ use nom::combinator::map;
 use nom::multi::many0;
 
 use crate::core::parser::*;
+use std::ops::Deref;
 
 /// A ConfigMap stores generic key-value pairs that are used for things like segment definitions
 ///
 /// Internally this is just a HashMap storing actual [Token]s, but provides a few convenience methods on top of that.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ConfigMap<'a> {
-    items: HashMap<&'a str, Located<'a, Token<'a>>>,
+    items: HashMap<&'a str, &'a Located<'a, Token<'a>>>,
 }
 
 impl<'a> ConfigMap<'a> {
     /// Create a new ConfigMap based on the provided [Token::ConfigPair] and [Token::EolTrivia] tokens.
-    pub fn new(items: Vec<Located<'a, Token<'a>>>) -> Self {
+    pub fn new(items: &'a [Located<'a, Token<'a>>]) -> Self {
         let items = items
-            .into_iter()
+            .iter()
             .filter_map(|pair| {
-                let kvp = match pair.data {
-                    Token::ConfigPair { key, value, .. } => Some((key.data, value)),
+                let kvp = match &pair.data {
+                    Token::ConfigPair { key, value, .. } => Some((&key.data, value)),
                     Token::EolTrivia(_) => None,
                     _ => panic!(),
                 };
 
                 kvp.map(|(k, v)| {
                     let k = k.as_identifier().0;
-                    (k, *v)
+                    (k, v.deref())
                 })
             })
             .collect();
@@ -41,7 +42,7 @@ impl<'a> ConfigMap<'a> {
     }
 
     /// Get a reference to a key that may not exist.
-    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&'b Located<Token>> {
+    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&&'a Located<'a, Token<'a>>> {
         self.items.get(key)
     }
 

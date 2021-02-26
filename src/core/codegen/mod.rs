@@ -187,14 +187,14 @@ pub struct CodegenContext {
 
 #[derive(Debug)]
 pub enum Emittable<'a> {
-    Single(Option<ProgramCounter>, Location<'a>, Token<'a>),
-    Label(Located<'a, Identifier<'a>>),
+    Single(Option<ProgramCounter>, &'a Location<'a>, &'a Token<'a>),
+    Label(&'a Located<'a, Identifier<'a>>),
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
     Segment(String, Location<'a>, Vec<Emittable<'a>>),
     If(
-        Located<'a, Expression<'a>>,
+        &'a Located<'a, Expression<'a>>,
         Vec<Emittable<'a>>,
         Vec<Emittable<'a>>,
     ),
@@ -259,7 +259,7 @@ impl CodegenContext {
             ExpressionFactor::FunctionCall { name, args, .. } => {
                 let mut evaluated_args = vec![];
                 for (arg, _comma) in args {
-                    evaluated_args.push(self.evaluate(arg, pc, error_on_failure)?);
+                    evaluated_args.push(self.evaluate(&arg.data, pc, error_on_failure)?);
                 }
                 match self.functions.get(name.data.as_identifier().0) {
                     Some(f) => f(evaluated_args),
@@ -275,11 +275,11 @@ impl CodegenContext {
 
     fn evaluate(
         &self,
-        lt: &Located<Expression>,
+        expr: &Expression,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
     ) -> CodegenResult<Option<i64>> {
-        match &lt.data {
+        match expr {
             Expression::Factor { factor, flags, .. } => {
                 match self.evaluate_factor(factor, pc, error_on_failure) {
                     Ok(Some(mut val)) => {
@@ -299,8 +299,8 @@ impl CodegenContext {
                 }
             }
             Expression::BinaryExpression(expr) => {
-                let lhs = self.evaluate(&expr.lhs, pc, error_on_failure)?;
-                let rhs = self.evaluate(&expr.rhs, pc, error_on_failure)?;
+                let lhs = self.evaluate(&expr.lhs.data, pc, error_on_failure)?;
+                let rhs = self.evaluate(&expr.rhs.data, pc, error_on_failure)?;
                 let op = &expr.op.data;
                 match (lhs, rhs) {
                     (Some(lhs), Some(rhs)) => {
@@ -349,7 +349,7 @@ impl CodegenContext {
                     _ => panic!(),
                 });
 
-                let evaluated = self.evaluate(&*operand.expr, pc, error_on_failure)?;
+                let evaluated = self.evaluate(&operand.expr.data, pc, error_on_failure)?;
                 evaluated
                     .map(|val| match i.mnemonic.data {
                         Mnemonic::Bcc
@@ -573,7 +573,7 @@ impl CodegenContext {
 
         let mut bytes = vec![];
         for expr in exprs {
-            let evaluated = self.evaluate(expr, pc, error_on_failure)?;
+            let evaluated = self.evaluate(&expr.data, pc, error_on_failure)?;
             let data: Vec<u8> = match evaluated {
                 Some(val) => match data_length {
                     1 => vec![val as u8],
@@ -610,7 +610,7 @@ impl CodegenContext {
         error_on_failure: bool,
     ) -> CodegenResult<(EmitResult, Vec<u8>)> {
         let (result, bytes) = match token {
-            Token::Align { value, .. } => match self.evaluate(value, pc, error_on_failure)? {
+            Token::Align { value, .. } => match self.evaluate(&value.data, pc, error_on_failure)? {
                 Some(align) => match pc {
                     Some(pc) => {
                         let padding = (align - (pc.as_i64() % align)) as usize;
@@ -623,7 +623,7 @@ impl CodegenContext {
                 None => Ok((EmitResult::TryLater, vec![])),
             },
             Token::VariableDefinition { ty, id, value, .. } => {
-                let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
+                let eval = self.evaluate(&value.data, pc, error_on_failure)?.unwrap();
 
                 let result = match ty.data {
                     VariableType::Variable => self.symbols.register(
@@ -643,7 +643,7 @@ impl CodegenContext {
                 result.map(|_| (EmitResult::Success, vec![]))
             }
             Token::ProgramCounterDefinition { value, .. } => {
-                let eval = self.evaluate(value, pc, error_on_failure)?.unwrap();
+                let eval = self.evaluate(&value.data, pc, error_on_failure)?.unwrap();
                 match self.segments.try_current_mut() {
                     Some(segment) => {
                         segment.set_current_pc(ProgramCounter::new(eval as usize));
@@ -698,23 +698,23 @@ impl CodegenContext {
         error_on_failure: bool,
         error_msg: &str,
     ) -> Option<i64> {
-        match cfg
-            .try_value(identifier)
-            .map(|lt| lt.map(|val| val.as_expression().clone()))
-        {
-            Some(expr) => match self.evaluate(&expr, pc, error_on_failure) {
-                Ok(Some(val)) => Some(val),
-                _ => {
-                    if error_on_failure {
-                        self.push_error(CodegenError::InvalidDefinition(
-                            expr.location.into(),
-                            OwnedIdentifier(identifier.into()),
-                            error_msg.into(),
-                        ));
+        match cfg.try_value(identifier) {
+            Some(lt) => {
+                let expr = lt.data.as_expression();
+                match self.evaluate(&expr, pc, error_on_failure) {
+                    Ok(Some(val)) => Some(val),
+                    _ => {
+                        if error_on_failure {
+                            self.push_error(CodegenError::InvalidDefinition(
+                                OwnedLocation::from(&lt.location),
+                                OwnedIdentifier(identifier.into()),
+                                error_msg.into(),
+                            ));
+                        }
+                        None
                     }
-                    None
                 }
-            },
+            }
             None => None,
         }
     }
@@ -859,7 +859,7 @@ impl CodegenContext {
                     }
                     Emittable::If(expr, if_, else_) => {
                         let expr_result = self
-                            .evaluate(&expr, pc, error_on_failure)
+                            .evaluate(&expr.data, pc, error_on_failure)
                             .map(|r| r.map(|r| r > 0));
                         match expr_result {
                             Ok(Some(res)) => {
@@ -918,76 +918,87 @@ impl CodegenContext {
         }
     }
 
-    fn generate_emittables<'a>(&mut self, ast: Vec<Located<'a, Token<'a>>>) -> Vec<Emittable<'a>> {
-        ast.into_iter()
-            .filter_map(|lt| match lt.data {
-                Token::Definition { id, value, .. } => {
-                    let definition_type = id.data.as_identifier().0;
-                    let cfg = value.expect("Found empty definition");
-                    let cfg_location = match &cfg.data {
-                        Token::Config { inner, .. } => inner.location.clone(),
-                        _ => panic!(),
-                    };
-                    let cfg = cfg.data.into_config_map();
-
-                    match definition_type {
-                        "segment" => {
-                            // Perform some sanity checks
-                            let errors = require_segment_options_fields(&cfg, &cfg_location);
-                            if errors.is_empty() {
-                                Some(vec![Emittable::SegmentDefinition(cfg)])
-                            } else {
-                                self.errors.extend(errors);
-                                None
-                            }
-                        }
-                        _ => panic!("Unknown definition type: {}", id),
-                    }
-                }
-                Token::Segment { id, inner, .. } => {
-                    let segment_name = id.data.as_identifier().0;
-                    let inner = inner.map(|b| b.data.into_braces()).unwrap_or_else(Vec::new);
-                    Some(vec![Emittable::Segment(
-                        segment_name.into(),
-                        id.location.clone(),
-                        self.generate_emittables(inner),
-                    )])
-                }
-                Token::Braces { inner, .. } => {
-                    Some(vec![self.create_braces_emittable(None, inner.data)])
-                }
-                Token::Label { id, braces, .. } => {
-                    match braces {
-                        Some(braces) => {
-                            // The label contains braces, so also emit the inner data
-                            let braces_emittable = match braces.data {
-                                Token::Braces { inner, .. } => {
-                                    self.create_braces_emittable(Some(id.data.0), inner.data)
-                                }
-                                _ => panic!(),
-                            };
-
-                            Some(vec![Emittable::Label(id), braces_emittable])
-                        }
-                        None => {
-                            // No braces, so just emit the label
-                            Some(vec![Emittable::Label(id)])
-                        }
-                    }
-                }
-                Token::If {
-                    value, if_, else_, ..
-                } => {
-                    let if_ = self.generate_emittables(vec![*if_]);
-                    let else_ = else_
-                        .map(|e| self.generate_emittables(vec![*e]))
-                        .unwrap_or_else(Vec::new);
-                    Some(vec![Emittable::If(value, if_, else_)])
-                }
-                _ => Some(vec![Emittable::Single(None, lt.location, lt.data)]),
-            })
+    fn generate_emittables<'a>(&mut self, ast: &'a [Located<'a, Token<'a>>]) -> Vec<Emittable<'a>> {
+        ast.iter()
+            .map(|lt| self.generate_emittables_for_token(lt))
             .flatten()
             .collect_vec()
+    }
+
+    fn generate_emittables_for_token<'a>(
+        &mut self,
+        lt: &'a Located<'a, Token<'a>>,
+    ) -> Vec<Emittable<'a>> {
+        match &lt.data {
+            Token::Definition { id, value, .. } => {
+                let definition_type = id.data.as_identifier().0;
+                let cfg = value.as_ref().expect("Found empty definition");
+                let cfg_location = match &cfg.data {
+                    Token::Config { inner, .. } => inner.location.clone(),
+                    _ => panic!(),
+                };
+                let cfg = cfg.data.as_config_map();
+
+                match definition_type {
+                    "segment" => {
+                        // Perform some sanity checks
+                        let errors = require_segment_options_fields(&cfg, &cfg_location);
+                        if errors.is_empty() {
+                            vec![Emittable::SegmentDefinition(cfg)]
+                        } else {
+                            self.errors.extend(errors);
+                            vec![]
+                        }
+                    }
+                    _ => panic!("Unknown definition type: {}", id),
+                }
+            }
+            Token::Segment { id, inner, .. } => {
+                let segment_name = id.data.as_identifier().0;
+                let inner = inner.as_ref().map(|b| b.data.as_braces());
+                let inner_emittables = inner
+                    .map(|i| self.generate_emittables(i))
+                    .unwrap_or_default();
+                vec![Emittable::Segment(
+                    segment_name.into(),
+                    id.location.clone(),
+                    inner_emittables,
+                )]
+            }
+            Token::Braces { inner, .. } => {
+                vec![self.create_braces_emittable(None, &inner.data)]
+            }
+            Token::Label { id, braces, .. } => {
+                match braces {
+                    Some(braces) => {
+                        // The label contains braces, so also emit the inner data
+                        let braces_emittable = match &braces.data {
+                            Token::Braces { inner, .. } => {
+                                self.create_braces_emittable(Some(id.data.0), &inner.data)
+                            }
+                            _ => panic!(),
+                        };
+
+                        vec![Emittable::Label(id), braces_emittable]
+                    }
+                    None => {
+                        // No braces, so just emit the label
+                        vec![Emittable::Label(id)]
+                    }
+                }
+            }
+            Token::If {
+                value, if_, else_, ..
+            } => {
+                let if_ = self.generate_emittables_for_token(if_);
+                let else_ = match else_ {
+                    Some(e) => self.generate_emittables_for_token(e),
+                    None => vec![],
+                };
+                vec![Emittable::If(value, if_, else_)]
+            }
+            _ => vec![Emittable::Single(None, &lt.location, &lt.data)],
+        }
     }
 
     fn after_pass(&mut self) -> CodegenResult<()> {
@@ -1015,7 +1026,7 @@ impl CodegenContext {
     fn create_braces_emittable<'a>(
         &mut self,
         scope_name: Option<&str>,
-        ast: Vec<Located<'a, Token<'a>>>,
+        ast: &'a [Located<'a, Token<'a>>],
     ) -> Emittable<'a> {
         let scope_name = self.symbols.add_child_scope(scope_name);
         self.symbols.enter(&scope_name);
@@ -1036,7 +1047,7 @@ fn is_defined(args: Vec<Option<i64>>) -> CodegenResult<Option<i64>> {
 }
 
 pub fn codegen<'a>(
-    ast: Vec<Located<'a, Token<'a>>>,
+    ast: &'a [Located<'a, Token<'a>>],
     options: CodegenOptions,
 ) -> MosResult<CodegenContext> {
     let mut ctx = CodegenContext::new(options);
@@ -1597,7 +1608,7 @@ mod tests {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
         let src = format!("foo: {}bne foo", many_nops);
         let ast = parse(&Path::new("test.asm"), &src)?;
-        let result = codegen(ast, CodegenOptions::default());
+        let result = codegen(&ast, CodegenOptions::default());
         assert_eq!(
             format!("{}", result.err().unwrap()),
             "test.asm:141:1: error: branch too far"
@@ -1770,6 +1781,6 @@ mod tests {
 
     fn test_codegen(code: &str) -> MosResult<CodegenContext> {
         let ast = parse(&Path::new("test.asm"), &code)?;
-        codegen(ast, CodegenOptions::default())
+        codegen(&ast, CodegenOptions::default())
     }
 }

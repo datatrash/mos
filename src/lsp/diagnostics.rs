@@ -34,7 +34,7 @@ fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     };
 
     match parse_result {
-        Ok(ast) => match codegen(ast.clone(), CodegenOptions::default()) {
+        Ok(ast) => match codegen(&ast, CodegenOptions::default()) {
             Ok(_) => {
                 parsed.ast = ast;
             }

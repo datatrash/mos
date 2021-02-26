@@ -72,7 +72,7 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
 
         let ast = parser::parse(&input_path, source.as_str())?;
 
-        let generated_code = codegen(ast, CodegenOptions { pc: 0x2000.into() })?;
+        let generated_code = codegen(&ast, CodegenOptions { pc: 0x2000.into() })?;
 
         let mut merger = SegmentMerger::new(output_path);
         for segment_name in generated_code.segments().keys() {
