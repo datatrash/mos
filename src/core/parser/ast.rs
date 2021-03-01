@@ -78,12 +78,6 @@ impl State {
         }
     }
 
-    pub fn span(&self, span: &LocatedSpan) -> Span {
-        let begin = span.location_offset();
-        let end = begin + span.fragment().len();
-        self.file.span.subspan(begin as u64, end as u64)
-    }
-
     /// When there is an error during parsing we don't want to fail. Instead, we continue but log the error via this method
     pub fn report_error(&self, error: ParseError) {
         self.errors.borrow_mut().push(error);

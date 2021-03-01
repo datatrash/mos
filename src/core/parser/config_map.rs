@@ -168,46 +168,39 @@ impl ConfigMapValidatorBuilder {
 
 /// Tries to parse a single key-value pair within the map
 fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
-    let span = input.extra.span(&input);
+    located(|input| {
+        let value = alt((
+            config_map,
+            located(|input| map(expression, |expr| Token::Expression(expr.data))(input)),
+        ));
 
-    let value = alt((
-        config_map,
-        map(expression, |expr| {
-            Located::new(expr.span, Token::Expression(expr.data))
-        }),
-    ));
-
-    map_once(
-        tuple((ws(identifier_name), ws(char('=')), ws(value))),
-        move |(key, eq, value)| {
-            let key = Box::new(key.flatten());
-            let value = Box::new(value.flatten());
-            Located::new(span, Token::ConfigPair { key, eq, value })
-        },
-    )(input)
+        map_once(
+            tuple((ws(identifier_name), ws(char('=')), ws(value))),
+            move |(key, eq, value)| {
+                let key = Box::new(key.flatten());
+                let value = Box::new(value.flatten());
+                Token::ConfigPair { key, eq, value }
+            },
+        )(input)
+    })(input)
 }
 
 /// Tries to parse a config map
 pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
-    let span = input.extra.span(&input);
-
-    map_once(
-        tuple((
-            multiline_ws(char('{')),
-            located(many0(alt((kvp, end_of_line)))),
-            ws(char('}')),
-        )),
-        move |(lparen, inner, rparen)| {
-            Located::new(
-                span,
-                Token::Config {
-                    lparen,
-                    inner,
-                    rparen,
-                },
-            )
-        },
-    )(input)
+    located(|input| {
+        map_once(
+            tuple((
+                multiline_ws(char('{')),
+                located(many0(alt((kvp, end_of_line)))),
+                ws(char('}')),
+            )),
+            move |(lparen, inner, rparen)| Token::Config {
+                lparen,
+                inner,
+                rparen,
+            },
+        )(input)
+    })(input)
 }
 
 #[cfg(test)]
