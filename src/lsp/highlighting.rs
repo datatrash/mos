@@ -13,9 +13,10 @@ use lsp_types::{
 pub fn caps() -> SemanticTokensOptions {
     let legend = SemanticTokensLegend {
         token_types: vec![
-            SemanticTokenType::CLASS,
+            SemanticTokenType::METHOD,
             SemanticTokenType::PROPERTY,
             SemanticTokenType::NUMBER,
+            SemanticTokenType::VARIABLE,
         ],
         token_modifiers: vec![],
     };
@@ -77,7 +78,7 @@ fn to_deltas(semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
         result.push(SemanticToken {
             delta_line: delta_line as u32,
             delta_start: delta_start as u32,
-            length: st.length as u32,
+            length: (st.location.end.column - st.location.begin.column) as u32,
             token_type: st.token_type,
             token_modifiers_bitset: 0,
         });
@@ -88,16 +89,14 @@ fn to_deltas(semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
 
 struct SemTok {
     location: SpanLoc,
-    length: usize,
     token_type: u32,
 }
 
 impl SemTok {
-    fn new(code_map: &CodeMap, location: Span, length: usize, token_type: u32) -> Self {
+    fn new(code_map: &CodeMap, location: Span, token_type: u32) -> Self {
         let location = code_map.look_up_span(location);
         Self {
             location,
-            length,
             token_type,
         }
     }
@@ -115,9 +114,32 @@ fn emit_semantic(code_map: &CodeMap, lt: &Located<Token>) -> Vec<SemTok> {
         Token::Braces { inner, .. } | Token::Config { inner, .. } => {
             emit_semantic_ast(code_map, &inner.data)
         }
+        Token::Label { id, braces, .. } => {
+            let mut r = vec![];
+            r.push(SemTok::new(code_map, id.span, 3));
+            if let Some(b) = braces {
+                r.extend(emit_semantic(code_map, &b));
+            }
+            r
+        }
+        Token::If {
+            if_, value, else_, ..
+        } => {
+            let mut r = vec![];
+            r.extend(emit_semantic(code_map, if_));
+            r.extend(emit_expression_semantic(code_map, value));
+            if let Some(e) = else_ {
+                r.extend(emit_semantic(code_map, e));
+            }
+            r
+        }
+        Token::VariableDefinition { id, .. } => {
+            let r = SemTok::new(code_map, id.span, 3);
+            vec![r]
+        }
         Token::Instruction(i) => {
             let mut r = vec![];
-            r.push(SemTok::new(code_map, i.mnemonic.span, 3, 0));
+            r.push(SemTok::new(code_map, i.mnemonic.span, 0));
             if let Some(op) = &i.operand {
                 r.extend(emit_semantic(code_map, op));
             }
@@ -138,9 +160,12 @@ fn emit_expression_semantic(code_map: &CodeMap, lt: &Located<Expression>) -> Vec
         }
         Expression::Factor { factor, .. } => match &factor.data {
             ExpressionFactor::Number { value, .. } => {
-                let formatted = format!("{}", value.data);
-                let o = SemTok::new(code_map, value.span, formatted.len(), 2);
-                vec![o]
+                let r = SemTok::new(code_map, value.span, 2);
+                vec![r]
+            }
+            ExpressionFactor::IdentifierValue { path, .. } => {
+                let r = SemTok::new(code_map, path.span, 3);
+                vec![r]
             }
             _ => vec![],
         },

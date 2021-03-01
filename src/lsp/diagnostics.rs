@@ -3,18 +3,46 @@ use crate::core::parser::parse;
 use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
 use crate::lsp::{Analysis, LspContext, NotificationHandler};
-use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, PublishDiagnostics};
+use lsp_types::notification::{
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, PublishDiagnostics,
+};
 use lsp_types::{
-    Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position,
-    PublishDiagnosticsParams, Range, Url,
+    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    Position, PublishDiagnosticsParams, Range, Url,
 };
 use std::path::PathBuf;
 
 pub struct DidOpen {}
 pub struct DidChange {}
+pub struct DidClose {}
 
 impl_notification_handler!(DidOpen);
 impl_notification_handler!(DidChange);
+impl_notification_handler!(DidClose);
+
+impl NotificationHandler<DidOpenTextDocument> for DidOpen {
+    fn handle(&self, ctx: &mut LspContext, params: DidOpenTextDocumentParams) -> MosResult<()> {
+        insert_parsed_document(ctx, &params.text_document.uri, &params.text_document.text);
+        publish_diagnostics(ctx, &params.text_document.uri)?;
+        Ok(())
+    }
+}
+
+impl NotificationHandler<DidChangeTextDocument> for DidChange {
+    fn handle(&self, ctx: &mut LspContext, params: DidChangeTextDocumentParams) -> MosResult<()> {
+        let text_changes = params.content_changes.first().unwrap();
+        insert_parsed_document(ctx, &params.text_document.uri, &text_changes.text);
+        publish_diagnostics(ctx, &params.text_document.uri)?;
+        Ok(())
+    }
+}
+
+impl NotificationHandler<DidCloseTextDocument> for DidClose {
+    fn handle(&self, ctx: &mut LspContext, params: DidCloseTextDocumentParams) -> MosResult<()> {
+        ctx.documents.remove(&params.text_document.uri);
+        Ok(())
+    }
+}
 
 fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     let path = PathBuf::from(uri.path());
@@ -34,23 +62,6 @@ fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     }
 
     ctx.documents.insert(uri.clone(), analysis);
-}
-
-impl NotificationHandler<DidOpenTextDocument> for DidOpen {
-    fn handle(&self, ctx: &mut LspContext, params: DidOpenTextDocumentParams) -> MosResult<()> {
-        insert_parsed_document(ctx, &params.text_document.uri, &params.text_document.text);
-        publish_diagnostics(ctx, &params.text_document.uri)?;
-        Ok(())
-    }
-}
-
-impl NotificationHandler<DidChangeTextDocument> for DidChange {
-    fn handle(&self, ctx: &mut LspContext, params: DidChangeTextDocumentParams) -> MosResult<()> {
-        let text_changes = params.content_changes.first().unwrap();
-        insert_parsed_document(ctx, &params.text_document.uri, &text_changes.text);
-        publish_diagnostics(ctx, &params.text_document.uri)?;
-        Ok(())
-    }
 }
 
 fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
