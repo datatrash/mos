@@ -1,6 +1,6 @@
 # mos' dev!
 
-<img src="https://raw.githubusercontent.com/RoyJacobs/mosdev/master/doc/mos.png" align="right" alt="MOS logo" width="200">
+<img src="https://raw.githubusercontent.com/RoyJacobs/mosdev/master/docs/src/.vuepress/public/mos.png" align="right" alt="MOS logo" width="200">
 
 **mos** is a tool suite for the MOS 6502 (and compatible) CPU written in Rust. More details on the [official site](https://mos.datatra.sh).
 
