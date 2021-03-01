@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
+use super::*;
+use codemap::Span;
 use nom::combinator::map;
 use nom::multi::many0;
-
-use crate::core::parser::*;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 
 /// A ConfigMap stores generic key-value pairs that are used for things like segment definitions
@@ -11,12 +10,12 @@ use std::ops::Deref;
 /// Internally this is just a HashMap storing actual [Token]s, but provides a few convenience methods on top of that.
 #[derive(Debug)]
 pub struct ConfigMap<'a> {
-    items: HashMap<&'a str, &'a Located<'a, Token<'a>>>,
+    items: HashMap<String, &'a Located<Token>>,
 }
 
 impl<'a> ConfigMap<'a> {
     /// Create a new ConfigMap based on the provided [Token::ConfigPair] and [Token::EolTrivia] tokens.
-    pub fn new(items: &'a [Located<'a, Token<'a>>]) -> Self {
+    pub fn new(items: &'a [Located<Token>]) -> Self {
         let items = items
             .iter()
             .filter_map(|pair| {
@@ -27,7 +26,7 @@ impl<'a> ConfigMap<'a> {
                 };
 
                 kvp.map(|(k, v)| {
-                    let k = k.as_identifier().0;
+                    let k = k.as_identifier().clone().0;
                     (k, v.deref())
                 })
             })
@@ -42,12 +41,12 @@ impl<'a> ConfigMap<'a> {
     }
 
     /// Get a reference to a key that may not exist.
-    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&&'a Located<'a, Token<'a>>> {
+    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&&'a Located<Token>> {
         self.items.get(key)
     }
 
     /// Get a reference to the [IdentifierPath] contained within a key that must exist.
-    pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath<'b> {
+    pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath {
         match self.value(key).data.as_factor() {
             ExpressionFactor::IdentifierValue { path, .. } => &path.data,
             _ => panic!(),
@@ -55,10 +54,7 @@ impl<'a> ConfigMap<'a> {
     }
 
     /// Get a reference to the [IdentifierPath] contained within a key that may not exist.
-    pub fn try_value_as_identifier_path<'b>(
-        &'b self,
-        key: &'b str,
-    ) -> Option<&'b IdentifierPath<'b>> {
+    pub fn try_value_as_identifier_path<'b>(&'b self, key: &'b str) -> Option<&'b IdentifierPath> {
         match self.try_value(key) {
             Some(lt) => match lt.data.try_as_factor() {
                 Some(ExpressionFactor::IdentifierValue { path, .. }) => Some(&path.data),
@@ -116,38 +112,32 @@ impl ConfigMapValidatorBuilder {
         self
     }
 
-    pub fn validate(self, cfg: &ConfigMap, location: &Location) -> Vec<MosError> {
-        // Check if the provided keys are present. If not, errors will be generated based on the provided location.
+    pub fn validate(self, cfg: &ConfigMap, span: &Span) -> Vec<ParseError> {
+        // Check if the provided keys are present. If not, errors will be generated based on the provided span.
         let required_fields = self
             .required
             .iter()
             .filter_map(|key| match cfg.items.contains_key(key.as_str()) {
                 true => None,
-                false => Some(
-                    ParseError::ExpectedError {
-                        location: location.clone(),
-                        message: format!("required field: {}", key),
-                    }
-                    .into(),
-                ),
+                false => Some(ParseError {
+                    span: *span,
+                    message: format!("required field: {}", key),
+                }),
             })
             .collect_vec();
 
         // Check if the provided keys are present and only contain a single identifier (and no deeper nested path).
-        // If not, errors will be generated based on the provided location.
+        // If not, errors will be generated based on the provided span.
         let required_single_fields = self
             .required_single
             .iter()
             .filter_map(|key| match cfg.try_value_as_identifier_path(key.as_str()) {
                 Some(path) => {
                     if path.len() != 1 {
-                        Some(
-                            ParseError::ExpectedError {
-                                location: location.clone(),
-                                message: format!("expected single identifier: {}", key),
-                            }
-                            .into(),
-                        )
+                        Some(ParseError {
+                            span: *span,
+                            message: format!("expected single identifier: {}", key),
+                        })
                     } else {
                         None
                     }
@@ -160,15 +150,12 @@ impl ConfigMapValidatorBuilder {
         let incorrect_fields = cfg
             .items
             .iter()
-            .filter_map(|(key, _)| match self.allowed.contains(*key) {
+            .filter_map(|(key, _)| match self.allowed.contains(key) {
                 true => None,
-                false => Some(
-                    ParseError::UnexpectedError {
-                        location: location.clone(),
-                        message: format!("unexpected field: {}", key),
-                    }
-                    .into(),
-                ),
+                false => Some(ParseError {
+                    span: *span,
+                    message: format!("unexpected field: {}", key),
+                }),
             })
             .collect_vec();
 
@@ -181,12 +168,12 @@ impl ConfigMapValidatorBuilder {
 
 /// Tries to parse a single key-value pair within the map
 fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
-    let location = Location::from(&input);
+    let span = input.extra.span(&input);
 
     let value = alt((
         config_map,
         map(expression, |expr| {
-            Located::new(expr.location, Token::Expression(expr.data))
+            Located::new(expr.span, Token::Expression(expr.data))
         }),
     ));
 
@@ -195,14 +182,14 @@ fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
         move |(key, eq, value)| {
             let key = Box::new(key.flatten());
             let value = Box::new(value.flatten());
-            Located::new(location, Token::ConfigPair { key, eq, value })
+            Located::new(span, Token::ConfigPair { key, eq, value })
         },
     )(input)
 }
 
 /// Tries to parse a config map
 pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
-    let location = Location::from(&input);
+    let span = input.extra.span(&input);
 
     map_once(
         tuple((
@@ -212,7 +199,7 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
         )),
         move |(lparen, inner, rparen)| {
             Located::new(
-                location,
+                span,
                 Token::Config {
                     lparen,
                     inner,
@@ -225,10 +212,8 @@ pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use crate::core::parser::config_map::config_map;
-    use crate::core::parser::{LocatedSpan, State};
+    use super::config_map::config_map;
+    use super::{LocatedSpan, State};
 
     #[test]
     fn parse_config_object() {
@@ -253,7 +238,9 @@ mod tests {
     }
 
     fn check(source: &str, expected: &str) {
-        let input = LocatedSpan::new_extra(source, State::new(&Path::new("test.asm")));
+        let source = source.to_string();
+        let state = State::new("test.asm", source.clone());
+        let input = LocatedSpan::new_extra(&source, state);
         let (_, expr) = config_map(input).expect("parser cannot fail");
         assert_eq!(format!("{}", expr), expected.to_string());
     }

@@ -11,7 +11,8 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::core::parser::{
-    parse, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, Token, Trivia,
+    parse_or_err, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, ParseTree, Token,
+    Trivia,
 };
 use crate::errors::MosResult;
 
@@ -158,7 +159,7 @@ impl Default for FormattingOptions {
 }
 
 struct CodeFormatter<'a> {
-    ast: &'a [Located<'a, Token<'a>>],
+    ast: &'a [Located<Token>],
     options: FormattingOptions,
     index: usize,
     indent: usize,
@@ -166,7 +167,7 @@ struct CodeFormatter<'a> {
 }
 
 impl<'a> CodeFormatter<'a> {
-    fn new(ast: &'a [Located<'a, Token<'a>>], options: FormattingOptions) -> Self {
+    fn new(ast: &'a [Located<Token>], options: FormattingOptions) -> Self {
         Self {
             ast,
             options,
@@ -176,7 +177,7 @@ impl<'a> CodeFormatter<'a> {
         }
     }
 
-    fn nested(&self, ast: &'a [Located<'a, Token<'a>>], options: FormattingOptions) -> Self {
+    fn nested(&self, ast: &'a [Located<Token>], options: FormattingOptions) -> Self {
         Self {
             ast,
             options,
@@ -186,7 +187,7 @@ impl<'a> CodeFormatter<'a> {
         }
     }
 
-    fn parent_located<'c>(&self) -> Option<&'c Located<'a, Token<'a>>> {
+    fn parent_located(&self) -> Option<&Located<Token>> {
         self.ast.get(self.index)
     }
 
@@ -593,17 +594,17 @@ impl<'a> CodeFormatter<'a> {
         format!("{}{}", self.format_trivia(lt), result)
     }
 
-    fn format_located<'f, T: Display>(&self, lt: &Located<'f, T>) -> String {
+    fn format_located<T: Display>(&self, lt: &Located<T>) -> String {
         format!("{}{}", self.format_trivia(lt), lt.data)
     }
 
-    fn format_optional_located<'f, T: Display>(&self, lt: &Option<Located<'f, T>>) -> String {
+    fn format_optional_located<T: Display>(&self, lt: &Option<Located<T>>) -> String {
         lt.as_ref()
             .map(|lt| format!("{}{}", self.format_trivia(&lt), lt.data))
             .unwrap_or_else(|| "".to_string())
     }
 
-    fn format_optional_token<T: Deref<Target = Located<'a, Token<'a>>>>(
+    fn format_optional_token<T: Deref<Target = Located<Token>>>(
         &mut self,
         lt: &'a Option<T>,
     ) -> String {
@@ -784,8 +785,8 @@ fn contains_newline_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> bool {
     }
 }
 
-fn format<'a>(ast: &[Located<'a, Token<'a>>], options: FormattingOptions) -> String {
-    let mut fmt = CodeFormatter::new(ast, options);
+fn format(ast: &ParseTree, options: FormattingOptions) -> String {
+    let mut fmt = CodeFormatter::new(ast.tokens(), options);
     let result = fmt.format();
     if options.whitespace.trim {
         result.trim().into()
@@ -810,7 +811,7 @@ pub fn format_command(args: &ArgMatches, cfg: Option<Config>) -> MosResult<()> {
 
     for input_name in input_names {
         let source = read_to_string(input_name)?;
-        let ast = parse(input_name.as_ref(), &source)?;
+        let ast = parse_or_err(input_name.as_ref(), &source)?;
         let formatted = format(&ast, formatting_options.unwrap_or_default());
         let formatted = formatted.replace("\n", crate::LINE_ENDING);
         let mut output_file = OpenOptions::new()
@@ -891,7 +892,7 @@ mod tests {
     use itertools::Itertools;
 
     use crate::commands::*;
-    use crate::core::parser::parse;
+    use crate::core::parser::parse_or_err;
     use crate::errors::{MosError, MosResult};
 
     use super::{format, indent_str, preceding_newline_len, FormattingOptions};
@@ -907,23 +908,17 @@ mod tests {
 
     #[test]
     fn test_indent_str() {
+        eq(indent_str(&[(0, "a\n  b\n    c".into())]), "a\n  b\n    c");
+        eq(indent_str(&[(1, "a\n  b\n    c".into())]), " a\n  b\n    c");
         eq(
-            indent_str(&vec![(0, "a\n  b\n    c".into())]),
-            "a\n  b\n    c",
-        );
-        eq(
-            indent_str(&vec![(1, "a\n  b\n    c".into())]),
-            " a\n  b\n    c",
-        );
-        eq(
-            indent_str(&vec![(4, "a\n  b\n    c".into())]),
+            indent_str(&[(4, "a\n  b\n    c".into())]),
             "    a\n    b\n    c",
         );
     }
 
     #[test]
     fn default_formatting_splits_instructions() -> MosResult<()> {
-        let ast = parse("test.asm".as_ref(), "lda #123 sta 123\nstx 123\nrol")?;
+        let ast = parse_or_err("test.asm".as_ref(), "lda #123 sta 123\nstx 123\nrol")?;
         eq(
             format(&ast, FormattingOptions::default()),
             "lda #123\nsta 123\nstx 123\nrol",
@@ -934,7 +929,7 @@ mod tests {
 
     #[test]
     fn whitespace_trim() -> MosResult<()> {
-        let ast = parse(
+        let ast = parse_or_err(
             "test.asm".as_ref(),
             "/* hello */    /* foo */  lda #123 rol",
         )?;
@@ -948,7 +943,7 @@ mod tests {
 
     #[test]
     fn braces() -> MosResult<()> {
-        let ast = parse("test.asm".as_ref(), ".segment a {}nop")?;
+        let ast = parse_or_err("test.asm".as_ref(), ".segment a {}nop")?;
         let mut options = FormattingOptions::passthrough();
         options.braces.double_newline_after_closing_brace = true;
 
@@ -963,7 +958,7 @@ mod tests {
 
     #[test]
     fn braces_after_pc() -> MosResult<()> {
-        let ast = parse("test.asm".as_ref(), "* = $1000\n{ nop }")?;
+        let ast = parse_or_err("test.asm".as_ref(), "* = $1000\n{ nop }")?;
         let mut options = FormattingOptions::passthrough();
         options.whitespace.trim = true;
         options.whitespace.space_between_kvp = true;
@@ -979,7 +974,7 @@ mod tests {
 
     #[test]
     fn braces_with_content() -> MosResult<()> {
-        let ast = parse(
+        let ast = parse_or_err(
             "test.asm".as_ref(),
             ".segment a\n\n\n\n  {\n\nnop\n\n\n}nop",
         )?;
@@ -999,7 +994,7 @@ mod tests {
 
     #[test]
     fn default_formatting_collapses_newlines_after_rparen() -> MosResult<()> {
-        let ast = parse("test.asm".as_ref(), ".segment a {\nbrk\n}\n\n\n\nnop")?;
+        let ast = parse_or_err("test.asm".as_ref(), ".segment a {\nbrk\n}\n\n\n\nnop")?;
         eq(
             format(&ast, FormattingOptions::default_no_indent()),
             ".segment a {\nbrk\n}\n\nnop",
@@ -1010,7 +1005,7 @@ mod tests {
 
     #[test]
     fn default_formatting_braces_indent() -> MosResult<()> {
-        let ast = parse("test.asm".as_ref(), ".if foo {\nnop /* hi */\n}")?;
+        let ast = parse_or_err("test.asm".as_ref(), ".if foo {\nnop /* hi */\n}")?;
         eq(
             format(&ast, FormattingOptions::default()),
             ".if foo {\n    nop /* hi */\n}",
@@ -1021,7 +1016,7 @@ mod tests {
 
     #[test]
     fn default_formatting_label_indent() -> MosResult<()> {
-        let ast = parse("test.asm".as_ref(), "foo:\n\n{\nnop\nbrk\n\nrol}asl")?;
+        let ast = parse_or_err("test.asm".as_ref(), "foo:\n\n{\nnop\nbrk\n\nrol}asl")?;
         eq(
             format(&ast, FormattingOptions::default()),
             "foo: {\n    nop\n    brk\n    rol\n}\n\nasl",
@@ -1032,7 +1027,7 @@ mod tests {
 
     #[test]
     fn default_formatting_newline_before_if() -> MosResult<()> {
-        let ast = parse(
+        let ast = parse_or_err(
             "test.asm".as_ref(),
             "nop\n.if test { nop }\n.if test { brk }\n\n\n\n\n.if test { rol }",
         )?;
@@ -1048,7 +1043,7 @@ mod tests {
     fn default_formatting_options() -> MosResult<()> {
         let source = include_str!("../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
-        let ast = parse("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), source)?;
         let actual = format(&ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -1058,7 +1053,7 @@ mod tests {
     fn passthrough_formatting_should_result_in_original() -> MosResult<()> {
         let source = include_str!("../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../test/cli/format/valid-unformatted.asm");
-        let ast = parse("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), source)?;
         let actual = format(&ast, FormattingOptions::passthrough());
 
         eq(actual, expected);

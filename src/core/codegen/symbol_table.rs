@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::commands::SymbolType;
-use crate::core::codegen::{CodegenError, CodegenResult, ProgramCounter};
-use crate::core::parser::{Location, OwnedIdentifier};
+use crate::core::codegen::{CodegenError, CodegenResult, DetailedCodegenError, ProgramCounter};
+use crate::core::parser::Identifier;
 use crate::LINE_ENDING;
+use codemap::Span;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Symbol {
@@ -79,20 +80,20 @@ impl SymbolTable {
         &mut self,
         id: ID,
         value: Symbol,
-        location: Option<&Location<'a>>,
+        span: Option<&Span>,
         allow_same_type_redefinition: bool,
     ) -> CodegenResult<()> {
         let id = id.into();
         if !allow_same_type_redefinition {
-            let location = location.unwrap();
-            if let Some(existing) = self.lookup(location, &[id], false)? {
+            let span = span.unwrap();
+            if let Some(existing) = self.lookup(span, &[id], false)? {
                 let is_same_type =
                     std::mem::discriminant(existing) == std::mem::discriminant(&value);
 
                 if !is_same_type || existing != &value {
-                    return Err(CodegenError::SymbolRedefinition(
-                        location.clone().into(),
-                        OwnedIdentifier(id.into()),
+                    return Err(CodegenError::new(
+                        *span,
+                        DetailedCodegenError::SymbolRedefinition(Identifier(id.into())),
                     ));
                 }
             }
@@ -106,7 +107,7 @@ impl SymbolTable {
         &mut self,
         path: &[&str],
         value: Symbol,
-        location: Option<&Location>,
+        span: Option<&Span>,
         allow_same_type_redefinition: bool,
     ) -> CodegenResult<()> {
         if let Some((last, parents)) = path.split_last() {
@@ -117,7 +118,7 @@ impl SymbolTable {
                 self.enter(parent);
             }
 
-            let result = self.register(*last, value, location, allow_same_type_redefinition);
+            let result = self.register(*last, value, span, allow_same_type_redefinition);
 
             for _ in parents {
                 self.leave();
@@ -133,7 +134,7 @@ impl SymbolTable {
     // If `bubble_up` is set, the lookup will bubble up to parent scopes if the symbol is not found in the current scope.
     fn lookup(
         &self,
-        location: &Location,
+        span: &Span,
         path: &[&str],
         bubble_up: bool,
     ) -> CodegenResult<Option<&Symbol>> {
@@ -149,9 +150,9 @@ impl SymbolTable {
         for id in path_ids {
             if id.eq_ignore_ascii_case("super") {
                 if !in_super_phase {
-                    return Err(CodegenError::SuperNotAllowed(
-                        location.into(),
-                        path.iter().join("."),
+                    return Err(CodegenError::new(
+                        *span,
+                        DetailedCodegenError::SuperNotAllowed(path.iter().join(".")),
                     ));
                 }
 
@@ -192,9 +193,9 @@ impl SymbolTable {
         }
     }
 
-    pub(super) fn value(&self, location: &Location, path: &[&str]) -> CodegenResult<Option<i64>> {
+    pub(super) fn value(&self, span: &Span, path: &[&str]) -> CodegenResult<Option<i64>> {
         Ok(self
-            .lookup(location, path, true)?
+            .lookup(span, path, true)?
             .map(|s| match s {
                 Symbol::Label(pc) => Some(pc.as_i64()),
                 Symbol::Variable(val) | Symbol::Constant(val) | Symbol::System(val) => Some(*val),
@@ -274,7 +275,7 @@ mod tests {
     use crate::commands::SymbolType;
     use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
     use crate::core::codegen::CodegenResult;
-    use crate::core::parser::Location;
+    use codemap::{CodeMap, Span};
 
     type TestResult = CodegenResult<()>;
 
@@ -416,7 +417,9 @@ mod tests {
         st.register(id, Symbol::Constant(val), Some(&loc()), false)
     }
 
-    fn loc<'a>() -> Location<'a> {
-        Location::empty()
+    fn loc() -> Span {
+        let mut codemap = CodeMap::new();
+        let f1 = codemap.add_file("test1.rs".to_string(), "abcd\nefghij\nqwerty".to_string());
+        f1.span
     }
 }

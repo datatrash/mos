@@ -1,8 +1,8 @@
+use crate::core::parser::ParseTree;
 use crossbeam_channel::SendError;
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
-
-use crate::core::parser::OwnedLocation;
+use std::sync::Arc;
 
 pub type MosResult<T> = Result<T, MosError>;
 
@@ -12,12 +12,14 @@ pub enum MosError {
     BuildError(String),
     Clap(#[from] clap::Error),
     Codegen {
-        location: Option<OwnedLocation>,
+        tree: Arc<ParseTree>,
+        span: codemap::Span,
         message: String,
     },
     Io(#[from] std::io::Error),
     Parser {
-        location: Option<OwnedLocation>,
+        tree: Arc<ParseTree>,
+        span: codemap::Span,
         message: String,
     },
     Multiple(Vec<MosError>),
@@ -32,22 +34,26 @@ impl PartialEq for MosError {
         match (self, other) {
             (
                 MosError::Parser {
-                    location: lloc,
+                    span: lloc,
                     message: lmsg,
+                    ..
                 },
                 MosError::Parser {
-                    location: rloc,
+                    span: rloc,
                     message: rmsg,
+                    ..
                 },
             ) => lloc == rloc && lmsg == rmsg,
             (
                 MosError::Codegen {
-                    location: lloc,
+                    span: lloc,
                     message: lmsg,
+                    ..
                 },
                 MosError::Codegen {
-                    location: rloc,
+                    span: rloc,
                     message: rmsg,
+                    ..
                 },
             ) => lloc == rloc && lmsg == rmsg,
             (MosError::Multiple(lhs), MosError::Multiple(rhs)) => lhs == rhs,
@@ -74,18 +80,23 @@ impl MosError {
         use ansi_term::Colour::Red;
 
         match self {
-            MosError::Parser { location, message } | MosError::Codegen { location, message } => {
-                let location = match location {
-                    Some(location) => {
-                        format!(
-                            "{}:{}:{}: ",
-                            location.path.to_string_lossy(),
-                            location.line,
-                            location.column
-                        )
-                    }
-                    None => "".to_string(),
-                };
+            MosError::Codegen {
+                tree,
+                span,
+                message,
+            }
+            | MosError::Parser {
+                tree,
+                span,
+                message,
+            } => {
+                let location = tree.code_map().look_up_span(*span);
+                let location = format!(
+                    "{}:{}:{}: ",
+                    location.file.name(),
+                    location.begin.line + 1,
+                    location.begin.column + 1
+                );
                 let err = if use_color {
                     Red.paint("error:")
                 } else {

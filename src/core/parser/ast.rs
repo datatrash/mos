@@ -1,45 +1,91 @@
-use std::cell::RefCell;
-use std::fmt::{Binary, Display, Formatter, LowerHex};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-
-use itertools::Itertools;
-
 use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::ParseError;
+use codemap::{CodeMap, Span};
+use itertools::Itertools;
+use std::cell::RefCell;
+use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
 
 /// A span containing a fragment of the source text and the location of this fragment within the source
-pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State<'a>>;
+pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State>;
 
 /// A convenience wrapper around nom's own [nom::IResult] to make use of our own [LocatedSpan] type
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
 /// An item in a comma-separated list
-pub type ArgItem<'a> = (Located<'a, Expression<'a>>, Option<Located<'a, char>>);
+pub type ArgItem = (Located<Expression>, Option<Located<char>>);
 
-/// The state of the parser
-#[derive(Clone, Debug)]
-pub struct State<'a> {
-    /// Which file are we parsing?
-    pub path: &'a Path,
-
-    /// Which errors did we encounter?
-    pub errors: Rc<RefCell<Vec<ParseError<'a>>>>,
+/// The result of parsing
+pub struct ParseTree {
+    code_map: CodeMap,
+    source_root: PathBuf,
+    tokens: Vec<Located<Token>>,
 }
 
-impl<'a> State<'a> {
-    pub fn new(path: &'a Path) -> Self {
-        Self {
-            path,
-            errors: Rc::new(RefCell::new(Vec::new())),
-        }
+impl Debug for ParseTree {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "[ParseTree]")
     }
 }
 
-impl<'a> State<'a> {
+impl ParseTree {
+    pub fn new(code_map: CodeMap, source_root: &Path, tokens: Vec<Located<Token>>) -> Self {
+        Self {
+            code_map,
+            source_root: source_root.into(),
+            tokens,
+        }
+    }
+
+    pub fn code_map(&self) -> &CodeMap {
+        &self.code_map
+    }
+
+    pub fn source_root(&self) -> &Path {
+        self.source_root.as_path()
+    }
+
+    pub fn tokens(&self) -> &[Located<Token>] {
+        &self.tokens
+    }
+}
+
+/// The state of the parser
+#[derive(Clone, Debug)]
+pub struct State {
+    /// Codemap
+    pub code_map: Rc<RefCell<CodeMap>>,
+
+    /// Which file are we parsing?
+    pub file: Arc<codemap::File>,
+
+    /// Which errors did we encounter?
+    pub errors: Rc<RefCell<Vec<ParseError>>>,
+}
+
+impl State {
+    pub fn new<P: Into<String>, S: Into<String>>(path: P, source: S) -> Self {
+        let mut code_map = CodeMap::new();
+        let file = code_map.add_file(path.into(), source.into());
+
+        Self {
+            code_map: Rc::new(RefCell::new(code_map)),
+            file,
+            errors: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    pub fn span(&self, span: &LocatedSpan) -> Span {
+        let begin = span.location_offset();
+        let end = begin + span.fragment().len();
+        self.file.span.subspan(begin as u64, end as u64)
+    }
+
     /// When there is an error during parsing we don't want to fail. Instead, we continue but log the error via this method
-    pub fn report_error(&self, error: ParseError<'a>) {
+    pub fn report_error(&self, error: ParseError) {
         self.errors.borrow_mut().push(error);
     }
 }
@@ -59,108 +105,23 @@ pub enum Trivia {
 
 /// A Rust-style identifier that can be used to, well, identify things
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Identifier<'a>(pub &'a str);
+pub struct Identifier(pub String);
 
-/// Same as [Identifier] but with an owned [String] instead.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct OwnedIdentifier(pub String);
+impl From<&str> for Identifier {
+    fn from(id: &str) -> Self {
+        Identifier(id.to_string())
+    }
+}
 
-impl<'a> Display for Identifier<'a> {
+impl<'a> From<&'a Identifier> for &'a str {
+    fn from(id: &'a Identifier) -> Self {
+        id.0.as_str()
+    }
+}
+
+impl Display for Identifier {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-impl Display for OwnedIdentifier {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl<'a> From<Identifier<'a>> for OwnedIdentifier {
-    fn from(id: Identifier<'a>) -> Self {
-        Self(id.0.into())
-    }
-}
-
-impl<'a> From<&Identifier<'a>> for OwnedIdentifier {
-    fn from(id: &Identifier<'a>) -> Self {
-        Self(id.0.into())
-    }
-}
-
-impl<'a> From<Identifier<'a>> for &'a str {
-    fn from(id: Identifier<'a>) -> Self {
-        id.0
-    }
-}
-
-impl<'a> From<&Identifier<'a>> for &'a str {
-    fn from(id: &Identifier<'a>) -> Self {
-        id.0
-    }
-}
-
-/// A location inside of a source file
-#[derive(Clone, Debug, PartialEq)]
-pub struct Location<'a> {
-    pub path: &'a Path,
-    pub fragment: &'a str,
-    pub line: u32,
-    pub column: u32,
-}
-
-impl<'a> Location<'a> {
-    #[cfg(test)]
-    pub fn empty() -> Self {
-        Self {
-            path: "test.asm".as_ref(),
-            fragment: "",
-            line: 0,
-            column: 0,
-        }
-    }
-}
-
-/// A version of [Location] that owns its data
-#[derive(Clone, Debug, PartialEq)]
-pub struct OwnedLocation {
-    pub path: PathBuf,
-    pub fragment: String,
-    pub line: u32,
-    pub column: u32,
-}
-
-impl<'a> From<Location<'a>> for OwnedLocation {
-    fn from(l: Location<'a>) -> Self {
-        Self {
-            path: l.path.to_path_buf(),
-            fragment: l.fragment.to_owned(),
-            line: l.line,
-            column: l.column,
-        }
-    }
-}
-
-impl<'a> From<&'a Location<'a>> for OwnedLocation {
-    fn from(l: &'a Location<'a>) -> Self {
-        Self {
-            path: l.path.to_path_buf(),
-            fragment: l.fragment.to_owned(),
-            line: l.line,
-            column: l.column,
-        }
-    }
-}
-
-impl<'a> From<&LocatedSpan<'a>> for Location<'a> {
-    fn from(span: &LocatedSpan<'a>) -> Self {
-        Self {
-            path: span.extra.path,
-            fragment: span.fragment(),
-            line: span.location_line(),
-            column: span.get_column() as u32,
-        }
     }
 }
 
@@ -182,10 +143,10 @@ impl Display for IndexRegister {
 
 /// A 6502 instruction
 #[derive(Debug, PartialEq)]
-pub struct Instruction<'a> {
-    pub mnemonic: Located<'a, Mnemonic>,
+pub struct Instruction {
+    pub mnemonic: Located<Mnemonic>,
     /// The operand is optional because some instructions (e.g. `NOP`) don't have an operand.
-    pub operand: Option<Box<Located<'a, Token<'a>>>>,
+    pub operand: Option<Box<Located<Token>>>,
 }
 
 /// The addressing mode for the instruction
@@ -205,12 +166,12 @@ pub enum AddressingMode {
 
 /// The operand of an instruction
 #[derive(Debug, PartialEq)]
-pub struct Operand<'a> {
-    pub expr: Box<Located<'a, Expression<'a>>>,
-    pub lchar: Option<Located<'a, char>>,
-    pub rchar: Option<Located<'a, char>>,
+pub struct Operand {
+    pub expr: Box<Located<Expression>>,
+    pub lchar: Option<Located<char>>,
+    pub rchar: Option<Located<char>>,
     pub addressing_mode: AddressingMode,
-    pub suffix: Option<Box<Located<'a, Token<'a>>>>,
+    pub suffix: Option<Box<Located<Token>>>,
 }
 
 /// A number, which can be hexadecimal (`$23AB`), decimal (`123`) or binary (`%11011`)
@@ -249,19 +210,9 @@ impl Display for AddressModifier {
 
 /// A path of multiple identifiers, usually written as being separated by dots (e.g. `foo.bar.baz`)
 #[derive(Clone, Debug, PartialEq)]
-pub struct IdentifierPath<'a>(Vec<Identifier<'a>>);
+pub struct IdentifierPath(Vec<Identifier>);
 
-/// Same as [IdentifierPath] but containing [OwnedIdentifier]s.
-#[derive(Clone, Debug, PartialEq)]
-pub struct OwnedIdentifierPath(Vec<OwnedIdentifier>);
-
-impl<'a> Display for IdentifierPath<'a> {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0.iter().map(|i| i.0).collect_vec().join("."))
-    }
-}
-
-impl Display for OwnedIdentifierPath {
+impl Display for IdentifierPath {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(
             f,
@@ -271,24 +222,13 @@ impl Display for OwnedIdentifierPath {
     }
 }
 
-impl<'a> From<IdentifierPath<'a>> for OwnedIdentifierPath {
-    fn from(src: IdentifierPath<'a>) -> Self {
-        Self(
-            src.0
-                .into_iter()
-                .map(|id| OwnedIdentifier(id.0.into()))
-                .collect(),
-        )
-    }
-}
-
-impl<'a> IdentifierPath<'a> {
-    pub fn new(ids: &[Identifier<'a>]) -> Self {
+impl IdentifierPath {
+    pub fn new(ids: &[Identifier]) -> Self {
         Self(ids.to_vec())
     }
 
     pub fn to_str_vec(&self) -> Vec<&str> {
-        self.0.iter().map(|i| i.0).collect()
+        self.0.iter().map(|i| i.0.as_str()).collect()
     }
 
     pub fn len(&self) -> usize {
@@ -298,12 +238,6 @@ impl<'a> IdentifierPath<'a> {
     pub fn single(&self) -> &Identifier {
         assert_eq!(self.len(), 1);
         self.0.first().unwrap()
-    }
-}
-
-impl OwnedIdentifierPath {
-    pub fn new(ids: &[OwnedIdentifier]) -> Self {
-        Self(ids.to_vec())
     }
 }
 
@@ -366,62 +300,65 @@ impl Display for BinaryOp {
 
 /// A binary expression of the form `lhs op rhs`
 #[derive(Debug, PartialEq)]
-pub struct BinaryExpression<'a> {
-    pub op: Located<'a, BinaryOp>,
-    pub lhs: Box<Located<'a, Expression<'a>>>,
-    pub rhs: Box<Located<'a, Expression<'a>>>,
+pub struct BinaryExpression {
+    pub op: Located<BinaryOp>,
+    pub lhs: Box<Located<Expression>>,
+    pub rhs: Box<Located<Expression>>,
 }
 
 /// A factor that can be used on either side of an expression operation
 #[derive(Debug, PartialEq)]
-pub enum ExpressionFactor<'a> {
-    CurrentProgramCounter(Located<'a, char>),
+pub enum ExpressionFactor {
+    CurrentProgramCounter(Located<char>),
     ExprParens {
-        lparen: Located<'a, char>,
-        inner: Box<Located<'a, Expression<'a>>>,
-        rparen: Located<'a, char>,
+        lparen: Located<char>,
+        inner: Box<Located<Expression>>,
+        rparen: Located<char>,
     },
     FunctionCall {
-        name: Box<Located<'a, Token<'a>>>,
-        lparen: Located<'a, char>,
-        args: Vec<ArgItem<'a>>,
-        rparen: Located<'a, char>,
+        name: Box<Located<Token>>,
+        lparen: Located<char>,
+        args: Vec<ArgItem>,
+        rparen: Located<char>,
     },
     IdentifierValue {
-        path: Located<'a, IdentifierPath<'a>>,
-        modifier: Option<Located<'a, AddressModifier>>,
+        path: Located<IdentifierPath>,
+        modifier: Option<Located<AddressModifier>>,
     },
     Number {
-        ty: Located<'a, NumberType>,
-        value: Located<'a, Number<'a>>,
+        ty: Located<NumberType>,
+        value: Located<Number>,
     },
 }
 
 /// A wrapper that stores the original number string and its radix, so that any zero-prefixes are kept
 #[derive(Debug, PartialEq)]
-pub struct Number<'a> {
+pub struct Number {
     radix: u32,
-    data: &'a str,
+    data: String,
 }
 
-impl<'a> Display for Number<'a> {
+impl Display for Number {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}", self.data)
     }
 }
 
-impl<'a> Number<'a> {
+impl Number {
     pub fn value(&self) -> i64 {
-        i64::from_str_radix(self.data, self.radix).ok().unwrap()
+        i64::from_str_radix(&self.data, self.radix).ok().unwrap()
     }
 
-    pub fn from_type(ty: NumberType, data: &'a str) -> Self {
+    pub fn from_type<S: AsRef<str>>(ty: NumberType, data: S) -> Self {
         let radix = match ty {
             NumberType::Hex => 16,
             NumberType::Dec => 10,
             NumberType::Bin => 2,
         };
-        Self { radix, data }
+        Self {
+            radix,
+            data: data.as_ref().into(),
+        }
     }
 }
 
@@ -451,13 +388,13 @@ impl Display for ExpressionFactorFlags {
 
 /// An expression consists of one or more factors, possibly contained within a binary (sub)expression
 #[derive(Debug, PartialEq)]
-pub enum Expression<'a> {
-    BinaryExpression(BinaryExpression<'a>),
+pub enum Expression {
+    BinaryExpression(BinaryExpression),
     Factor {
-        factor: Box<Located<'a, ExpressionFactor<'a>>>,
+        factor: Box<Located<ExpressionFactor>>,
         flags: ExpressionFactorFlags,
-        tag_not: Option<Located<'a, char>>,
-        tag_neg: Option<Located<'a, char>>,
+        tag_not: Option<Located<char>>,
+        tag_neg: Option<Located<char>>,
     },
 }
 
@@ -517,127 +454,127 @@ impl Display for EmptyDisplay {
 
 /// Tokens that, together, make up all possible source text
 #[derive(Debug, PartialEq)]
-pub enum Token<'a> {
+pub enum Token {
     Align {
-        tag: Located<'a, &'a str>,
-        value: Located<'a, Expression<'a>>,
+        tag: Located<String>,
+        value: Located<Expression>,
     },
     Braces {
-        lparen: Located<'a, char>,
-        inner: Located<'a, Vec<Located<'a, Token<'a>>>>,
-        rparen: Located<'a, char>,
+        lparen: Located<char>,
+        inner: Located<Vec<Located<Token>>>,
+        rparen: Located<char>,
     },
     Config {
-        lparen: Located<'a, char>,
-        inner: Located<'a, Vec<Located<'a, Token<'a>>>>,
-        rparen: Located<'a, char>,
+        lparen: Located<char>,
+        inner: Located<Vec<Located<Token>>>,
+        rparen: Located<char>,
     },
     ConfigPair {
-        key: Box<Located<'a, Token<'a>>>,
-        eq: Located<'a, char>,
-        value: Box<Located<'a, Token<'a>>>,
+        key: Box<Located<Token>>,
+        eq: Located<char>,
+        value: Box<Located<Token>>,
     },
     Data {
-        values: Vec<ArgItem<'a>>,
-        size: Located<'a, DataSize>,
+        values: Vec<ArgItem>,
+        size: Located<DataSize>,
     },
     Definition {
-        tag: Located<'a, &'a str>,
-        id: Box<Located<'a, Token<'a>>>,
-        value: Option<Box<Located<'a, Token<'a>>>>,
+        tag: Located<String>,
+        id: Box<Located<Token>>,
+        value: Option<Box<Located<Token>>>,
     },
     /// Since during parsing the trivia that is attached to the tokens is the trivia to the left side of the token. If there is any trivia
     /// to the right-hand side, until the end of the line, then this token is additionally emitted just to store this additional trivia.
-    EolTrivia(Located<'a, EmptyDisplay>),
+    EolTrivia(Located<EmptyDisplay>),
     Eof,
     Error,
-    Expression(Expression<'a>),
-    IdentifierName(Identifier<'a>),
+    Expression(Expression),
+    IdentifierName(Identifier),
     If {
-        tag_if: Located<'a, &'a str>,
-        value: Located<'a, Expression<'a>>,
-        if_: Box<Located<'a, Token<'a>>>,
-        tag_else: Option<Located<'a, &'a str>>,
-        else_: Option<Box<Located<'a, Token<'a>>>>,
+        tag_if: Located<String>,
+        value: Located<Expression>,
+        if_: Box<Located<Token>>,
+        tag_else: Option<Located<String>>,
+        else_: Option<Box<Located<Token>>>,
     },
     Include {
-        tag: Located<'a, &'a str>,
-        lquote: Located<'a, char>,
-        filename: Located<'a, &'a str>,
+        tag: Located<String>,
+        lquote: Located<char>,
+        filename: Located<String>,
     },
-    Instruction(Instruction<'a>),
+    Instruction(Instruction),
     Label {
-        id: Located<'a, Identifier<'a>>,
-        colon: Located<'a, char>,
-        braces: Option<Box<Located<'a, Token<'a>>>>,
+        id: Located<Identifier>,
+        colon: Located<char>,
+        braces: Option<Box<Located<Token>>>,
     },
-    Operand(Operand<'a>),
+    Operand(Operand),
     ProgramCounterDefinition {
-        star: Located<'a, char>,
-        eq: Located<'a, char>,
-        value: Located<'a, Expression<'a>>,
+        star: Located<char>,
+        eq: Located<char>,
+        value: Located<Expression>,
     },
     RegisterSuffix {
-        comma: Located<'a, char>,
-        register: Located<'a, IndexRegister>,
+        comma: Located<char>,
+        register: Located<IndexRegister>,
     },
     Segment {
-        tag: Located<'a, &'a str>,
-        id: Box<Located<'a, Token<'a>>>,
-        inner: Option<Box<Located<'a, Token<'a>>>>,
+        tag: Located<String>,
+        id: Box<Located<Token>>,
+        inner: Option<Box<Located<Token>>>,
     },
     VariableDefinition {
-        ty: Located<'a, VariableType>,
-        id: Located<'a, Identifier<'a>>,
-        eq: Located<'a, char>,
-        value: Box<Located<'a, Expression<'a>>>,
+        ty: Located<VariableType>,
+        id: Located<Identifier>,
+        eq: Located<char>,
+        value: Box<Located<Expression>>,
     },
 }
 
-impl<'a> Token<'a> {
-    pub(crate) fn as_braces(&self) -> &Vec<Located<'a, Token<'a>>> {
+impl Token {
+    pub(crate) fn as_braces(&self) -> &Vec<Located<Token>> {
         match self {
             Token::Braces { inner, .. } => &inner.data,
             _ => panic!(),
         }
     }
 
-    pub(crate) fn as_config_map(&'a self) -> ConfigMap<'a> {
+    pub(crate) fn as_config_map(&self) -> ConfigMap {
         match self {
             Token::Config { inner, .. } => ConfigMap::new(&inner.data),
             _ => panic!(),
         }
     }
 
-    pub(crate) fn as_identifier(&self) -> &Identifier<'a> {
+    pub(crate) fn as_identifier(&self) -> &Identifier {
         match self {
             Token::IdentifierName(id) => id,
             _ => panic!(),
         }
     }
 
-    pub(crate) fn as_expression(&self) -> &Expression<'a> {
+    pub(crate) fn as_expression(&self) -> &Expression {
         match self {
             Token::Expression(expr) => &expr,
             _ => panic!(),
         }
     }
 
-    pub(crate) fn as_factor(&self) -> &ExpressionFactor<'a> {
+    pub(crate) fn as_factor(&self) -> &ExpressionFactor {
         match self {
             Token::Expression(Expression::Factor { factor, .. }) => &factor.data,
             _ => panic!(),
         }
     }
 
-    pub(crate) fn try_as_factor(&self) -> Option<&ExpressionFactor<'a>> {
+    pub(crate) fn try_as_factor(&self) -> Option<&ExpressionFactor> {
         match self {
             Token::Expression(Expression::Factor { factor, .. }) => Some(&factor.data),
             _ => None,
         }
     }
 
-    pub(crate) fn into_identifier(self) -> Identifier<'a> {
+    pub(crate) fn into_identifier(self) -> Identifier {
         match self {
             Token::IdentifierName(id) => id,
             _ => panic!(),
@@ -645,69 +582,53 @@ impl<'a> Token<'a> {
     }
 }
 
-/// A wrapper around any kind of data which adds location information and any trivia.
+/// A wrapper around any kind of data which adds span information and any trivia.
 ///
 /// During parsing the trivia that is included with tokens is any trivia that is located to the left of the token.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Located<'a, T> {
-    pub location: Location<'a>,
+pub struct Located<T> {
+    pub span: Span,
     pub data: T,
-    pub trivia: Option<Box<Located<'a, Vec<Trivia>>>>,
+    pub trivia: Option<Box<Located<Vec<Trivia>>>>,
 }
 
-impl<'a, T> Located<'a, Located<'a, T>> {
+impl<T> Located<Located<T>> {
     /// Remove one layer of nesting for nested located types
-    pub fn flatten(self) -> Located<'a, T> {
+    pub fn flatten(self) -> Located<T> {
         Located {
-            location: self.data.location.clone(),
+            span: self.data.span,
             data: self.data.data,
             trivia: self.trivia,
         }
     }
 }
 
-impl<'a, T> Located<'a, T> {
+impl<T> Located<T> {
     /// Borrow the [Located] and map the data to something else
-    pub fn map<U, F: Fn(&T) -> U>(&self, map_fn: F) -> Located<'a, U> {
-        Located::new_with_trivia(
-            self.location.clone(),
-            map_fn(&self.data),
-            self.trivia.clone(),
-        )
+    pub fn map<U, F: Fn(&T) -> U>(&self, map_fn: F) -> Located<U> {
+        Located::new_with_trivia(self.span, map_fn(&self.data), self.trivia.clone())
     }
 
     /// Borrow the [Located] and map the data to something else using an FnOnce
-    pub fn map_once<U, F: FnOnce(&T) -> U>(&self, map_fn: F) -> Located<'a, U> {
-        Located::new_with_trivia(
-            self.location.clone(),
-            map_fn(&self.data),
-            self.trivia.clone(),
-        )
+    pub fn map_once<U, F: FnOnce(&T) -> U>(&self, map_fn: F) -> Located<U> {
+        Located::new_with_trivia(self.span, map_fn(&self.data), self.trivia.clone())
     }
 
     /// Take ownership of the [Located] and map the data into something else
-    pub fn map_into<U, F: FnOnce(T) -> U>(self, map_fn: F) -> Located<'a, U> {
-        Located::new_with_trivia(self.location, map_fn(self.data), self.trivia)
+    pub fn map_into<U, F: FnOnce(T) -> U>(self, map_fn: F) -> Located<U> {
+        Located::new_with_trivia(self.span, map_fn(self.data), self.trivia)
     }
 
-    pub fn new<L: Into<Location<'a>>>(location: L, data: T) -> Self {
+    pub fn new(span: Span, data: T) -> Self {
         Self {
-            location: location.into(),
+            span,
             data,
             trivia: None,
         }
     }
 
-    pub fn new_with_trivia<L: Into<Location<'a>>>(
-        location: L,
-        data: T,
-        trivia: Option<Box<Located<'a, Vec<Trivia>>>>,
-    ) -> Self {
-        Self {
-            location: location.into(),
-            data,
-            trivia,
-        }
+    pub fn new_with_trivia(span: Span, data: T, trivia: Option<Box<Located<Vec<Trivia>>>>) -> Self {
+        Self { span, data, trivia }
     }
 }
 
@@ -729,7 +650,7 @@ impl Display for Trivia {
     }
 }
 
-impl<'a> Display for ExpressionFactor<'a> {
+impl Display for ExpressionFactor {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::CurrentProgramCounter(star) => write!(f, "{}", star),
@@ -781,25 +702,25 @@ fn format_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> String {
         .unwrap_or_else(|| "".to_string())
 }
 
-impl<'a, T: Display> Display for Located<'a, T> {
+impl<'a, T: Display> Display for Located<T> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}{}", format_trivia(&self.trivia), &self.data)
     }
 }
 
-impl<'a, T: Display + LowerHex> LowerHex for Located<'a, T> {
+impl<'a, T: Display + LowerHex> LowerHex for Located<T> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}{:x}", format_trivia(&self.trivia), &self.data)
     }
 }
 
-impl<'a, T: Display + Binary> Binary for Located<'a, T> {
+impl<'a, T: Display + Binary> Binary for Located<T> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}{:b}", format_trivia(&self.trivia), &self.data)
     }
 }
 
-impl<'a> Display for Expression<'a> {
+impl Display for Expression {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Self::BinaryExpression(expr) => {
@@ -825,7 +746,7 @@ impl<'a> Display for Expression<'a> {
     }
 }
 
-impl<'a> Display for Token<'a> {
+impl Display for Token {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Token::Align { tag, value } => {

@@ -1,36 +1,42 @@
-mod diagnostics;
-mod highlighting;
-mod traits;
-
+use crate::core::parser::ParseTree;
 use crate::errors::{MosError, MosResult};
 use crate::lsp::diagnostics::{DidChange, DidOpen};
 use crate::lsp::highlighting::FullRequest;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{InitializeParams, ServerCapabilities, TextDocumentSyncKind, Url};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::parser::{Located, Token};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-use std::path::PathBuf;
+mod diagnostics;
+mod highlighting;
+mod traits;
+
 pub use traits::*;
 
-pub struct ParsedAst<'a> {
-    path: PathBuf,
-    source: String,
-    ast: Vec<Located<'a, Token<'a>>>,
+pub struct Analysis {
+    tree: Option<Arc<ParseTree>>,
     error: Option<MosError>,
 }
 
-pub struct LspContext<'a> {
-    connection: Arc<Connection>,
-    io_threads: IoThreads,
-    documents: HashMap<Url, Box<ParsedAst<'a>>>,
+impl Analysis {
+    fn new() -> Self {
+        Self {
+            tree: None,
+            error: None,
+        }
+    }
 }
 
-impl<'a> LspContext<'a> {
+pub struct LspContext {
+    connection: Arc<Connection>,
+    io_threads: IoThreads,
+    documents: HashMap<Url, Analysis>,
+}
+
+impl LspContext {
     fn new() -> Self {
         let (connection, io_threads) = Connection::stdio();
 
@@ -72,13 +78,13 @@ impl<'a> LspContext<'a> {
     }
 }
 
-pub struct LspServer<'a> {
-    context: LspContext<'a>,
+pub struct LspServer {
+    context: LspContext,
     request_handlers: HashMap<&'static str, Box<dyn UntypedRequestHandler>>,
     notification_handlers: HashMap<&'static str, Box<dyn UntypedNotificationHandler>>,
 }
 
-impl<'a> LspServer<'a> {
+impl LspServer {
     pub fn new() -> Self {
         let request_handlers = HashMap::new();
         let notification_handlers = HashMap::new();

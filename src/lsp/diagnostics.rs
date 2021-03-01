@@ -2,7 +2,7 @@ use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::parse;
 use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
-use crate::lsp::{LspContext, NotificationHandler, ParsedAst};
+use crate::lsp::{Analysis, LspContext, NotificationHandler};
 use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, PublishDiagnostics};
 use lsp_types::{
     Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position,
@@ -19,35 +19,21 @@ impl_notification_handler!(DidChange);
 fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     let path = PathBuf::from(uri.path());
     let source = source.to_string();
-    let mut parsed = Box::new(ParsedAst {
-        path,
-        source,
-        ast: vec![],
-        error: None,
-    });
 
-    let parse_result = unsafe {
-        // Since we know 'parsed' won't move in memory anymore since it's a Box, we can do partial borrows here
-        let path = &parsed.path as *const PathBuf;
-        let source = &parsed.source as *const String;
-        parse(path.as_ref().unwrap(), source.as_ref().unwrap().as_str())
-    };
-
-    match parse_result {
-        Ok(ast) => match codegen(&ast, CodegenOptions::default()) {
-            Ok(_) => {
-                parsed.ast = ast;
-            }
+    let mut analysis = Analysis::new();
+    let (tree, error) = parse(path.as_path(), &source);
+    analysis.tree = Some(tree.clone());
+    match error {
+        Some(e) => analysis.error = Some(e),
+        None => match codegen(tree, CodegenOptions::default()) {
+            Ok(_) => {}
             Err(e) => {
-                parsed.error = Some(e);
+                analysis.error = Some(e);
             }
         },
-        Err(e) => {
-            parsed.error = Some(e);
-        }
     }
 
-    ctx.documents.insert(uri.clone(), parsed);
+    ctx.documents.insert(uri.clone(), analysis);
 }
 
 impl NotificationHandler<DidOpenTextDocument> for DidOpen {
@@ -82,27 +68,24 @@ fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
 }
 
 fn to_diagnostics(error: &MosError) -> Vec<Diagnostic> {
-    match error {
+    match &error {
         MosError::Parser {
-            ref location,
-            ref message,
+            tree,
+            span,
+            message,
         }
         | MosError::Codegen {
-            ref location,
-            ref message,
-        } => match location {
-            Some(l) => {
-                let start = Position::new(l.line - 1, l.column - 1);
-                let end = Position::new(l.line - 1, l.column - 1 + l.fragment.len() as u32);
-                let range = Range::new(start, end);
-                let d = Diagnostic::new_simple(range, message.clone());
-                vec![d]
-            }
-            None => {
-                eprintln!("Parser error without a location: {:?}", error);
-                vec![]
-            }
-        },
+            tree,
+            span,
+            message,
+        } => {
+            let l = tree.code_map().look_up_span(*span);
+            let start = Position::new(l.begin.line as u32, l.begin.column as u32);
+            let end = Position::new(l.end.line as u32, l.end.column as u32);
+            let range = Range::new(start, end);
+            let d = Diagnostic::new_simple(range, message.clone());
+            vec![d]
+        }
         MosError::Multiple(errors) => errors.iter().map(to_diagnostics).flatten().collect(),
         _ => {
             eprintln!("Unknown parsing error: {:?}", error);

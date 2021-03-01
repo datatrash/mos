@@ -1,22 +1,18 @@
-#![allow(dead_code)]
-
-use std::collections::HashMap;
-use std::io::Error;
-use std::path::PathBuf;
-use std::str::FromStr;
-
-use fs_err as fs;
-use itertools::Itertools;
-use smallvec::{smallvec, SmallVec};
-
-pub use program_counter::*;
-pub use segment::*;
-pub use symbol_table::*;
-
 use crate::core::codegen::segment::{require_segment_options_fields, SegmentOptions};
 use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
+use codemap::Span;
+use fs_err as fs;
+use itertools::Itertools;
+use smallvec::{smallvec, SmallVec};
+use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::Arc;
+
+pub use program_counter::*;
+pub use segment::*;
+pub use symbol_table::*;
 
 mod program_counter;
 mod segment;
@@ -24,63 +20,74 @@ mod symbol_table;
 
 pub type CodegenResult<T> = Result<T, CodegenError>;
 
-#[derive(thiserror::Error, Debug, PartialEq)]
+#[derive(thiserror::Error, Debug)]
 pub enum CodegenError {
-    #[error("unknown identifier: {1}")]
-    UnknownIdentifier(OwnedLocation, OwnedIdentifierPath),
-    #[error("unknown function: {1}")]
-    UnknownFunction(OwnedLocation, OwnedIdentifier),
+    Detailed(Span, DetailedCodegenError),
+    Io(#[from] std::io::Error),
+    Mos(MosError),
+    Multiple(Vec<CodegenError>),
+}
+
+impl PartialEq for CodegenError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (CodegenError::Detailed(lloc, lerr), CodegenError::Detailed(rloc, rerr)) => {
+                lloc == rloc && lerr == rerr
+            }
+            _ => false,
+        }
+    }
+}
+
+impl std::fmt::Display for CodegenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            CodegenError::Detailed(_, detail) => write!(f, "{}", detail),
+            _ => write!(f, "[unimplemented]"),
+        }
+    }
+}
+
+#[derive(thiserror::Error, Debug, PartialEq)]
+pub enum DetailedCodegenError {
+    #[error("unknown identifier: {0}")]
+    UnknownIdentifier(IdentifierPath),
+    #[error("unknown function: {0}")]
+    UnknownFunction(Identifier),
     #[error("branch too far")]
-    BranchTooFar(OwnedLocation),
-    #[error("cannot redefine symbol: {1}")]
-    SymbolRedefinition(OwnedLocation, OwnedIdentifier),
+    BranchTooFar(),
+    #[error("cannot redefine symbol: {0}")]
+    SymbolRedefinition(Identifier),
     #[error("operand size mismatch")]
-    OperandSizeMismatch(OwnedLocation),
-    #[error("invalid definition: {1}: {2}")]
-    InvalidDefinition(OwnedLocation, OwnedIdentifier, String),
-    #[error("'super' is only allowed at the start of a path: {1}")]
-    SuperNotAllowed(OwnedLocation, String),
+    OperandSizeMismatch(),
+    #[error("invalid definition: {0}: {1}")]
+    InvalidDefinition(Identifier, String),
+    #[error("'super' is only allowed at the start of a path: {0}")]
+    SuperNotAllowed(String),
     #[error("segment '{0}' is out of range: beyond ${1:04X}")]
     SegmentOutOfRange(String, ProgramCounter),
-    #[error("io")]
-    Io(CodegenIoError),
 }
 
-#[derive(Debug)]
-pub struct CodegenIoError(std::io::Error);
-
-impl From<std::io::Error> for CodegenError {
-    fn from(err: Error) -> Self {
-        CodegenError::Io(CodegenIoError(err))
+impl CodegenError {
+    fn new(span: Span, error: DetailedCodegenError) -> Self {
+        Self::Detailed(span, error)
     }
 }
 
-impl PartialEq for CodegenIoError {
-    fn eq(&self, _: &Self) -> bool {
-        false
-    }
-}
-
-impl From<CodegenError> for MosError {
-    fn from(error: CodegenError) -> Self {
-        let message = format!("{}", error);
-        match error {
-            CodegenError::UnknownIdentifier(location, _)
-            | CodegenError::UnknownFunction(location, _)
-            | CodegenError::BranchTooFar(location)
-            | CodegenError::SymbolRedefinition(location, _)
-            | CodegenError::OperandSizeMismatch(location)
-            | CodegenError::InvalidDefinition(location, _, _)
-            | CodegenError::SuperNotAllowed(location, _) => MosError::Codegen {
-                location: Some(location),
-                message,
-            },
-            CodegenError::SegmentOutOfRange(_, _) => MosError::Codegen {
-                location: None,
-                message,
-            },
-            CodegenError::Io(err) => MosError::Io(err.0),
-        }
+fn to_mos_error(tree: Arc<ParseTree>, error: CodegenError) -> MosError {
+    match error {
+        CodegenError::Mos(e) => e,
+        CodegenError::Io(e) => MosError::Io(e),
+        CodegenError::Multiple(e) => MosError::Multiple(
+            e.into_iter()
+                .map(|e| to_mos_error(tree.clone(), e))
+                .collect(),
+        ),
+        CodegenError::Detailed(span, e) => MosError::Codegen {
+            tree,
+            span,
+            message: e.to_string(),
+        },
     }
 }
 
@@ -127,12 +134,6 @@ impl SegmentMap {
             .unwrap_or_else(|| panic!("Segment not found: {}", name))
     }
 
-    fn get_mut(&mut self, name: &str) -> &mut Segment {
-        self.segments
-            .get_mut(name)
-            .unwrap_or_else(|| panic!("Segment not found: {}", name))
-    }
-
     pub fn keys(&self) -> Vec<&String> {
         self.segments.keys().collect()
     }
@@ -141,6 +142,7 @@ impl SegmentMap {
         self.segments.is_empty()
     }
 
+    #[cfg(test)]
     pub fn current(&self) -> &Segment {
         self.try_current().expect("No active segment")
     }
@@ -176,39 +178,39 @@ pub enum EmitResult {
     TryLater,
 }
 
-pub struct CodegenContext {
-    options: CodegenOptions,
-    segments: SegmentMap,
-    symbols: SymbolTable,
-    functions: HashMap<String, RegisteredFunction>,
-    errors: Vec<MosError>,
-    source_root: Option<PathBuf>,
-}
-
 #[derive(Debug)]
 pub enum Emittable<'a> {
-    Single(Option<ProgramCounter>, &'a Location<'a>, &'a Token<'a>),
-    Label(&'a Located<'a, Identifier<'a>>),
+    Single(Option<ProgramCounter>, Span, &'a Token),
+    Label(&'a Located<Identifier>),
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
-    Segment(String, Location<'a>, Vec<Emittable<'a>>),
+    Segment(String, Span, Vec<Emittable<'a>>),
     If(
-        &'a Located<'a, Expression<'a>>,
+        &'a Located<Expression>,
         Vec<Emittable<'a>>,
         Vec<Emittable<'a>>,
     ),
 }
 
+pub struct CodegenContext {
+    tree: Arc<ParseTree>,
+    options: CodegenOptions,
+    segments: SegmentMap,
+    symbols: SymbolTable,
+    functions: HashMap<String, RegisteredFunction>,
+    errors: Vec<CodegenError>,
+}
+
 impl CodegenContext {
-    fn new(options: CodegenOptions) -> Self {
+    fn new(tree: Arc<ParseTree>, options: CodegenOptions) -> Self {
         Self {
+            tree,
             options,
             segments: SegmentMap::new(),
             symbols: SymbolTable::new(),
             functions: HashMap::new(),
             errors: vec![],
-            source_root: None,
         }
     }
 
@@ -224,8 +226,7 @@ impl CodegenContext {
         self.functions.insert(name.into(), function);
     }
 
-    fn push_error<E: Into<MosError>>(&mut self, error: E) {
-        let error = error.into();
+    fn push_error(&mut self, error: CodegenError) {
         if !self.errors.contains(&error) {
             self.errors.push(error);
         }
@@ -241,7 +242,7 @@ impl CodegenContext {
             ExpressionFactor::Number { value, .. } => Ok(Some(value.data.value())),
             ExpressionFactor::CurrentProgramCounter(_) => Ok(pc.map(|p| p.as_i64())),
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                let symbol_value = self.symbols.value(&lt.location, &path.data.to_str_vec())?;
+                let symbol_value = self.symbols.value(&lt.span, &path.data.to_str_vec())?;
 
                 match (symbol_value, modifier, error_on_failure) {
                     (Some(val), None, _) => Ok(Some(val)),
@@ -250,9 +251,9 @@ impl CodegenContext {
                         AddressModifier::LowByte => Ok(Some(val & 255)),
                     },
                     (None, _, false) => Ok(None),
-                    (None, _, true) => Err(CodegenError::UnknownIdentifier(
-                        path.location.clone().into(),
-                        path.data.clone().into(),
+                    (None, _, true) => Err(CodegenError::new(
+                        path.span,
+                        DetailedCodegenError::UnknownIdentifier(path.data.clone()),
                     )),
                 }
             }
@@ -261,11 +262,11 @@ impl CodegenContext {
                 for (arg, _comma) in args {
                     evaluated_args.push(self.evaluate(&arg.data, pc, error_on_failure)?);
                 }
-                match self.functions.get(name.data.as_identifier().0) {
+                match self.functions.get(&name.data.as_identifier().0) {
                     Some(f) => f(evaluated_args),
-                    None => Err(CodegenError::UnknownFunction(
-                        name.location.clone().into(),
-                        name.data.as_identifier().clone().into(),
+                    None => Err(CodegenError::new(
+                        name.span,
+                        DetailedCodegenError::UnknownFunction(name.data.as_identifier().clone()),
                     )),
                 }
             }
@@ -333,7 +334,7 @@ impl CodegenContext {
         &self,
         i: &'a Instruction,
         pc: Option<ProgramCounter>,
-        location: &Location,
+        span: &Span,
         error_on_failure: bool,
     ) -> CodegenResult<(&'a AddressingMode, Option<i64>, Option<IndexRegister>)> {
         match i.operand.as_deref() {
@@ -373,7 +374,10 @@ impl CodegenContext {
                                 let val = offset as i64;
                                 Ok((&operand.addressing_mode, Some(val), register_suffix))
                             } else {
-                                Err(CodegenError::BranchTooFar(location.into()))
+                                Err(CodegenError::new(
+                                    *span,
+                                    DetailedCodegenError::BranchTooFar(),
+                                ))
                             }
                         }
                         _ => Ok((&operand.addressing_mode, Some(val), register_suffix)),
@@ -388,14 +392,14 @@ impl CodegenContext {
         &mut self,
         i: &Instruction,
         pc: Option<ProgramCounter>,
-        location: &Location,
+        span: &Span,
         error_on_failure: bool,
     ) -> CodegenResult<(EmitResult, Vec<u8>)> {
         type MM = Mnemonic;
         type AM = AddressingMode;
         use smallvec::smallvec as v;
 
-        let (am, val, suffix) = self.evaluate_operand(i, pc, location, error_on_failure)?;
+        let (am, val, suffix) = self.evaluate_operand(i, pc, span, error_on_failure)?;
         let possible_opcodes: SmallVec<[(u8, usize); 2]> = match (&i.mnemonic.data, am, suffix) {
             (MM::Adc, AM::Immediate, None) => v![(0x69, 1)],
             (MM::Adc, AM::Indirect, Some(IndexRegister::X)) => v![(0x61, 1)],
@@ -533,7 +537,12 @@ impl CodegenContext {
 
                         match result {
                             Some(r) => r,
-                            None => return Err(CodegenError::OperandSizeMismatch(location.into())),
+                            None => {
+                                return Err(CodegenError::new(
+                                    *span,
+                                    DetailedCodegenError::OperandSizeMismatch(),
+                                ))
+                            }
                         }
                     }
                     None => {
@@ -605,7 +614,7 @@ impl CodegenContext {
     fn emit_single(
         &mut self,
         token: &Token,
-        location: &Location,
+        span: &Span,
         pc: Option<ProgramCounter>,
         error_on_failure: bool,
     ) -> CodegenResult<(EmitResult, Vec<u8>)> {
@@ -629,13 +638,13 @@ impl CodegenContext {
                     VariableType::Variable => self.symbols.register(
                         &id.data,
                         Symbol::Variable(eval),
-                        Some(&id.location),
+                        Some(&id.span),
                         true,
                     ),
                     VariableType::Constant => self.symbols.register(
                         &id.data,
                         Symbol::Constant(eval),
-                        Some(&id.location),
+                        Some(&id.span),
                         false,
                     ),
                 };
@@ -652,14 +661,13 @@ impl CodegenContext {
                     None => Ok((EmitResult::TryLater, vec![])),
                 }
             }
-            Token::Instruction(i) => self.emit_instruction(i, pc, location, error_on_failure),
+            Token::Instruction(i) => self.emit_instruction(i, pc, span, error_on_failure),
             Token::Data { values, size } => {
                 let values = values.iter().map(|(expr, _comma)| expr).collect_vec();
                 self.emit_data(&values, size.data.byte_len(), pc, error_on_failure)
             }
             Token::Include { filename, .. } => {
-                let root = self.source_root.as_ref().unwrap();
-                let filename = root.join(filename.data);
+                let filename = self.tree.source_root().join(&filename.data);
                 let bytes = fs::read(filename)?;
                 Ok((EmitResult::Success, bytes))
             }
@@ -676,7 +684,7 @@ impl CodegenContext {
                 );
                 let segment = self.segments.current_mut();
                 segment.set_current_pc(pc);
-                segment.set(&bytes)?;
+                segment.set(span, &bytes)?;
             }
         }
 
@@ -705,10 +713,12 @@ impl CodegenContext {
                     Ok(Some(val)) => Some(val),
                     _ => {
                         if error_on_failure {
-                            self.push_error(CodegenError::InvalidDefinition(
-                                OwnedLocation::from(&lt.location),
-                                OwnedIdentifier(identifier.into()),
-                                error_msg.into(),
+                            self.push_error(CodegenError::new(
+                                lt.span,
+                                DetailedCodegenError::InvalidDefinition(
+                                    identifier.into(),
+                                    error_msg.into(),
+                                ),
                             ));
                         }
                         None
@@ -735,7 +745,7 @@ impl CodegenContext {
                             match self.symbols.register(
                                 &id.data,
                                 Symbol::Label(pc),
-                                Some(&id.location),
+                                Some(&id.span),
                                 false,
                             ) {
                                 Ok(_) => None,
@@ -772,9 +782,9 @@ impl CodegenContext {
                                     None => start,
                                 };
 
-                                let name = cfg.value_as_identifier_path("name").single().0;
+                                let name = cfg.value_as_identifier_path("name").single().0.as_str();
                                 let write = match cfg.try_value_as_identifier_path("write") {
-                                    Some(val) => bool::from_str(val.single().0).unwrap_or(true),
+                                    Some(val) => bool::from_str(&val.single().0).unwrap_or(true),
                                     None => true,
                                 };
                                 let options = SegmentOptions {
@@ -792,16 +802,14 @@ impl CodegenContext {
                             }
                         }
                     }
-                    Emittable::Single(provided_pc, location, token) => {
+                    Emittable::Single(provided_pc, span, token) => {
                         let pc = match provided_pc {
                             Some(pc) => Some(pc),
                             None => pc,
                         };
-                        match self.emit_single(&token, &location, pc, error_on_failure) {
+                        match self.emit_single(&token, &span, pc, error_on_failure) {
                             Ok((result, _bytes)) => match result {
-                                EmitResult::TryLater => {
-                                    Some(Emittable::Single(pc, location, token))
-                                }
+                                EmitResult::TryLater => Some(Emittable::Single(pc, span, token)),
                                 EmitResult::Success => None,
                             },
                             Err(e) => {
@@ -819,7 +827,7 @@ impl CodegenContext {
                             false => Some(Emittable::Nested(scope_name, inner)),
                         }
                     }
-                    Emittable::Segment(segment_name, location, inner) => {
+                    Emittable::Segment(segment_name, span, inner) => {
                         let prev_segment = self.segments.current_segment_name();
                         match self.segments.try_get(&segment_name) {
                             Some(_) => {
@@ -835,24 +843,24 @@ impl CodegenContext {
                                         self.segments.set_current(prev_segment);
                                         match inner.is_empty() {
                                             true => None,
-                                            false => Some(Emittable::Segment(
-                                                segment_name,
-                                                location,
-                                                inner,
-                                            )),
+                                            false => {
+                                                Some(Emittable::Segment(segment_name, span, inner))
+                                            }
                                         }
                                     }
                                 }
                             }
                             None => {
                                 if error_on_failure {
-                                    self.push_error(CodegenError::UnknownIdentifier(
-                                        location.into(),
-                                        OwnedIdentifierPath::new(&[OwnedIdentifier(segment_name)]),
+                                    self.push_error(CodegenError::new(
+                                        span,
+                                        DetailedCodegenError::UnknownIdentifier(
+                                            IdentifierPath::new(&[Identifier(segment_name)]),
+                                        ),
                                     ));
                                     None
                                 } else {
-                                    Some(Emittable::Segment(segment_name, location, inner))
+                                    Some(Emittable::Segment(segment_name, span, inner))
                                 }
                             }
                         }
@@ -895,46 +903,21 @@ impl CodegenContext {
         result
     }
 
-    fn require_cfg_value<'a, T>(
-        &mut self,
-        key: &str,
-        cfg_location: &Location,
-        value: MosResult<Option<Located<'a, T>>>,
-    ) -> Option<Located<'a, T>> {
-        match value {
-            Ok(Some(val)) => Some(val),
-            Ok(None) => {
-                self.push_error(CodegenError::InvalidDefinition(
-                    cfg_location.into(),
-                    OwnedIdentifier(key.into()),
-                    "missing value".into(),
-                ));
-                None
-            }
-            Err(e) => {
-                self.push_error(e);
-                None
-            }
-        }
-    }
-
-    fn generate_emittables<'a>(&mut self, ast: &'a [Located<'a, Token<'a>>]) -> Vec<Emittable<'a>> {
-        ast.iter()
+    fn generate_emittables<'a>(&mut self, tokens: &'a [Located<Token>]) -> Vec<Emittable<'a>> {
+        tokens
+            .iter()
             .map(|lt| self.generate_emittables_for_token(lt))
             .flatten()
             .collect_vec()
     }
 
-    fn generate_emittables_for_token<'a>(
-        &mut self,
-        lt: &'a Located<'a, Token<'a>>,
-    ) -> Vec<Emittable<'a>> {
+    fn generate_emittables_for_token<'a>(&mut self, lt: &'a Located<Token>) -> Vec<Emittable<'a>> {
         match &lt.data {
             Token::Definition { id, value, .. } => {
-                let definition_type = id.data.as_identifier().0;
+                let definition_type = id.data.as_identifier().0.as_str();
                 let cfg = value.as_ref().expect("Found empty definition");
-                let cfg_location = match &cfg.data {
-                    Token::Config { inner, .. } => inner.location.clone(),
+                let cfg_span = match &cfg.data {
+                    Token::Config { inner, .. } => inner.span,
                     _ => panic!(),
                 };
                 let cfg = cfg.data.as_config_map();
@@ -942,26 +925,26 @@ impl CodegenContext {
                 match definition_type {
                     "segment" => {
                         // Perform some sanity checks
-                        let errors = require_segment_options_fields(&cfg, &cfg_location);
-                        if errors.is_empty() {
-                            vec![Emittable::SegmentDefinition(cfg)]
-                        } else {
-                            self.errors.extend(errors);
-                            vec![]
+                        match require_segment_options_fields(self.tree.clone(), &cfg, &cfg_span) {
+                            Ok(()) => vec![Emittable::SegmentDefinition(cfg)],
+                            Err(e) => {
+                                self.errors.push(CodegenError::Mos(e));
+                                vec![]
+                            }
                         }
                     }
                     _ => panic!("Unknown definition type: {}", id),
                 }
             }
             Token::Segment { id, inner, .. } => {
-                let segment_name = id.data.as_identifier().0;
+                let segment_name = id.data.as_identifier().0.as_str();
                 let inner = inner.as_ref().map(|b| b.data.as_braces());
                 let inner_emittables = inner
                     .map(|i| self.generate_emittables(i))
                     .unwrap_or_default();
                 vec![Emittable::Segment(
                     segment_name.into(),
-                    id.location.clone(),
+                    id.span,
                     inner_emittables,
                 )]
             }
@@ -974,7 +957,7 @@ impl CodegenContext {
                         // The label contains braces, so also emit the inner data
                         let braces_emittable = match &braces.data {
                             Token::Braces { inner, .. } => {
-                                self.create_braces_emittable(Some(id.data.0), &inner.data)
+                                self.create_braces_emittable(Some(&id.data.0), &inner.data)
                             }
                             _ => panic!(),
                         };
@@ -997,7 +980,7 @@ impl CodegenContext {
                 };
                 vec![Emittable::If(value, if_, else_)]
             }
-            _ => vec![Emittable::Single(None, &lt.location, &lt.data)],
+            _ => vec![Emittable::Single(None, lt.span, &lt.data)],
         }
     }
 
@@ -1026,7 +1009,7 @@ impl CodegenContext {
     fn create_braces_emittable<'a>(
         &mut self,
         scope_name: Option<&str>,
-        ast: &'a [Located<'a, Token<'a>>],
+        ast: &'a [Located<Token>],
     ) -> Emittable<'a> {
         let scope_name = self.symbols.add_child_scope(scope_name);
         self.symbols.enter(&scope_name);
@@ -1046,19 +1029,12 @@ fn is_defined(args: Vec<Option<i64>>) -> CodegenResult<Option<i64>> {
     Ok(Some(r))
 }
 
-pub fn codegen<'a>(
-    ast: &'a [Located<'a, Token<'a>>],
-    options: CodegenOptions,
-) -> MosResult<CodegenContext> {
-    let mut ctx = CodegenContext::new(options);
+fn codegen_impl(tree: Arc<ParseTree>, options: CodegenOptions) -> CodegenResult<CodegenContext> {
+    let mut ctx = CodegenContext::new(tree, options);
     ctx.register_fn("defined", &is_defined);
 
-    // Try to determine the source root based on the location of the first token (if any)
-    if let Some(first) = ast.first() {
-        ctx.source_root = Some(first.location.path.parent().unwrap().to_path_buf());
-    }
-
-    let mut to_process = ctx.generate_emittables(ast);
+    let tree = ctx.tree.clone();
+    let mut to_process = ctx.generate_emittables(tree.tokens());
 
     // Apply passes
 
@@ -1106,28 +1082,29 @@ pub fn codegen<'a>(
     }
 
     if num_passes == max_passes {
-        ctx.push_error(MosError::Codegen {
-            location: None,
-            message:
-                "infinite recursion during code generation. This is a bug in MOS, please report it."
-                    .into(),
-        });
+        eprintln!(
+            "infinite recursion during code generation. This is a bug in MOS, please report it."
+        );
     }
 
     if ctx.errors.is_empty() {
         Ok(ctx)
     } else {
-        Err(ctx.errors.into())
+        Err(CodegenError::Multiple(ctx.errors))
+    }
+}
+
+pub fn codegen(tree: Arc<ParseTree>, options: CodegenOptions) -> MosResult<CodegenContext> {
+    match codegen_impl(tree.clone(), options) {
+        Ok(result) => Ok(result),
+        Err(error) => Err(to_mos_error(tree, error)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use crate::parser::parse;
-
     use super::*;
+    use std::path::Path;
 
     type TestResult = MosResult<()>;
 
@@ -1607,8 +1584,8 @@ mod tests {
     fn cannot_perform_too_far_branch_calculations() -> TestResult {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
         let src = format!("foo: {}bne foo", many_nops);
-        let ast = parse(&Path::new("test.asm"), &src)?;
-        let result = codegen(&ast, CodegenOptions::default());
+        let ast = parse_or_err(&Path::new("test.asm"), &src)?;
+        let result = codegen(ast, CodegenOptions::default());
         assert_eq!(
             format!("{}", result.err().unwrap()),
             "test.asm:141:1: error: branch too far"
@@ -1780,7 +1757,7 @@ mod tests {
     }
 
     fn test_codegen(code: &str) -> MosResult<CodegenContext> {
-        let ast = parse(&Path::new("test.asm"), &code)?;
-        codegen(&ast, CodegenOptions::default())
+        let ast = parse_or_err(&Path::new("test.asm"), &code)?;
+        codegen(ast, CodegenOptions::default())
     }
 }

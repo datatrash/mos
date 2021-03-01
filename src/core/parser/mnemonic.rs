@@ -1,8 +1,7 @@
+use super::{IResult, LocatedSpan};
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
-
-use crate::parser::{IResult, LocatedSpan};
 
 /// The available 6502 instructions.
 #[derive(Debug, Clone, PartialEq)]

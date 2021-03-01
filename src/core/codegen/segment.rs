@@ -1,16 +1,33 @@
 use std::ops::Range;
 
-use crate::core::codegen::{CodegenError, CodegenResult, ProgramCounter};
-use crate::core::parser::{ConfigMap, ConfigMapValidatorBuilder, Location};
-use crate::errors::MosError;
+use crate::core::codegen::{CodegenError, CodegenResult, DetailedCodegenError, ProgramCounter};
+use crate::core::parser::{ConfigMap, ConfigMapValidatorBuilder, ParseTree};
+use crate::errors::{MosError, MosResult};
+use codemap::Span;
+use std::sync::Arc;
 
-pub fn require_segment_options_fields(cfg: &ConfigMap, location: &Location) -> Vec<MosError> {
-    ConfigMapValidatorBuilder::default()
+pub fn require_segment_options_fields(
+    tree: Arc<ParseTree>,
+    cfg: &ConfigMap,
+    span: &Span,
+) -> MosResult<()> {
+    let errors = ConfigMapValidatorBuilder::default()
         .require_single_value("name")
         .require("start")
         .allowed("pc")
         .allowed("write")
-        .validate(cfg, location)
+        .validate(cfg, span);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(MosError::Multiple(
+            errors
+                .into_iter()
+                .map(|e| e.into_mos_error(tree.clone()))
+                .collect(),
+        ))
+    }
 }
 
 pub struct Segment {
@@ -48,10 +65,6 @@ impl Segment {
         }
     }
 
-    pub(crate) fn name(&self) -> &String {
-        &self.name
-    }
-
     pub(crate) fn options(&self) -> &SegmentOptions {
         &self.options
     }
@@ -60,11 +73,11 @@ impl Segment {
         self.pc = usize::from(pc.into());
     }
 
-    pub(crate) fn set(&mut self, bytes: &[u8]) -> CodegenResult<ProgramCounter> {
+    pub(crate) fn set(&mut self, span: &Span, bytes: &[u8]) -> CodegenResult<ProgramCounter> {
         if (self.pc + bytes.len() - 1) > 0xffff {
-            return Err(CodegenError::SegmentOutOfRange(
-                self.name.clone(),
-                0xffff.into(),
+            return Err(CodegenError::new(
+                *span,
+                DetailedCodegenError::SegmentOutOfRange(self.name.clone(), 0xffff.into()),
             ));
         }
 
@@ -94,6 +107,7 @@ impl Segment {
         Ok(self.pc.into())
     }
 
+    #[cfg(test)]
     pub(crate) fn data<R: Into<Range<usize>>>(&self, range: R) -> &[u8] {
         let range = range.into();
         &self.data[Range {
@@ -131,10 +145,11 @@ impl Segment {
 #[cfg(test)]
 mod tests {
     use crate::core::codegen::segment::{Segment, SegmentOptions};
-    use crate::errors::MosResult;
+    use crate::core::codegen::CodegenResult;
+    use codemap::{CodeMap, Span};
 
     #[test]
-    fn can_add_data() -> MosResult<()> {
+    fn can_add_data() -> CodegenResult<()> {
         let mut seg = Segment::new(
             "a",
             SegmentOptions {
@@ -143,7 +158,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let new_pc = seg.set(&[1, 2, 3])?;
+        let new_pc = seg.set(&loc(), &[1, 2, 3])?;
         assert_eq!(new_pc, 0xc003.into());
         assert_eq!(seg.current_pc(), new_pc);
         assert_eq!(seg.data(0xc000..0xc003), &[1, 2, 3]);
@@ -152,7 +167,7 @@ mod tests {
         assert_eq!(seg.target_range(), Some(0xb000..0xb003));
 
         seg.set_current_pc(0x2000);
-        let new_pc = seg.set(&[4])?;
+        let new_pc = seg.set(&loc(), &[4])?;
         assert_eq!(new_pc, 0x2001.into());
         assert_eq!(seg.current_pc(), new_pc);
         assert_eq!(seg.data(0xc000..0xc003), &[1, 2, 3]);
@@ -164,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn cannot_exceed_max_range() -> MosResult<()> {
+    fn cannot_exceed_max_range() -> CodegenResult<()> {
         let mut seg = Segment::new(
             "a",
             SegmentOptions {
@@ -175,10 +190,10 @@ mod tests {
         );
 
         // A byte at 0xffff should still be ok
-        seg.set(&[1])?;
+        seg.set(&loc(), &[1])?;
 
         // Next byte should not
-        let err = seg.set(&[2]).err().unwrap();
+        let err = seg.set(&loc(), &[2]).err().unwrap();
         assert_eq!(err.to_string(), "segment 'a' is out of range: beyond $FFFF");
 
         Ok(())
@@ -196,7 +211,13 @@ mod tests {
         );
 
         // Two bytes don't fit anymore
-        let err = seg.set(&[1, 2]).err().unwrap();
+        let err = seg.set(&loc(), &[1, 2]).err().unwrap();
         assert_eq!(err.to_string(), "segment 'a' is out of range: beyond $FFFF");
+    }
+
+    fn loc() -> Span {
+        let mut codemap = CodeMap::new();
+        let f1 = codemap.add_file("test1.rs".to_string(), "abcd\nefghij\nqwerty".to_string());
+        f1.span
     }
 }

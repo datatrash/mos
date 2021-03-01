@@ -1,7 +1,8 @@
-use crate::core::parser::{Expression, ExpressionFactor, Located, Location, Token};
+use crate::core::parser::{Expression, ExpressionFactor, Located, Token};
 use crate::errors::MosResult;
 use crate::impl_request_handler;
 use crate::lsp::{LspContext, RequestHandler};
+use codemap::{CodeMap, Span, SpanLoc};
 use itertools::Itertools;
 use lsp_types::request::SemanticTokensFullRequest;
 use lsp_types::{
@@ -37,31 +38,34 @@ impl RequestHandler<SemanticTokensFullRequest> for FullRequest {
         params: SemanticTokensParams,
     ) -> MosResult<Option<SemanticTokensResult>> {
         match ctx.documents.get(&params.text_document.uri) {
-            Some(parsed) => {
-                let semtoks = emit_semantic_ast(&parsed.ast);
-                let data = to_deltas(semtoks);
-                let tokens = SemanticTokens {
-                    result_id: None,
-                    data,
-                };
-                Ok(Some(SemanticTokensResult::Tokens(tokens)))
-            }
+            Some(parsed) => match &parsed.tree {
+                Some(tree) => {
+                    let semtoks = emit_semantic_ast(tree.code_map(), tree.tokens());
+                    let data = to_deltas(semtoks);
+                    let tokens = SemanticTokens {
+                        result_id: None,
+                        data,
+                    };
+                    Ok(Some(SemanticTokensResult::Tokens(tokens)))
+                }
+                None => Ok(None),
+            },
             None => Ok(None),
         }
     }
 }
 
 fn to_deltas(semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
-    let mut prev_line = 0u32;
-    let mut prev_start = 0u32;
+    let mut prev_line = 0;
+    let mut prev_start = 0;
 
     let mut result = vec![];
     for st in semtoks
         .iter()
-        .sorted_by_key(|t| (t.location.line, t.location.column))
+        .sorted_by_key(|t| (t.location.begin.line, t.location.begin.column))
     {
-        let cur_line = st.location.line - 1;
-        let cur_start = st.location.column - 1;
+        let cur_line = st.location.begin.line;
+        let cur_start = st.location.begin.column;
         let delta_line = cur_line - prev_line;
         let delta_start = if cur_line == prev_line {
             cur_start - prev_start
@@ -71,8 +75,8 @@ fn to_deltas(semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
         prev_line = cur_line;
         prev_start = cur_start;
         result.push(SemanticToken {
-            delta_line,
-            delta_start,
+            delta_line: delta_line as u32,
+            delta_start: delta_start as u32,
             length: st.length as u32,
             token_type: st.token_type,
             token_modifiers_bitset: 0,
@@ -82,14 +86,15 @@ fn to_deltas(semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
     result
 }
 
-struct SemTok<'a> {
-    location: &'a Location<'a>,
+struct SemTok {
+    location: SpanLoc,
     length: usize,
     token_type: u32,
 }
 
-impl<'a> SemTok<'a> {
-    fn new(location: &'a Location, length: usize, token_type: u32) -> Self {
+impl SemTok {
+    fn new(code_map: &CodeMap, location: Span, length: usize, token_type: u32) -> Self {
+        let location = code_map.look_up_span(location);
         Self {
             location,
             length,
@@ -98,38 +103,43 @@ impl<'a> SemTok<'a> {
     }
 }
 
-fn emit_semantic_ast<'a>(ast: &'a [Located<'a, Token<'a>>]) -> Vec<SemTok<'a>> {
-    ast.iter().map(|lt| emit_semantic(lt)).flatten().collect()
+fn emit_semantic_ast(code_map: &CodeMap, ast: &[Located<Token>]) -> Vec<SemTok> {
+    ast.iter()
+        .map(|lt| emit_semantic(code_map, lt))
+        .flatten()
+        .collect()
 }
 
-fn emit_semantic<'a>(lt: &'a Located<'a, Token<'a>>) -> Vec<SemTok<'a>> {
+fn emit_semantic(code_map: &CodeMap, lt: &Located<Token>) -> Vec<SemTok> {
     match &lt.data {
-        Token::Braces { inner, .. } | Token::Config { inner, .. } => emit_semantic_ast(&inner.data),
+        Token::Braces { inner, .. } | Token::Config { inner, .. } => {
+            emit_semantic_ast(code_map, &inner.data)
+        }
         Token::Instruction(i) => {
             let mut r = vec![];
-            r.push(SemTok::new(&i.mnemonic.location, 3, 0));
+            r.push(SemTok::new(code_map, i.mnemonic.span, 3, 0));
             if let Some(op) = &i.operand {
-                r.extend(emit_semantic(op));
+                r.extend(emit_semantic(code_map, op));
             }
             r
         }
-        Token::Operand(op) => emit_expression_semantic(&op.expr),
+        Token::Operand(op) => emit_expression_semantic(code_map, &op.expr),
         _ => vec![],
     }
 }
 
-fn emit_expression_semantic<'a>(lt: &'a Located<'a, Expression<'a>>) -> Vec<SemTok<'a>> {
+fn emit_expression_semantic(code_map: &CodeMap, lt: &Located<Expression>) -> Vec<SemTok> {
     match &lt.data {
         Expression::BinaryExpression(bin) => {
-            let mut lhs = emit_expression_semantic(&bin.lhs);
-            let rhs = emit_expression_semantic(&bin.lhs);
+            let mut lhs = emit_expression_semantic(code_map, &bin.lhs);
+            let rhs = emit_expression_semantic(code_map, &bin.lhs);
             lhs.extend(rhs);
             lhs
         }
         Expression::Factor { factor, .. } => match &factor.data {
             ExpressionFactor::Number { value, .. } => {
                 let formatted = format!("{}", value.data);
-                let o = SemTok::new(&value.location, formatted.len(), 2);
+                let o = SemTok::new(code_map, value.span, formatted.len(), 2);
                 vec![o]
             }
             _ => vec![],
