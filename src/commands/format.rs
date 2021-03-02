@@ -159,7 +159,7 @@ impl Default for FormattingOptions {
 }
 
 struct CodeFormatter<'a> {
-    ast: &'a [Located<Token>],
+    ast: &'a [Token],
     options: FormattingOptions,
     index: usize,
     indent: usize,
@@ -167,7 +167,7 @@ struct CodeFormatter<'a> {
 }
 
 impl<'a> CodeFormatter<'a> {
-    fn new(ast: &'a [Located<Token>], options: FormattingOptions) -> Self {
+    fn new(ast: &'a [Token], options: FormattingOptions) -> Self {
         Self {
             ast,
             options,
@@ -177,7 +177,7 @@ impl<'a> CodeFormatter<'a> {
         }
     }
 
-    fn nested(&self, ast: &'a [Located<Token>], options: FormattingOptions) -> Self {
+    fn nested(&self, ast: &'a [Token], options: FormattingOptions) -> Self {
         Self {
             ast,
             options,
@@ -187,12 +187,8 @@ impl<'a> CodeFormatter<'a> {
         }
     }
 
-    fn parent_located(&self) -> Option<&Located<Token>> {
-        self.ast.get(self.index)
-    }
-
     fn parent_token(&self) -> Option<&Token> {
-        self.parent_located().map(|lt| &lt.data)
+        self.ast.get(self.index)
     }
 
     fn prev_non_trivia_token(&self) -> Option<&Token> {
@@ -206,10 +202,10 @@ impl<'a> CodeFormatter<'a> {
             let token = self.ast.get(idx).unwrap_or_else(|| {
                 panic!("idx: {} // len: {}", idx, self.ast.len());
             });
-            match &token.data {
-                Token::EolTrivia(_) | Token::Eof => (),
+            match &token {
+                Token::EolTrivia(_) | Token::Eof(_) => (),
                 _ => {
-                    return Some(&token.data);
+                    return Some(&token);
                 }
             }
         }
@@ -224,7 +220,7 @@ impl<'a> CodeFormatter<'a> {
                 // Determine the indent level for this token.
                 // If it was EolTrivia we don't want to indent, since it gets tacked on to the end of the previous token
                 // which is already indented.
-                let indent_level = match item.data {
+                let indent_level = match &item {
                     Token::EolTrivia(_) => 0,
                     _ => self.indent,
                 };
@@ -248,8 +244,12 @@ impl<'a> CodeFormatter<'a> {
         preceding_newline_len(&items)
     }
 
-    fn format_token<'f: 'a>(&mut self, lt: &'f Located<Token>) -> String {
-        let result = match &lt.data {
+    fn format_located_token<'f: 'a>(&mut self, lt: &'f Located<Token>) -> String {
+        format!("{}{}", self.format_trivia(lt), self.format_token(&lt.data))
+    }
+
+    fn format_token<'f: 'a>(&mut self, token: &'f Token) -> String {
+        match &token {
             Token::Align { tag, value } => {
                 let ws = self.options.whitespace.space_between_kvp;
                 let tag = self.format_located(tag);
@@ -273,7 +273,7 @@ impl<'a> CodeFormatter<'a> {
                 inner,
                 rparen,
             } => {
-                let inner = self.nested(&inner.data, self.options).format();
+                let inner = self.nested(inner, self.options).format();
 
                 let inner = if self.options.whitespace.trim {
                     // When we trim, we need to re-indent afterwards
@@ -347,10 +347,10 @@ impl<'a> CodeFormatter<'a> {
                 format!("{}{}{}", lparen, inner, rparen)
             }
             Token::ConfigPair { key, eq, value } => {
-                let key = self.format_token(key);
+                let key = self.format_located_token(key);
                 let ws = self.options.whitespace.space_between_kvp;
                 let eq = space_prefix_if(self.format_located(eq), ws);
-                let value = space_prefix_if(self.format_token(value), ws);
+                let value = space_prefix_if(self.format_located_token(value), ws);
                 format!("{}{}{}", key, eq, value)
             }
             Token::Data { values, size } => {
@@ -363,7 +363,7 @@ impl<'a> CodeFormatter<'a> {
                 let value = self.format_optional_token(value);
                 format!("{}{}{}", tag, id, value)
             }
-            Token::EolTrivia(eol) => {
+            Token::EolTrivia(eol) | Token::Eof(eol) => {
                 let preceding_newline_len = self.preceding_newline_len();
 
                 if self.options.whitespace.collapse_multiple_empty_lines
@@ -385,8 +385,7 @@ impl<'a> CodeFormatter<'a> {
                     }
                 }
             }
-            Token::Eof => "".to_string(),
-            Token::Error => panic!("Should not be formatting ASTs that contain errors"),
+            Token::Error(_) => panic!("Should not be formatting ASTs that contain errors"),
             Token::Expression(expr) => self.format_expression(expr),
             Token::IdentifierName(id) => id.0.to_string(),
             Token::If {
@@ -470,8 +469,52 @@ impl<'a> CodeFormatter<'a> {
                     }
                 };
 
-                let operand = self.with_options(|f| f.format_optional_token(&i.operand));
+                let operand = match &i.operand {
+                    Some(o) => {
+                        let lchar = self.format_optional_located(&o.lchar);
+                        let rchar = self.format_optional_located(&o.rchar);
+                        let expr = format!(
+                            "{}{}",
+                            self.format_trivia(&o.expr),
+                            self.format_expression(&o.expr.data)
+                        );
+
+                        let suffix = match &o.suffix {
+                            Some(suffix) => {
+                                let comma = self.format_located(&suffix.comma);
+                                let register = suffix.register.map(|r| {
+                                    self.options
+                                        .mnemonics
+                                        .register_casing
+                                        .format(&format!("{}", r))
+                                });
+                                let register = self.format_located(&register);
+                                format!("{}{}", comma, register)
+                            }
+                            None => "".to_string(),
+                        };
+
+                        match &o.addressing_mode {
+                            AddressingMode::AbsoluteOrZP => {
+                                format!("{}{}", expr, suffix)
+                            }
+                            AddressingMode::Immediate => {
+                                format!("{}{}", lchar, expr)
+                            }
+                            AddressingMode::Implied => "".to_string(),
+                            AddressingMode::OuterIndirect => {
+                                format!("{}{}{}{}", lchar, expr, rchar, suffix)
+                            }
+                            AddressingMode::Indirect => {
+                                format!("{}{}{}{}", lchar, expr, suffix, rchar)
+                            }
+                        }
+                    }
+                    None => "".to_string(),
+                };
+
                 let operand = space_prefix(operand);
+
                 format!("{}{}", mnemonic, operand)
             }
             Token::Label { id, colon, braces } => {
@@ -487,35 +530,6 @@ impl<'a> CodeFormatter<'a> {
                     format!("\n{}", result)
                 } else {
                     result
-                }
-            }
-            Token::Operand(o) => {
-                let lchar = self.format_optional_located(&o.lchar);
-                let rchar = self.format_optional_located(&o.rchar);
-                let expr = format!(
-                    "{}{}",
-                    self.format_trivia(&o.expr),
-                    self.format_expression(&o.expr.data)
-                );
-                let suffix = match &o.suffix {
-                    Some(s) => self.format_token(s),
-                    None => "".to_string(),
-                };
-
-                match &o.addressing_mode {
-                    AddressingMode::AbsoluteOrZP => {
-                        format!("{}{}", expr, suffix)
-                    }
-                    AddressingMode::Immediate => {
-                        format!("{}{}", lchar, expr)
-                    }
-                    AddressingMode::Implied => "".to_string(),
-                    AddressingMode::OuterIndirect => {
-                        format!("{}{}{}{}", lchar, expr, rchar, suffix)
-                    }
-                    AddressingMode::Indirect => {
-                        format!("{}{}{}{}", lchar, expr, suffix, rchar)
-                    }
                 }
             }
             Token::ProgramCounterDefinition { star, eq, value } => {
@@ -544,21 +558,10 @@ impl<'a> CodeFormatter<'a> {
                     result
                 }
             }
-            Token::RegisterSuffix { comma, register } => {
-                let comma = self.format_located(comma);
-                let register = register.map(|r| {
-                    self.options
-                        .mnemonics
-                        .register_casing
-                        .format(&format!("{}", r))
-                });
-                let register = self.format_located(&register);
-                format!("{}{}", comma, register)
-            }
             Token::Segment { tag, id, inner } => {
                 let ws = self.options.whitespace.space_between_kvp;
                 let tag = self.format_located(tag);
-                let id = space_prefix_if(self.format_token(id), ws);
+                let id = space_prefix_if(self.format_located_token(id), ws);
                 let inner = self.format_optional_token(inner);
                 format!("{}{}{}", tag, id, inner)
             }
@@ -589,9 +592,7 @@ impl<'a> CodeFormatter<'a> {
                     result
                 }
             }
-        };
-
-        format!("{}{}", self.format_trivia(lt), result)
+        }
     }
 
     fn format_located<T: Display>(&self, lt: &Located<T>) -> String {
@@ -604,12 +605,18 @@ impl<'a> CodeFormatter<'a> {
             .unwrap_or_else(|| "".to_string())
     }
 
-    fn format_optional_token<T: Deref<Target = Located<Token>>>(
+    fn format_optional_token<T: Deref<Target = Token>>(&mut self, lt: &'a Option<T>) -> String {
+        lt.as_ref()
+            .map(|t| self.format_token(t.deref()))
+            .unwrap_or_else(|| "".to_string())
+    }
+
+    fn format_optional_located_token<T: Deref<Target = Located<Token>>>(
         &mut self,
         lt: &'a Option<T>,
     ) -> String {
         lt.as_ref()
-            .map(|t| self.format_token(t.deref()))
+            .map(|t| self.format_located_token(t.deref()))
             .unwrap_or_else(|| "".to_string())
     }
 
@@ -727,7 +734,7 @@ impl<'a> CodeFormatter<'a> {
                 args,
                 rparen,
             } => {
-                let name = self.format_token(name);
+                let name = self.format_located_token(name);
                 let lparen = self.format_located(lparen);
                 let args = self.format_args(args);
                 let rparen = self.format_located(rparen);

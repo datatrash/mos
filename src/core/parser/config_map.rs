@@ -3,23 +3,23 @@ use codemap::Span;
 use nom::combinator::map;
 use nom::multi::many0;
 use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
 
 /// A ConfigMap stores generic key-value pairs that are used for things like segment definitions
 ///
 /// Internally this is just a HashMap storing actual [Token]s, but provides a few convenience methods on top of that.
 #[derive(Debug)]
 pub struct ConfigMap<'a> {
-    items: HashMap<String, &'a Located<Token>>,
+    span: Span,
+    items: HashMap<String, &'a Token>,
 }
 
 impl<'a> ConfigMap<'a> {
     /// Create a new ConfigMap based on the provided [Token::ConfigPair] and [Token::EolTrivia] tokens.
-    pub fn new(items: &'a [Located<Token>]) -> Self {
+    pub fn new(span: Span, items: &'a [Token]) -> Self {
         let items = items
             .iter()
             .filter_map(|pair| {
-                let kvp = match &pair.data {
+                let kvp = match &pair {
                     Token::ConfigPair { key, value, .. } => Some((&key.data, value)),
                     Token::EolTrivia(_) => None,
                     _ => panic!(),
@@ -27,27 +27,32 @@ impl<'a> ConfigMap<'a> {
 
                 kvp.map(|(k, v)| {
                     let k = k.as_identifier().clone().0;
-                    (k, v.deref())
+                    (k, &v.data)
                 })
             })
             .collect();
 
-        Self { items }
+        Self { span, items }
+    }
+
+    /// Get the span for the config map, used in diagnostics
+    pub fn span(&self) -> &Span {
+        &self.span
     }
 
     /// Get a reference to a key that must exist.
-    pub fn value<'b>(&'b self, key: &'b str) -> &'b Located<Token> {
+    pub fn value<'b>(&'b self, key: &'b str) -> &'b Token {
         self.try_value(key).unwrap()
     }
 
     /// Get a reference to a key that may not exist.
-    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&&'a Located<Token>> {
+    pub fn try_value<'b>(&'b self, key: &'b str) -> Option<&&'a Token> {
         self.items.get(key)
     }
 
     /// Get a reference to the [IdentifierPath] contained within a key that must exist.
     pub fn value_as_identifier_path<'b>(&'b self, key: &'b str) -> &'b IdentifierPath {
-        match self.value(key).data.as_factor() {
+        match self.value(key).as_factor() {
             ExpressionFactor::IdentifierValue { path, .. } => &path.data,
             _ => panic!(),
         }
@@ -56,7 +61,7 @@ impl<'a> ConfigMap<'a> {
     /// Get a reference to the [IdentifierPath] contained within a key that may not exist.
     pub fn try_value_as_identifier_path<'b>(&'b self, key: &'b str) -> Option<&'b IdentifierPath> {
         match self.try_value(key) {
-            Some(lt) => match lt.data.try_as_factor() {
+            Some(lt) => match lt.try_as_factor() {
                 Some(ExpressionFactor::IdentifierValue { path, .. }) => Some(&path.data),
                 _ => None,
             },
@@ -167,40 +172,35 @@ impl ConfigMapValidatorBuilder {
 }
 
 /// Tries to parse a single key-value pair within the map
-fn kvp(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        let value = alt((
-            config_map,
-            located(|input| map(expression, |expr| Token::Expression(expr.data))(input)),
-        ));
+fn kvp(input: LocatedSpan) -> IResult<Token> {
+    let value = alt((config_map, |input| {
+        map(expression, |expr| Token::Expression(expr.data))(input)
+    }));
 
-        map_once(
-            tuple((ws(identifier_name), ws(char('=')), ws(value))),
-            move |(key, eq, value)| {
-                let key = Box::new(key.flatten());
-                let value = Box::new(value.flatten());
-                Token::ConfigPair { key, eq, value }
-            },
-        )(input)
-    })(input)
+    map_once(
+        tuple((ws(identifier_name), ws(char('=')), ws(value))),
+        move |(key, eq, value)| {
+            let key = Box::new(key);
+            let value = Box::new(value);
+            Token::ConfigPair { key, eq, value }
+        },
+    )(input)
 }
 
 /// Tries to parse a config map
-pub fn config_map(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                multiline_ws(char('{')),
-                located(many0(alt((kvp, end_of_line)))),
-                ws(char('}')),
-            )),
-            move |(lparen, inner, rparen)| Token::Config {
-                lparen,
-                inner,
-                rparen,
-            },
-        )(input)
-    })(input)
+pub fn config_map(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            multiline_ws(char('{')),
+            many0(alt((kvp, end_of_line))),
+            ws(char('}')),
+        )),
+        move |(lparen, inner, rparen)| Token::Config {
+            lparen,
+            inner,
+            rparen,
+        },
+    )(input)
 }
 
 #[cfg(test)]

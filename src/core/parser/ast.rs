@@ -22,7 +22,7 @@ pub type ArgItem = (Located<Expression>, Option<Located<char>>);
 pub struct ParseTree {
     code_map: CodeMap,
     source_root: PathBuf,
-    tokens: Vec<Located<Token>>,
+    tokens: Vec<Token>,
 }
 
 impl Debug for ParseTree {
@@ -32,7 +32,7 @@ impl Debug for ParseTree {
 }
 
 impl ParseTree {
-    pub fn new(code_map: CodeMap, source_root: &Path, tokens: Vec<Located<Token>>) -> Self {
+    pub fn new(code_map: CodeMap, source_root: &Path, tokens: Vec<Token>) -> Self {
         Self {
             code_map,
             source_root: source_root.into(),
@@ -48,7 +48,7 @@ impl ParseTree {
         self.source_root.as_path()
     }
 
-    pub fn tokens(&self) -> &[Located<Token>] {
+    pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
 }
@@ -140,7 +140,7 @@ impl Display for IndexRegister {
 pub struct Instruction {
     pub mnemonic: Located<Mnemonic>,
     /// The operand is optional because some instructions (e.g. `NOP`) don't have an operand.
-    pub operand: Option<Box<Located<Token>>>,
+    pub operand: Option<Operand>,
 }
 
 /// The addressing mode for the instruction
@@ -161,11 +161,18 @@ pub enum AddressingMode {
 /// The operand of an instruction
 #[derive(Debug, PartialEq)]
 pub struct Operand {
-    pub expr: Box<Located<Expression>>,
+    pub expr: Located<Expression>,
     pub lchar: Option<Located<char>>,
     pub rchar: Option<Located<char>>,
     pub addressing_mode: AddressingMode,
-    pub suffix: Option<Box<Located<Token>>>,
+    pub suffix: Option<RegisterSuffix>,
+}
+
+/// The optional register suffix of an operand
+#[derive(Debug, PartialEq)]
+pub struct RegisterSuffix {
+    pub comma: Located<char>,
+    pub register: Located<IndexRegister>,
 }
 
 /// A number, which can be hexadecimal (`$23AB`), decimal (`123`) or binary (`%11011`)
@@ -455,12 +462,12 @@ pub enum Token {
     },
     Braces {
         lparen: Located<char>,
-        inner: Located<Vec<Located<Token>>>,
+        inner: Vec<Token>,
         rparen: Located<char>,
     },
     Config {
         lparen: Located<char>,
-        inner: Located<Vec<Located<Token>>>,
+        inner: Vec<Token>,
         rparen: Located<char>,
     },
     ConfigPair {
@@ -475,21 +482,21 @@ pub enum Token {
     Definition {
         tag: Located<String>,
         id: Box<Located<Token>>,
-        value: Option<Box<Located<Token>>>,
+        value: Option<Box<Token>>,
     },
     /// Since during parsing the trivia that is attached to the tokens is the trivia to the left side of the token. If there is any trivia
     /// to the right-hand side, until the end of the line, then this token is additionally emitted just to store this additional trivia.
     EolTrivia(Located<EmptyDisplay>),
-    Eof,
-    Error,
+    Eof(Located<EmptyDisplay>),
+    Error(Located<EmptyDisplay>),
     Expression(Expression),
     IdentifierName(Identifier),
     If {
         tag_if: Located<String>,
         value: Located<Expression>,
-        if_: Box<Located<Token>>,
+        if_: Box<Token>,
         tag_else: Option<Located<String>>,
-        else_: Option<Box<Located<Token>>>,
+        else_: Option<Box<Token>>,
     },
     Include {
         tag: Located<String>,
@@ -500,22 +507,17 @@ pub enum Token {
     Label {
         id: Located<Identifier>,
         colon: Located<char>,
-        braces: Option<Box<Located<Token>>>,
+        braces: Option<Box<Token>>,
     },
-    Operand(Operand),
     ProgramCounterDefinition {
         star: Located<char>,
         eq: Located<char>,
         value: Located<Expression>,
     },
-    RegisterSuffix {
-        comma: Located<char>,
-        register: Located<IndexRegister>,
-    },
     Segment {
         tag: Located<String>,
         id: Box<Located<Token>>,
-        inner: Option<Box<Located<Token>>>,
+        inner: Option<Box<Token>>,
     },
     VariableDefinition {
         ty: Located<VariableType>,
@@ -526,16 +528,16 @@ pub enum Token {
 }
 
 impl Token {
-    pub(crate) fn as_braces(&self) -> &Vec<Located<Token>> {
+    pub(crate) fn as_braces(&self) -> &[Token] {
         match self {
-            Token::Braces { inner, .. } => &inner.data,
+            Token::Braces { inner, .. } => &inner,
             _ => panic!(),
         }
     }
 
     pub(crate) fn as_config_map(&self) -> ConfigMap {
         match self {
-            Token::Config { inner, .. } => ConfigMap::new(&inner.data),
+            Token::Config { lparen, inner, .. } => ConfigMap::new(lparen.span, inner),
             _ => panic!(),
         }
     }
@@ -757,7 +759,6 @@ impl Display for Token {
                 rparen: right_paren,
             } => {
                 let inner = inner
-                    .data
                     .iter()
                     .map(|t| format!("{}", t))
                     .collect_vec()
@@ -782,11 +783,12 @@ impl Display for Token {
                     .unwrap_or_else(|| "".to_string());
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, value)
             }
-            Token::Eof => Ok(()),
-            Token::EolTrivia(triv) => {
+            Token::Eof(triv) => {
+                write!(f, "{}", triv)
+            }
+            Token::EolTrivia(triv) | Token::Error(triv) => {
                 writeln!(f, "{}", triv)
             }
-            Token::Error => write!(f, "Error"),
             Token::Expression(e) => write!(f, "{}", e),
             Token::IdentifierName(id) => {
                 write!(f, "{}", id.0)
@@ -826,7 +828,40 @@ impl Display for Token {
             }
             Token::Instruction(i) => match &i.operand {
                 Some(o) => {
-                    write!(f, "{}{}", i.mnemonic, o)
+                    let suffix = match &o.suffix {
+                        Some(s) => format!("{}{}", s.comma, s.register.to_string().to_uppercase()),
+                        None => "".to_string(),
+                    };
+
+                    let operand = match &o.addressing_mode {
+                        AddressingMode::AbsoluteOrZP => {
+                            format!("{}{}", o.expr, suffix)
+                        }
+                        AddressingMode::Immediate => {
+                            format!("{}{}", o.lchar.as_ref().unwrap(), o.expr)
+                        }
+                        AddressingMode::Implied => "".to_string(),
+                        AddressingMode::OuterIndirect => {
+                            format!(
+                                "{}{}{}{}",
+                                o.lchar.as_ref().unwrap(),
+                                o.expr,
+                                o.rchar.as_ref().unwrap(),
+                                suffix
+                            )
+                        }
+                        AddressingMode::Indirect => {
+                            format!(
+                                "{}{}{}{}",
+                                o.lchar.as_ref().unwrap(),
+                                o.expr,
+                                suffix,
+                                o.rchar.as_ref().unwrap()
+                            )
+                        }
+                    };
+
+                    write!(f, "{}{}", i.mnemonic, operand)
                 }
                 None => write!(f, "{}", i.mnemonic),
             },
@@ -837,47 +872,8 @@ impl Display for Token {
                 };
                 write!(f, "{}{}{}", id, colon, braces)
             }
-            Token::Operand(o) => {
-                let suffix = match &o.suffix {
-                    Some(s) => format!("{}", s),
-                    None => "".to_string(),
-                };
-
-                match &o.addressing_mode {
-                    AddressingMode::AbsoluteOrZP => {
-                        write!(f, "{}{}", o.expr, suffix)
-                    }
-                    AddressingMode::Immediate => {
-                        write!(f, "{}{}", o.lchar.as_ref().unwrap(), o.expr)
-                    }
-                    AddressingMode::Implied => write!(f, ""),
-                    AddressingMode::OuterIndirect => {
-                        write!(
-                            f,
-                            "{}{}{}{}",
-                            o.lchar.as_ref().unwrap(),
-                            o.expr,
-                            o.rchar.as_ref().unwrap(),
-                            suffix
-                        )
-                    }
-                    AddressingMode::Indirect => {
-                        write!(
-                            f,
-                            "{}{}{}{}",
-                            o.lchar.as_ref().unwrap(),
-                            o.expr,
-                            suffix,
-                            o.rchar.as_ref().unwrap()
-                        )
-                    }
-                }
-            }
             Token::ProgramCounterDefinition { star, eq, value } => {
                 write!(f, "{}{}{}", star, eq, value)
-            }
-            Token::RegisterSuffix { comma, register } => {
-                write!(f, "{}{}", comma, format!("{}", register).to_uppercase())
             }
             Token::Segment { tag, id, inner } => {
                 let inner = match inner {

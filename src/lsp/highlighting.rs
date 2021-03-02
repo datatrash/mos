@@ -102,17 +102,17 @@ impl SemTok {
     }
 }
 
-fn emit_semantic_ast(code_map: &CodeMap, ast: &[Located<Token>]) -> Vec<SemTok> {
+fn emit_semantic_ast(code_map: &CodeMap, ast: &[Token]) -> Vec<SemTok> {
     ast.iter()
-        .map(|lt| emit_semantic(code_map, lt))
+        .map(|tok| emit_semantic(code_map, tok))
         .flatten()
         .collect()
 }
 
-fn emit_semantic(code_map: &CodeMap, lt: &Located<Token>) -> Vec<SemTok> {
-    match &lt.data {
+fn emit_semantic(code_map: &CodeMap, token: &Token) -> Vec<SemTok> {
+    match &token {
         Token::Braces { inner, .. } | Token::Config { inner, .. } => {
-            emit_semantic_ast(code_map, &inner.data)
+            emit_semantic_ast(code_map, inner)
         }
         Token::Label { id, braces, .. } => {
             let mut r = vec![];
@@ -126,10 +126,10 @@ fn emit_semantic(code_map: &CodeMap, lt: &Located<Token>) -> Vec<SemTok> {
             if_, value, else_, ..
         } => {
             let mut r = vec![];
-            r.extend(emit_semantic(code_map, if_));
+            r.extend(emit_semantic(code_map, &if_));
             r.extend(emit_expression_semantic(code_map, value));
             if let Some(e) = else_ {
-                r.extend(emit_semantic(code_map, e));
+                r.extend(emit_semantic(code_map, &e));
             }
             r
         }
@@ -141,11 +141,10 @@ fn emit_semantic(code_map: &CodeMap, lt: &Located<Token>) -> Vec<SemTok> {
             let mut r = vec![];
             r.push(SemTok::new(code_map, i.mnemonic.span, 0));
             if let Some(op) = &i.operand {
-                r.extend(emit_semantic(code_map, op));
+                r.extend(emit_expression_semantic(code_map, &op.expr));
             }
             r
         }
-        Token::Operand(op) => emit_expression_semantic(code_map, &op.expr),
         _ => vec![],
     }
 }

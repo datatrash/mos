@@ -235,19 +235,17 @@ fn to_span(input: &LocatedSpan, begin: usize, end: usize) -> Span {
 }
 
 /// Tries to parse a Rust-style identifier
-fn identifier_name(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            recognize(pair(
-                alt((alpha1, tag("_"))),
-                many0(alt((alphanumeric1, tag("_")))),
-            )),
-            move |id: LocatedSpan| {
-                let id = Identifier(id.fragment().to_string());
-                Token::IdentifierName(id)
-            },
-        )(input)
-    })(input)
+fn identifier_name(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        )),
+        move |id: LocatedSpan| {
+            let id = Identifier(id.fragment().to_string());
+            Token::IdentifierName(id)
+        },
+    )(input)
 }
 
 /// Tries to parse an full identifier path (e.g. `foo.bar.baz`) that may also include address modifiers
@@ -263,11 +261,11 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
         ));
 
         map_once(id, move |(modifier, identifier_path)| {
+            let span = identifier_path.span;
             let identifier_path = identifier_path.map(|ids| {
-                let span = ids.first().unwrap().span;
                 let path = ids
                     .iter()
-                    .map(|lt| lt.data.as_identifier().clone())
+                    .map(|lt| lt.as_identifier().clone())
                     .collect_vec();
                 Located::new(span, IdentifierPath::new(&path))
             });
@@ -285,133 +283,121 @@ fn register_suffix<'a>(
     input: LocatedSpan<'a>,
     reg: &'a str,
     map_to: IndexRegister,
-) -> IResult<'a, Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((ws(char(',')), ws(tag_no_case(reg)))),
-            move |(comma, register)| {
-                let register = register.map(|_r| map_to);
-                Token::RegisterSuffix { comma, register }
-            },
-        )(input)
-    })(input)
+) -> IResult<'a, RegisterSuffix> {
+    map_once(
+        tuple((ws(char(',')), ws(tag_no_case(reg)))),
+        move |(comma, register)| {
+            let register = register.map(|_r| map_to);
+            RegisterSuffix { comma, register }
+        },
+    )(input)
 }
 
 /// Tries to parse a ", x" register suffix
-fn register_x_suffix(input: LocatedSpan) -> IResult<Located<Token>> {
+fn register_x_suffix(input: LocatedSpan) -> IResult<RegisterSuffix> {
     register_suffix(input, "x", IndexRegister::X)
 }
 
 /// Tries to parse a ", y" register suffix
-fn register_y_suffix(input: LocatedSpan) -> IResult<Located<Token>> {
+fn register_y_suffix(input: LocatedSpan) -> IResult<RegisterSuffix> {
     register_suffix(input, "y", IndexRegister::Y)
 }
 
 /// Tries to parse the operand of a 6502 instruction
-fn operand(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        let am_imm = map(tuple((ws(char('#')), expression)), move |(imm, expr)| {
-            let lchar = Some(imm.map_into(|_| '#'));
-            Token::Operand(Operand {
-                expr: Box::new(expr),
-                lchar,
-                rchar: None,
-                addressing_mode: AddressingMode::Immediate,
-                suffix: None,
-            })
-        });
+fn operand(input: LocatedSpan) -> IResult<Operand> {
+    let am_imm = map(tuple((ws(char('#')), expression)), move |(imm, expr)| {
+        let lchar = Some(imm.map_into(|_| '#'));
+        Operand {
+            expr,
+            lchar,
+            rchar: None,
+            addressing_mode: AddressingMode::Immediate,
+            suffix: None,
+        }
+    });
 
-        let optional_suffix = || opt(alt((register_x_suffix, register_y_suffix)));
+    let optional_suffix = || opt(alt((register_x_suffix, register_y_suffix)));
 
-        let am_abs = map(
-            tuple((expression, optional_suffix())),
-            move |(expr, suffix)| {
-                Token::Operand(Operand {
-                    expr: Box::new(expr),
-                    lchar: None,
-                    rchar: None,
-                    addressing_mode: AddressingMode::AbsoluteOrZP,
-                    suffix: suffix.map(Box::new),
-                })
-            },
-        );
+    let am_abs = map(
+        tuple((expression, optional_suffix())),
+        move |(expr, suffix)| Operand {
+            expr,
+            lchar: None,
+            rchar: None,
+            addressing_mode: AddressingMode::AbsoluteOrZP,
+            suffix,
+        },
+    );
 
-        let am_ind = map(
-            tuple((
-                ws(char('(')),
-                ws(expression),
-                ws(char(')')),
-                optional_suffix(),
-            )),
-            move |(lchar, expr, rchar, suffix)| {
-                Token::Operand(Operand {
-                    expr: Box::new(expr.flatten()),
-                    lchar: Some(lchar),
-                    rchar: Some(rchar),
-                    addressing_mode: AddressingMode::OuterIndirect,
-                    suffix: suffix.map(Box::new),
-                })
-            },
-        );
+    let am_ind = map(
+        tuple((
+            ws(char('(')),
+            ws(expression),
+            ws(char(')')),
+            optional_suffix(),
+        )),
+        move |(lchar, expr, rchar, suffix)| Operand {
+            expr: expr.flatten(),
+            lchar: Some(lchar),
+            rchar: Some(rchar),
+            addressing_mode: AddressingMode::OuterIndirect,
+            suffix,
+        },
+    );
 
-        let am_outer_ind = map(
-            tuple((
-                ws(char('(')),
-                ws(expression),
-                optional_suffix(),
-                ws(char(')')),
-            )),
-            move |(lchar, expr, suffix, rchar)| {
-                Token::Operand(Operand {
-                    expr: Box::new(expr.flatten()),
-                    lchar: Some(lchar),
-                    rchar: Some(rchar),
-                    addressing_mode: AddressingMode::Indirect,
-                    suffix: suffix.map(Box::new),
-                })
-            },
-        );
+    let am_outer_ind = map(
+        tuple((
+            ws(char('(')),
+            ws(expression),
+            optional_suffix(),
+            ws(char(')')),
+        )),
+        move |(lchar, expr, suffix, rchar)| Operand {
+            expr: expr.flatten(),
+            lchar: Some(lchar),
+            rchar: Some(rchar),
+            addressing_mode: AddressingMode::Indirect,
+            suffix,
+        },
+    );
 
-        alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
-    })(input)
+    alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
 }
 
 /// Tries to parse a 6502 instruction consisting of a mnemonic and optionally an operand (e.g. `LDA #123`)
-fn instruction(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        alt((
-            map(
-                tuple((ws(mnemonic), operand)),
-                move |(mnemonic, operand)| {
-                    let instruction = Instruction {
-                        mnemonic,
-                        operand: Some(Box::new(operand)),
-                    };
-                    Token::Instruction(instruction)
-                },
-            ),
-            map(
-                tuple((
-                    ws(implied_mnemonic),
-                    expect(
-                        not(operand),
-                        "", /* Eating the error since the unexpected operand itself will also generate an error */
-                    ),
-                )),
-                move |(mnemonic, _)| {
-                    let instruction = Instruction {
-                        mnemonic,
-                        operand: None,
-                    };
-                    Token::Instruction(instruction)
-                },
-            ),
-        ))(input)
-    })(input)
+fn instruction(input: LocatedSpan) -> IResult<Token> {
+    alt((
+        map(
+            tuple((ws(mnemonic), operand)),
+            move |(mnemonic, operand)| {
+                let instruction = Instruction {
+                    mnemonic,
+                    operand: Some(operand),
+                };
+                Token::Instruction(instruction)
+            },
+        ),
+        map(
+            tuple((
+                ws(implied_mnemonic),
+                expect(
+                    not(operand),
+                    "", /* Eating the error since the unexpected operand itself will also generate an error */
+                ),
+            )),
+            move |(mnemonic, _)| {
+                let instruction = Instruction {
+                    mnemonic,
+                    operand: None,
+                };
+                Token::Instruction(instruction)
+            },
+        ),
+    ))(input)
 }
 
 /// When encountering an error, try to eat enough characters so that parsing may continue from a relatively clean state again
-fn error(input: LocatedSpan) -> IResult<Located<Token>> {
+fn error(input: LocatedSpan) -> IResult<Token> {
     map_once(
         ws(take_till1(|c| {
             c == ')' || c == '}' || c == '\n' || c == '\r'
@@ -423,46 +409,42 @@ fn error(input: LocatedSpan) -> IResult<Located<Token>> {
                 message: format!("unexpected '{}'", input.data.fragment()),
             };
             input.data.extra.report_error(err);
-            Located::new(span, Token::Error)
+            Token::Error(Located::new(span, EmptyDisplay))
         },
     )(input)
 }
 
 /// Tries to parse a label in the form of `foo:`
-fn label(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((ws(identifier_name), ws(char(':')), opt(braces))),
-            move |(id, colon, braces)| {
-                let id = id.flatten().map_into(|i| i.into_identifier());
-                Token::Label {
-                    id,
-                    colon,
-                    braces: braces.map(Box::new),
-                }
-            },
-        )(input)
-    })(input)
+fn label(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((ws(identifier_name), ws(char(':')), opt(braces))),
+        move |(id, colon, braces)| {
+            let id = id.map_into(|i| i.into_identifier());
+            Token::Label {
+                id,
+                colon,
+                braces: braces.map(Box::new),
+            }
+        },
+    )(input)
 }
 
 /// Tries to parse a data statement such as `.byte 1, 2, 3`
-fn data(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                alt((
-                    map(ws(tag_no_case(".byte")), |t| t.map(|_| DataSize::Byte)),
-                    map(ws(tag_no_case(".word")), |t| t.map(|_| DataSize::Word)),
-                    map(ws(tag_no_case(".dword")), |t| t.map(|_| DataSize::Dword)),
-                )),
-                expect(arg_list, "expected expression"),
+fn data(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            alt((
+                map(ws(tag_no_case(".byte")), |t| t.map(|_| DataSize::Byte)),
+                map(ws(tag_no_case(".word")), |t| t.map(|_| DataSize::Word)),
+                map(ws(tag_no_case(".dword")), |t| t.map(|_| DataSize::Dword)),
             )),
-            move |(size, values)| Token::Data {
-                values: values.unwrap_or_default(),
-                size,
-            },
-        )(input)
-    })(input)
+            expect(arg_list, "expected expression"),
+        )),
+        move |(size, values)| Token::Data {
+            values: values.unwrap_or_default(),
+            size,
+        },
+    )(input)
 }
 
 #[doc(hidden)]
@@ -470,190 +452,161 @@ fn varconst_impl<'a, 'b>(
     input: LocatedSpan<'a>,
     tag: &'b str,
     ty: VariableType,
-) -> IResult<'a, Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                ws(tag_no_case(tag)),
-                ws(identifier_name),
-                ws(char('=')),
-                expression,
-            )),
-            move |(tag, id, eq, value)| {
-                let ty = tag.map(|_| ty);
-                let id = id.flatten().map_into(|id| id.into_identifier());
-                Token::VariableDefinition {
-                    ty,
-                    id,
-                    eq,
-                    value: Box::new(value),
-                }
-            },
-        )(input)
-    })(input)
+) -> IResult<'a, Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(tag)),
+            ws(identifier_name),
+            ws(char('=')),
+            expression,
+        )),
+        move |(tag, id, eq, value)| {
+            let ty = tag.map(|_| ty);
+            let id = id.map_into(|id| id.into_identifier());
+            Token::VariableDefinition {
+                ty,
+                id,
+                eq,
+                value: Box::new(value),
+            }
+        },
+    )(input)
 }
 
 /// Tries to parse a variable definition of the form `.var foo = 1`
-fn variable_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+fn variable_definition(input: LocatedSpan) -> IResult<Token> {
     varconst_impl(input, ".var", VariableType::Variable)
 }
 
 /// Tries to parse a constant definition of the form `.const foo = 1`
-fn const_definition(input: LocatedSpan) -> IResult<Located<Token>> {
+fn const_definition(input: LocatedSpan) -> IResult<Token> {
     varconst_impl(input, ".const", VariableType::Constant)
 }
 
 /// Tries to parse a program counter definition of the form `* = $2000`
-fn pc_definition(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((ws(char('*')), ws(char('=')), ws(expression))),
-            move |(star, eq, value)| Token::ProgramCounterDefinition {
-                star,
-                eq,
-                value: value.flatten(),
-            },
-        )(input)
-    })(input)
+fn pc_definition(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((ws(char('*')), ws(char('=')), ws(expression))),
+        move |(star, eq, value)| Token::ProgramCounterDefinition {
+            star,
+            eq,
+            value: value.flatten(),
+        },
+    )(input)
 }
 
 /// Tries to parse a configuration map definition
-fn config_definition(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                ws(tag_no_case(".define")),
-                ws(identifier_name),
-                expect(
-                    config_map::config_map,
-                    "unable to parse configuration object",
-                ),
-            )),
-            move |(tag, id, cfg)| {
-                let id = Box::new(id.flatten());
-                Token::Definition {
-                    tag: tag.map_into(|_| ".define".into()),
-                    id,
-                    value: cfg.map(Box::new),
-                }
-            },
-        )(input)
-    })(input)
+fn config_definition(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(".define")),
+            ws(identifier_name),
+            expect(
+                config_map::config_map,
+                "unable to parse configuration object",
+            ),
+        )),
+        move |(tag, id, cfg)| Token::Definition {
+            tag: tag.map_into(|_| ".define".into()),
+            id: Box::new(id),
+            value: cfg.map(Box::new),
+        },
+    )(input)
 }
 
 /// Tries to parse tokens enclosed in braces, e.g. `{ ... }`
-fn braces(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                multiline_ws(char('{')),
-                located(opt(many0(statement))),
-                ws(char('}')),
-            )),
-            move |(lparen, inner, rparen)| {
-                let inner = inner.map_into(|vec| vec.unwrap_or_else(Vec::new));
-                Token::Braces {
-                    lparen,
-                    inner,
-                    rparen,
-                }
-            },
-        )(input)
-    })(input)
+fn braces(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((multiline_ws(char('{')), many0(statement), ws(char('}')))),
+        move |(lparen, inner, rparen)| Token::Braces {
+            lparen,
+            inner,
+            rparen,
+        },
+    )(input)
 }
 
 /// Tries to parse a segment definition
-fn segment(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                ws(tag_no_case(".segment")),
-                ws(identifier_name),
-                opt(map(braces, Box::new)),
-            )),
-            move |(tag, id, inner)| {
-                let id = id.flatten();
-                Token::Segment {
-                    tag: tag.map_into(|_| ".segment".into()),
-                    id: Box::new(id),
-                    inner,
-                }
-            },
-        )(input)
-    })(input)
+fn segment(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(".segment")),
+            ws(identifier_name),
+            opt(map(braces, Box::new)),
+        )),
+        move |(tag, id, inner)| Token::Segment {
+            tag: tag.map_into(|_| ".segment".into()),
+            id: Box::new(id),
+            inner,
+        },
+    )(input)
 }
 
 /// Tries to parse an if/else statement
-fn if_(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((
-                ws(tag_no_case(".if")),
-                expression,
-                braces,
-                opt(tuple((ws(tag_no_case("else")), braces))),
-            )),
-            move |(tag_if, value, if_, else_)| {
-                let tag_if = tag_if.map_into(|_| ".if".into());
-                let (tag_else, else_) = match else_ {
-                    Some((tag_else, else_)) => {
-                        (Some(tag_else.map_into(|_| "else".into())), Some(else_))
-                    }
-                    None => (None, None),
-                };
-                Token::If {
-                    tag_if,
-                    value,
-                    if_: Box::new(if_),
-                    tag_else,
-                    else_: else_.map(Box::new),
+fn if_(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(".if")),
+            expression,
+            braces,
+            opt(tuple((ws(tag_no_case("else")), braces))),
+        )),
+        move |(tag_if, value, if_, else_)| {
+            let tag_if = tag_if.map_into(|_| ".if".into());
+            let (tag_else, else_) = match else_ {
+                Some((tag_else, else_)) => {
+                    (Some(tag_else.map_into(|_| "else".into())), Some(else_))
                 }
-            },
-        )(input)
-    })(input)
+                None => (None, None),
+            };
+            Token::If {
+                tag_if,
+                value,
+                if_: Box::new(if_),
+                tag_else,
+                else_: else_.map(Box::new),
+            }
+        },
+    )(input)
 }
 
 /// Tries to parse an align directive, of the form `.align 16`
-fn align(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(
-            tuple((ws(tag_no_case(".align")), ws(expression))),
-            move |(tag, value)| {
-                let tag = tag.map_into(|_| ".align".into());
-                let value = value.flatten();
-                Token::Align { tag, value }
-            },
-        )(input)
-    })(input)
+fn align(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((ws(tag_no_case(".align")), ws(expression))),
+        move |(tag, value)| {
+            let tag = tag.map_into(|_| ".align".into());
+            let value = value.flatten();
+            Token::Align { tag, value }
+        },
+    )(input)
 }
 
 /// Tries to parse an include directive, of the form `.include "foo.bin"`
-fn include(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        let filename = recognize(many1(none_of("\"\r\n")));
+fn include(input: LocatedSpan) -> IResult<Token> {
+    let filename = recognize(many1(none_of("\"\r\n")));
 
-        map_once(
-            tuple((
-                ws(tag_no_case(".include")),
-                ws(char('"')),
-                located(filename),
-                char('"'),
-            )),
-            move |(tag, lquote, filename, _)| {
-                let tag = tag.map_into(|_| ".include".into());
-                let filename = filename.map(|v| v.fragment().to_string());
-                Token::Include {
-                    tag,
-                    lquote,
-                    filename,
-                }
-            },
-        )(input)
-    })(input)
+    map_once(
+        tuple((
+            ws(tag_no_case(".include")),
+            ws(char('"')),
+            located(filename),
+            char('"'),
+        )),
+        move |(tag, lquote, filename, _)| {
+            let tag = tag.map_into(|_| ".include".into());
+            let filename = filename.map(|v| v.fragment().to_string());
+            Token::Include {
+                tag,
+                lquote,
+                filename,
+            }
+        },
+    )(input)
 }
 
 /// Tries to parse all valid statement types
-fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
+fn statement(input: LocatedSpan) -> IResult<Token> {
     alt((
         braces,
         instruction,
@@ -672,27 +625,27 @@ fn statement(input: LocatedSpan) -> IResult<Located<Token>> {
 }
 
 /// Tries to parse any valid statement but will fallback to [error] in case of trouble
-fn statement_or_error(input: LocatedSpan) -> IResult<Located<Token>> {
+fn statement_or_error(input: LocatedSpan) -> IResult<Token> {
     alt((statement, error))(input)
 }
 
 /// Tries to parse a platform-independent end-of-line
-fn end_of_line(input: LocatedSpan) -> IResult<Located<Token>> {
-    located(|input| {
-        map_once(ws(tuple((opt(char('\r')), char('\n')))), move |triv| {
-            let triv = triv.map(|_| EmptyDisplay);
-            Token::EolTrivia(triv)
-        })(input)
+fn end_of_line(input: LocatedSpan) -> IResult<Token> {
+    map_once(ws(tuple((opt(char('\r')), char('\n')))), move |triv| {
+        let triv = triv.map(|_| EmptyDisplay);
+        Token::EolTrivia(triv)
     })(input)
 }
 
 /// Tries to eat the remaining characters
-fn eof(input: LocatedSpan) -> IResult<Located<Token>> {
-    map(ws(rest), move |rest| rest.map_into(|_| Token::Eof))(input)
+fn eof(input: LocatedSpan) -> IResult<Token> {
+    map(ws(rest), move |rest| {
+        Token::Eof(rest.map_into(|_| EmptyDisplay))
+    })(input)
 }
 
 /// Parses an entire file
-fn source_file(input: LocatedSpan) -> IResult<Vec<Located<Token>>> {
+fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
     map(tuple((many1(statement_or_error), eof)), |(tokens, eof)| {
         let mut result = tokens;
         result.push(eof);
@@ -786,7 +739,7 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                 ws(char(')')),
             )),
             move |(name, lparen, args, rparen)| {
-                let name = Box::new(name.flatten());
+                let name = Box::new(name);
                 let args = args.unwrap_or_else(Vec::new);
                 ExpressionFactor::FunctionCall {
                     name,
@@ -992,6 +945,7 @@ mod test {
     #[test]
     fn parse_braces() {
         check("{  }", "{  }");
+        check("{  }    ", "{  }    ");
         check("{   lda #123   }", "{   LDA #123   }");
         check(
             r"
