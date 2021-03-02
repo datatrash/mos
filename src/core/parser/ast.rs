@@ -443,16 +443,6 @@ impl Display for DataSize {
     }
 }
 
-/// An empty struct that is just there to provide an empty [std::fmt::Display] implementation
-#[derive(Debug, Clone, PartialEq)]
-pub struct EmptyDisplay;
-
-impl Display for EmptyDisplay {
-    fn fmt(&self, _: &mut Formatter) -> std::fmt::Result {
-        Ok(())
-    }
-}
-
 /// A block of tokens
 #[derive(Debug, PartialEq)]
 pub struct Block {
@@ -486,9 +476,9 @@ pub enum Token {
     },
     /// Since during parsing the trivia that is attached to the tokens is the trivia to the left side of the token. If there is any trivia
     /// to the right-hand side, until the end of the line, then this token is additionally emitted just to store this additional trivia.
-    EolTrivia(Located<EmptyDisplay>),
-    Eof(Located<EmptyDisplay>),
-    Error(Located<EmptyDisplay>),
+    EolTrivia(Located<()>),
+    Eof(Located<()>),
+    Error(Located<()>),
     Expression(Expression),
     If {
         tag_if: Located<String>,
@@ -760,10 +750,10 @@ impl Display for Token {
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, value)
             }
             Token::Eof(triv) => {
-                write!(f, "{}", triv)
+                write!(f, "{}", format_trivia(&triv.trivia))
             }
             Token::EolTrivia(triv) | Token::Error(triv) => {
-                writeln!(f, "{}", triv)
+                writeln!(f, "{}", format_trivia(&triv.trivia))
             }
             Token::Expression(e) => write!(f, "{}", e),
             Token::If {

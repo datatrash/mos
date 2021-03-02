@@ -408,7 +408,7 @@ fn error(input: LocatedSpan) -> IResult<Token> {
                 message: format!("unexpected '{}'", input.data.fragment()),
             };
             input.data.extra.report_error(err);
-            Token::Error(Located::new(span, EmptyDisplay))
+            Token::Error(Located::new(span, ()))
         },
     )(input)
 }
@@ -614,16 +614,14 @@ fn statement_or_error(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a platform-independent end-of-line
 fn end_of_line(input: LocatedSpan) -> IResult<Token> {
     map_once(ws(tuple((opt(char('\r')), char('\n')))), move |triv| {
-        let triv = triv.map(|_| EmptyDisplay);
+        let triv = triv.map(|_| ());
         Token::EolTrivia(triv)
     })(input)
 }
 
 /// Tries to eat the remaining characters
 fn eof(input: LocatedSpan) -> IResult<Token> {
-    map(ws(rest), move |rest| {
-        Token::Eof(rest.map_into(|_| EmptyDisplay))
-    })(input)
+    map(ws(rest), move |rest| Token::Eof(rest.map_into(|_| ())))(input)
 }
 
 /// Parses an entire file
