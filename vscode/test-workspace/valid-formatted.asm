@@ -4,6 +4,8 @@
     start = $2000 + 4 - %00100
 }
 
+.include "foo.bin"
+
 .const test /* test value */ = 1
 .var test2 = 5
 
