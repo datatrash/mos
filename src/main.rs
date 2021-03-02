@@ -20,6 +20,8 @@ mod config;
 mod core;
 /// Error handling
 mod errors;
+/// Source code formatting
+mod formatting;
 /// Language Server Protocol implementation
 mod lsp;
 

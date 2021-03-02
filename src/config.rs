@@ -1,7 +1,6 @@
-use serde::Deserialize;
-
-use crate::commands::FormattingOptions;
 use crate::errors::{MosError, MosResult};
+use crate::formatting::FormattingOptions;
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]

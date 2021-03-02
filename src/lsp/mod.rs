@@ -4,16 +4,18 @@ use crate::lsp::diagnostics::{DidChange, DidOpen};
 use crate::lsp::highlighting::FullRequest;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
-use lsp_types::{InitializeParams, ServerCapabilities, TextDocumentSyncKind, Url};
+use lsp_types::{InitializeParams, OneOf, ServerCapabilities, TextDocumentSyncKind, Url};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 mod diagnostics;
+mod formatting;
 mod highlighting;
 mod traits;
 
+use crate::lsp::formatting::FormattingRequestHandler;
 pub use traits::*;
 
 pub struct Analysis {
@@ -98,6 +100,7 @@ impl LspServer {
 
     pub fn register_handlers(&mut self) {
         self.register_request_handler(FullRequest {});
+        self.register_request_handler(FormattingRequestHandler {});
         self.register_notification_handler(DidOpen {});
         self.register_notification_handler(DidChange {});
     }
@@ -121,6 +124,7 @@ impl LspServer {
         let caps = ServerCapabilities {
             semantic_tokens_provider: Some(highlighting::caps().into()),
             text_document_sync: Some(TextDocumentSyncKind::Full.into()),
+            document_formatting_provider: Some(OneOf::Left(true)),
             ..Default::default()
         };
         let server_capabilities = serde_json::to_value(&caps).unwrap();
