@@ -111,14 +111,12 @@ fn emit_semantic_ast(code_map: &CodeMap, ast: &[Token]) -> Vec<SemTok> {
 
 fn emit_semantic(code_map: &CodeMap, token: &Token) -> Vec<SemTok> {
     match &token {
-        Token::Braces { inner, .. } | Token::Config { inner, .. } => {
-            emit_semantic_ast(code_map, inner)
-        }
-        Token::Label { id, braces, .. } => {
+        Token::Braces(block) | Token::Config(block) => emit_semantic_ast(code_map, &block.inner),
+        Token::Label { id, block, .. } => {
             let mut r = vec![];
             r.push(SemTok::new(code_map, id.span, 3));
-            if let Some(b) = braces {
-                r.extend(emit_semantic(code_map, &b));
+            if let Some(b) = block {
+                r.extend(emit_semantic_ast(code_map, &b.inner));
             }
             r
         }
@@ -126,10 +124,10 @@ fn emit_semantic(code_map: &CodeMap, token: &Token) -> Vec<SemTok> {
             if_, value, else_, ..
         } => {
             let mut r = vec![];
-            r.extend(emit_semantic(code_map, &if_));
+            r.extend(emit_semantic_ast(code_map, &if_.inner));
             r.extend(emit_expression_semantic(code_map, value));
             if let Some(e) = else_ {
-                r.extend(emit_semantic(code_map, &e));
+                r.extend(emit_semantic_ast(code_map, &e.inner));
             }
             r
         }

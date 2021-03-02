@@ -235,16 +235,13 @@ fn to_span(input: &LocatedSpan, begin: usize, end: usize) -> Span {
 }
 
 /// Tries to parse a Rust-style identifier
-fn identifier_name(input: LocatedSpan) -> IResult<Token> {
+fn identifier_name(input: LocatedSpan) -> IResult<Identifier> {
     map_once(
         recognize(pair(
             alt((alpha1, tag("_"))),
             many0(alt((alphanumeric1, tag("_")))),
         )),
-        move |id: LocatedSpan| {
-            let id = Identifier(id.fragment().to_string());
-            Token::IdentifierName(id)
-        },
+        move |id: LocatedSpan| Identifier(id.fragment().to_string()),
     )(input)
 }
 
@@ -263,10 +260,7 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
         map_once(id, move |(modifier, identifier_path)| {
             let span = identifier_path.span;
             let identifier_path = identifier_path.map(|ids| {
-                let path = ids
-                    .iter()
-                    .map(|lt| lt.as_identifier().clone())
-                    .collect_vec();
+                let path = ids.iter().cloned().collect_vec();
                 Located::new(span, IdentifierPath::new(&path))
             });
 
@@ -364,6 +358,11 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
     alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
 }
 
+/// Tries to parse a bare block
+fn braces(input: LocatedSpan) -> IResult<Token> {
+    map(block, Token::Braces)(input)
+}
+
 /// Tries to parse a 6502 instruction consisting of a mnemonic and optionally an operand (e.g. `LDA #123`)
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     alt((
@@ -417,15 +416,8 @@ fn error(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a label in the form of `foo:`
 fn label(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((ws(identifier_name), ws(char(':')), opt(braces))),
-        move |(id, colon, braces)| {
-            let id = id.map_into(|i| i.into_identifier());
-            Token::Label {
-                id,
-                colon,
-                braces: braces.map(Box::new),
-            }
-        },
+        tuple((ws(identifier_name), ws(char(':')), opt(block))),
+        move |(id, colon, block)| Token::Label { id, colon, block },
     )(input)
 }
 
@@ -462,13 +454,7 @@ fn varconst_impl<'a, 'b>(
         )),
         move |(tag, id, eq, value)| {
             let ty = tag.map(|_| ty);
-            let id = id.map_into(|id| id.into_identifier());
-            Token::VariableDefinition {
-                ty,
-                id,
-                eq,
-                value: Box::new(value),
-            }
+            Token::VariableDefinition { ty, id, eq, value }
         },
     )(input)
 }
@@ -508,17 +494,17 @@ fn config_definition(input: LocatedSpan) -> IResult<Token> {
         )),
         move |(tag, id, cfg)| Token::Definition {
             tag: tag.map_into(|_| ".define".into()),
-            id: Box::new(id),
+            id,
             value: cfg.map(Box::new),
         },
     )(input)
 }
 
 /// Tries to parse tokens enclosed in braces, e.g. `{ ... }`
-fn braces(input: LocatedSpan) -> IResult<Token> {
+fn block(input: LocatedSpan) -> IResult<Block> {
     map_once(
         tuple((multiline_ws(char('{')), many0(statement), ws(char('}')))),
-        move |(lparen, inner, rparen)| Token::Braces {
+        move |(lparen, inner, rparen)| Block {
             lparen,
             inner,
             rparen,
@@ -529,15 +515,11 @@ fn braces(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a segment definition
 fn segment(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((
-            ws(tag_no_case(".segment")),
-            ws(identifier_name),
-            opt(map(braces, Box::new)),
-        )),
-        move |(tag, id, inner)| Token::Segment {
+        tuple((ws(tag_no_case(".segment")), ws(identifier_name), opt(block))),
+        move |(tag, id, block)| Token::Segment {
             tag: tag.map_into(|_| ".segment".into()),
-            id: Box::new(id),
-            inner,
+            id,
+            block,
         },
     )(input)
 }
@@ -548,8 +530,8 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
         tuple((
             ws(tag_no_case(".if")),
             expression,
-            braces,
-            opt(tuple((ws(tag_no_case("else")), braces))),
+            block,
+            opt(tuple((ws(tag_no_case("else")), block))),
         )),
         move |(tag_if, value, if_, else_)| {
             let tag_if = tag_if.map_into(|_| ".if".into());
@@ -562,9 +544,9 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
             Token::If {
                 tag_if,
                 value,
-                if_: Box::new(if_),
+                if_,
                 tag_else,
-                else_: else_.map(Box::new),
+                else_,
             }
         },
     )(input)
@@ -739,7 +721,6 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                 ws(char(')')),
             )),
             move |(name, lparen, args, rparen)| {
-                let name = Box::new(name);
                 let args = args.unwrap_or_else(Vec::new);
                 ExpressionFactor::FunctionCall {
                     name,

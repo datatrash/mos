@@ -11,8 +11,8 @@ use serde::Deserialize;
 
 use crate::config::Config;
 use crate::core::parser::{
-    parse_or_err, AddressingMode, ArgItem, Expression, ExpressionFactor, Located, ParseTree, Token,
-    Trivia,
+    parse_or_err, AddressingMode, ArgItem, Block, Expression, ExpressionFactor, Located, ParseTree,
+    Token, Trivia,
 };
 use crate::errors::MosResult;
 
@@ -263,91 +263,9 @@ impl<'a> CodeFormatter<'a> {
                 );
                 format!("{}{}", tag, value)
             }
-            Token::Braces {
-                lparen,
-                inner,
-                rparen,
-            }
-            | Token::Config {
-                lparen,
-                inner,
-                rparen,
-            } => {
-                let inner = self.nested(inner, self.options).format();
-
-                let inner = if self.options.whitespace.trim {
-                    // When we trim, we need to re-indent afterwards
-                    let inner = vec![(
-                        self.indent + self.options.whitespace.indent,
-                        inner.trim().to_string(),
-                    )];
-                    indent_str(&inner)
-                } else {
-                    inner
-                };
-
-                // Right paren needs a newline only if the inner tokens don't already end with a newline
-                let rparen_newline_prefix: String = if inner.ends_with('\n') || inner.is_empty() {
-                    "".into()
-                } else {
-                    "\n".into()
-                };
-
-                let (lparen, rparen) = self.with_options(|f| {
-                    f.options.whitespace.trim = true;
-
-                    match f.options.braces.position {
-                        BracePosition::SameLine => {
-                            // Left paren needs a newline or a space depending on parent token
-                            let lparen_newline_prefix: String = match f.parent_token() {
-                                Some(Token::If { .. })
-                                | Some(Token::Label { .. })
-                                | Some(Token::Segment { .. })
-                                | Some(Token::Definition { .. }) => " ".into(),
-                                _ => "\n".into(),
-                            };
-
-                            let lparen = format!(
-                                "{}{}{{{}",
-                                lparen_newline_prefix,
-                                space_prefix(f.format_trivia(&lparen).trim_start().to_string()),
-                                "\n",
-                            );
-                            let rparen =
-                                format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
-
-                            (lparen, rparen)
-                        }
-                        BracePosition::NewLine => {
-                            let lparen = format!(
-                                "\n{}{{\n",
-                                f.format_trivia(&lparen).trim_start().to_string(),
-                            );
-                            let rparen =
-                                format!("{}{}}}", rparen_newline_prefix, f.format_trivia(&rparen));
-
-                            (lparen, rparen)
-                        }
-                        BracePosition::AsIs => {
-                            let lparen = f.format_display(&lparen);
-                            let rparen = f.format_display(&rparen);
-                            (lparen, rparen)
-                        }
-                    }
-                });
-
-                let rparen = if self.options.braces.double_newline_after_closing_brace
-                    && self.options.braces.position != BracePosition::AsIs
-                {
-                    format!("{}\n\n", rparen)
-                } else {
-                    rparen
-                };
-
-                format!("{}{}{}", lparen, inner, rparen)
-            }
+            Token::Braces(block) | Token::Config(block) => self.format_block(block),
             Token::ConfigPair { key, eq, value } => {
-                let key = self.format_located_token(key);
+                let key = self.format_located(key);
                 let ws = self.options.whitespace.space_between_kvp;
                 let eq = space_prefix_if(self.format_located(eq), ws);
                 let value = space_prefix_if(self.format_located_token(value), ws);
@@ -387,7 +305,6 @@ impl<'a> CodeFormatter<'a> {
             }
             Token::Error(_) => panic!("Should not be formatting ASTs that contain errors"),
             Token::Expression(expr) => self.format_expression(expr),
-            Token::IdentifierName(id) => id.0.to_string(),
             Token::If {
                 tag_if,
                 value,
@@ -410,10 +327,10 @@ impl<'a> CodeFormatter<'a> {
                     if else_.is_some() {
                         f.options.braces.double_newline_after_closing_brace = false;
                     }
-                    f.format_token(if_)
+                    f.format_block(if_)
                 });
                 let tag_else = space_prefix_if(self.format_optional_located(tag_else), ws);
-                let else_ = self.format_optional_token(else_);
+                let else_ = self.format_optional_block(else_);
                 let result = format!("{}{}{}{}{}", tag_if, value, if_, tag_else, else_);
 
                 if self.options.whitespace.newline_before_if && self.preceding_newline_len() <= 1 {
@@ -517,11 +434,11 @@ impl<'a> CodeFormatter<'a> {
 
                 format!("{}{}", mnemonic, operand)
             }
-            Token::Label { id, colon, braces } => {
+            Token::Label { id, colon, block } => {
                 let id = self.format_located(id);
                 let colon = self.format_located(colon);
-                let braces = self.format_optional_token(braces);
-                let result = format!("{}{}{}", id, colon, braces);
+                let block = self.format_optional_block(block);
+                let result = format!("{}{}{}", id, colon, block);
 
                 // If the previous instruction was not a label definition, add a newline
                 if self.options.whitespace.newline_before_label
@@ -558,12 +475,12 @@ impl<'a> CodeFormatter<'a> {
                     result
                 }
             }
-            Token::Segment { tag, id, inner } => {
+            Token::Segment { tag, id, block } => {
                 let ws = self.options.whitespace.space_between_kvp;
                 let tag = self.format_located(tag);
-                let id = space_prefix_if(self.format_located_token(id), ws);
-                let inner = self.format_optional_token(inner);
-                format!("{}{}{}", tag, id, inner)
+                let id = space_prefix_if(self.format_located(id), ws);
+                let block = self.format_optional_block(block);
+                format!("{}{}{}", tag, id, block)
             }
             Token::VariableDefinition { ty, id, eq, value } => {
                 let ws = self.options.whitespace.space_between_kvp;
@@ -593,6 +510,94 @@ impl<'a> CodeFormatter<'a> {
                 }
             }
         }
+    }
+
+    fn format_optional_block(&mut self, block: &Option<Block>) -> String {
+        block
+            .as_ref()
+            .map(|b| self.format_block(&b))
+            .unwrap_or_else(|| "".to_string())
+    }
+
+    fn format_block(&mut self, block: &Block) -> String {
+        let inner = self.nested(&block.inner, self.options).format();
+
+        let inner = if self.options.whitespace.trim {
+            // When we trim, we need to re-indent afterwards
+            let inner = vec![(
+                self.indent + self.options.whitespace.indent,
+                inner.trim().to_string(),
+            )];
+            indent_str(&inner)
+        } else {
+            inner
+        };
+
+        // Right paren needs a newline only if the inner tokens don't already end with a newline
+        let rparen_newline_prefix: String = if inner.ends_with('\n') || inner.is_empty() {
+            "".into()
+        } else {
+            "\n".into()
+        };
+
+        let (lparen, rparen) = self.with_options(|f| {
+            f.options.whitespace.trim = true;
+
+            match f.options.braces.position {
+                BracePosition::SameLine => {
+                    // Left paren needs a newline or a space depending on parent token
+                    let lparen_newline_prefix: String = match f.parent_token() {
+                        Some(Token::If { .. })
+                        | Some(Token::Label { .. })
+                        | Some(Token::Segment { .. })
+                        | Some(Token::Definition { .. }) => " ".into(),
+                        _ => "\n".into(),
+                    };
+
+                    let lparen = format!(
+                        "{}{}{{{}",
+                        lparen_newline_prefix,
+                        space_prefix(f.format_trivia(&block.lparen).trim_start().to_string()),
+                        "\n",
+                    );
+                    let rparen = format!(
+                        "{}{}}}",
+                        rparen_newline_prefix,
+                        f.format_trivia(&block.rparen)
+                    );
+
+                    (lparen, rparen)
+                }
+                BracePosition::NewLine => {
+                    let lparen = format!(
+                        "\n{}{{\n",
+                        f.format_trivia(&block.lparen).trim_start().to_string(),
+                    );
+                    let rparen = format!(
+                        "{}{}}}",
+                        rparen_newline_prefix,
+                        f.format_trivia(&block.rparen)
+                    );
+
+                    (lparen, rparen)
+                }
+                BracePosition::AsIs => {
+                    let lparen = f.format_display(&block.lparen);
+                    let rparen = f.format_display(&block.rparen);
+                    (lparen, rparen)
+                }
+            }
+        });
+
+        let rparen = if self.options.braces.double_newline_after_closing_brace
+            && self.options.braces.position != BracePosition::AsIs
+        {
+            format!("{}\n\n", rparen)
+        } else {
+            rparen
+        };
+
+        format!("{}{}{}", lparen, inner, rparen)
     }
 
     fn format_located<T: Display>(&self, lt: &Located<T>) -> String {
@@ -734,7 +739,7 @@ impl<'a> CodeFormatter<'a> {
                 args,
                 rparen,
             } => {
-                let name = self.format_located_token(name);
+                let name = self.format_located(name);
                 let lparen = self.format_located(lparen);
                 let args = self.format_args(args);
                 let rparen = self.format_located(rparen);

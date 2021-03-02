@@ -317,7 +317,7 @@ pub enum ExpressionFactor {
         rparen: Located<char>,
     },
     FunctionCall {
-        name: Box<Located<Token>>,
+        name: Located<Identifier>,
         lparen: Located<char>,
         args: Vec<ArgItem>,
         rparen: Located<char>,
@@ -453,6 +453,14 @@ impl Display for EmptyDisplay {
     }
 }
 
+/// A block of tokens
+#[derive(Debug, PartialEq)]
+pub struct Block {
+    pub lparen: Located<char>,
+    pub inner: Vec<Token>,
+    pub rparen: Located<char>,
+}
+
 /// Tokens that, together, make up all possible source text
 #[derive(Debug, PartialEq)]
 pub enum Token {
@@ -460,18 +468,10 @@ pub enum Token {
         tag: Located<String>,
         value: Located<Expression>,
     },
-    Braces {
-        lparen: Located<char>,
-        inner: Vec<Token>,
-        rparen: Located<char>,
-    },
-    Config {
-        lparen: Located<char>,
-        inner: Vec<Token>,
-        rparen: Located<char>,
-    },
+    Braces(Block),
+    Config(Block),
     ConfigPair {
-        key: Box<Located<Token>>,
+        key: Located<Identifier>,
         eq: Located<char>,
         value: Box<Located<Token>>,
     },
@@ -481,7 +481,7 @@ pub enum Token {
     },
     Definition {
         tag: Located<String>,
-        id: Box<Located<Token>>,
+        id: Located<Identifier>,
         value: Option<Box<Token>>,
     },
     /// Since during parsing the trivia that is attached to the tokens is the trivia to the left side of the token. If there is any trivia
@@ -490,13 +490,12 @@ pub enum Token {
     Eof(Located<EmptyDisplay>),
     Error(Located<EmptyDisplay>),
     Expression(Expression),
-    IdentifierName(Identifier),
     If {
         tag_if: Located<String>,
         value: Located<Expression>,
-        if_: Box<Token>,
+        if_: Block,
         tag_else: Option<Located<String>>,
-        else_: Option<Box<Token>>,
+        else_: Option<Block>,
     },
     Include {
         tag: Located<String>,
@@ -507,7 +506,7 @@ pub enum Token {
     Label {
         id: Located<Identifier>,
         colon: Located<char>,
-        braces: Option<Box<Token>>,
+        block: Option<Block>,
     },
     ProgramCounterDefinition {
         star: Located<char>,
@@ -516,35 +515,21 @@ pub enum Token {
     },
     Segment {
         tag: Located<String>,
-        id: Box<Located<Token>>,
-        inner: Option<Box<Token>>,
+        id: Located<Identifier>,
+        block: Option<Block>,
     },
     VariableDefinition {
         ty: Located<VariableType>,
         id: Located<Identifier>,
         eq: Located<char>,
-        value: Box<Located<Expression>>,
+        value: Located<Expression>,
     },
 }
 
 impl Token {
-    pub(crate) fn as_braces(&self) -> &[Token] {
-        match self {
-            Token::Braces { inner, .. } => &inner,
-            _ => panic!(),
-        }
-    }
-
     pub(crate) fn as_config_map(&self) -> ConfigMap {
         match self {
-            Token::Config { lparen, inner, .. } => ConfigMap::new(lparen.span, inner),
-            _ => panic!(),
-        }
-    }
-
-    pub(crate) fn as_identifier(&self) -> &Identifier {
-        match self {
-            Token::IdentifierName(id) => id,
+            Token::Config(block) => ConfigMap::new(block.lparen.span, &block.inner),
             _ => panic!(),
         }
     }
@@ -567,13 +552,6 @@ impl Token {
         match self {
             Token::Expression(Expression::Factor { factor, .. }) => Some(&factor.data),
             _ => None,
-        }
-    }
-
-    pub(crate) fn into_identifier(self) -> Identifier {
-        match self {
-            Token::IdentifierName(id) => id,
-            _ => panic!(),
         }
     }
 }
@@ -742,28 +720,26 @@ impl Display for Expression {
     }
 }
 
+impl Display for Block {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let inner = self
+            .inner
+            .iter()
+            .map(|t| format!("{}", t))
+            .collect_vec()
+            .join("");
+        write!(f, "{}{}{}", self.lparen, inner, self.rparen)
+    }
+}
+
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Token::Align { tag, value } => {
                 write!(f, "{}{}", format!("{}", tag).to_uppercase(), value)
             }
-            Token::Braces {
-                lparen: left_paren,
-                inner,
-                rparen: right_paren,
-            }
-            | Token::Config {
-                lparen: left_paren,
-                inner,
-                rparen: right_paren,
-            } => {
-                let inner = inner
-                    .iter()
-                    .map(|t| format!("{}", t))
-                    .collect_vec()
-                    .join("");
-                write!(f, "{}{}{}", left_paren, inner, right_paren)
+            Token::Braces(block) | Token::Config(block) => {
+                write!(f, "{}", block)
             }
             Token::ConfigPair { key, eq, value } => {
                 write!(f, "{}{}{}", key, eq, value)
@@ -790,9 +766,6 @@ impl Display for Token {
                 writeln!(f, "{}", triv)
             }
             Token::Expression(e) => write!(f, "{}", e),
-            Token::IdentifierName(id) => {
-                write!(f, "{}", id.0)
-            }
             Token::If {
                 tag_if,
                 value,
@@ -865,22 +838,22 @@ impl Display for Token {
                 }
                 None => write!(f, "{}", i.mnemonic),
             },
-            Token::Label { id, colon, braces } => {
-                let braces = match braces {
+            Token::Label { id, colon, block } => {
+                let block = match block {
                     Some(s) => format!("{}", s),
                     None => "".to_string(),
                 };
-                write!(f, "{}{}{}", id, colon, braces)
+                write!(f, "{}{}{}", id, colon, block)
             }
             Token::ProgramCounterDefinition { star, eq, value } => {
                 write!(f, "{}{}{}", star, eq, value)
             }
-            Token::Segment { tag, id, inner } => {
-                let inner = match inner {
+            Token::Segment { tag, id, block } => {
+                let block = match block {
                     Some(i) => format!("{}", i),
                     None => "".to_string(),
                 };
-                write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, inner)
+                write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, block)
             }
             Token::VariableDefinition { ty, id, eq, value } => {
                 write!(

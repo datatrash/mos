@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 pub use program_counter::*;
 pub use segment::*;
-use std::ops::Deref;
 pub use symbol_table::*;
 
 mod program_counter;
@@ -188,11 +187,11 @@ pub enum Emittable<'a> {
     /// (Name of the scope, the emittables in the scope)
     Nested(String, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
-    Segment(String, Span, Vec<Emittable<'a>>),
+    Segment(String, Span, Option<Box<Emittable<'a>>>),
     If(
         &'a Located<Expression>,
-        Vec<Emittable<'a>>,
-        Vec<Emittable<'a>>,
+        Option<Box<Emittable<'a>>>,
+        Option<Box<Emittable<'a>>>,
     ),
 }
 
@@ -265,11 +264,11 @@ impl CodegenContext {
                 for (arg, _comma) in args {
                     evaluated_args.push(self.evaluate(&arg.data, pc, error_on_failure)?);
                 }
-                match self.functions.get(&name.data.as_identifier().0) {
+                match self.functions.get(&name.data.0) {
                     Some(f) => f(evaluated_args),
                     None => Err(CodegenError::new(
                         name.span,
-                        DetailedCodegenError::UnknownFunction(name.data.as_identifier().clone()),
+                        DetailedCodegenError::UnknownFunction(name.data.clone()),
                     )),
                 }
             }
@@ -746,181 +745,169 @@ impl CodegenContext {
         }
     }
 
-    fn emit_emittables<'a>(
+    fn emit_emittable<'a>(
         &mut self,
-        emittables: Vec<Emittable<'a>>,
+        emittable: Emittable<'a>,
         error_on_failure: bool,
-    ) -> Vec<Emittable<'a>> {
-        let result = emittables
-            .into_iter()
-            .filter_map(|emittable| {
-                log::trace!("Processing emittable: {:?}", emittable);
-                let pc = self.segments.try_current().map(|seg| seg.current_pc());
-                match emittable {
-                    Emittable::Label(id) => match pc {
-                        Some(pc) => {
-                            match self.symbols.register(
-                                &id.data,
-                                Symbol::Label(pc),
-                                Some(&id.span),
-                                false,
-                            ) {
-                                Ok(_) => None,
-                                Err(e) => {
-                                    self.push_error(e);
-                                    None
-                                }
-                            }
-                        }
-                        None => Some(Emittable::Label(id)),
-                    },
-                    Emittable::SegmentDefinition(cfg) => {
-                        let start = self.evaluate_or_error(
-                            "start",
-                            &cfg,
-                            pc,
-                            error_on_failure,
-                            "Could not determine start address for segment",
-                        );
-
-                        let target_pc = self.evaluate_or_error(
-                            "pc",
-                            &cfg,
-                            pc,
-                            error_on_failure,
-                            "Could not determine target PC for segment",
-                        );
-
-                        match start {
-                            Some(start) => {
-                                let start = ProgramCounter::new(start as usize);
-                                let initial_pc = match target_pc {
-                                    Some(pc) => ProgramCounter::new(pc as usize),
-                                    None => start,
-                                };
-
-                                let name = cfg.value_as_identifier_path("name").single().0.as_str();
-                                let write = match cfg.try_value_as_identifier_path("write") {
-                                    Some(val) => bool::from_str(&val.single().0).unwrap_or(true),
-                                    None => true,
-                                };
-                                let options = SegmentOptions {
-                                    initial_pc,
-                                    write,
-                                    target_address: start,
-                                };
-                                let segment = Segment::new(name, options);
-                                self.segments.insert(name, segment);
-                                None
-                            }
-                            None => {
-                                // try again later
-                                Some(Emittable::SegmentDefinition(cfg))
-                            }
-                        }
-                    }
-                    Emittable::Single(provided_pc, token) => {
-                        let pc = match provided_pc {
-                            Some(pc) => Some(pc),
-                            None => pc,
-                        };
-                        match self.emit_single(&token, pc, error_on_failure) {
-                            Ok(result) => match result {
-                                EmitResult::TryLater(_, _) | EmitResult::TryLaterNoData => {
-                                    Some(Emittable::Single(pc, token))
-                                }
-                                EmitResult::Success(_, _) => None,
-                                EmitResult::SuccessNoData => None,
-                            },
-                            Err(e) => {
-                                self.push_error(e);
-                                None
-                            }
-                        }
-                    }
-                    Emittable::Nested(scope_name, inner) => {
-                        self.symbols.enter(&scope_name);
-                        let inner = self.emit_emittables(inner, error_on_failure);
-                        self.symbols.leave();
-                        match inner.is_empty() {
-                            true => None,
-                            false => Some(Emittable::Nested(scope_name, inner)),
-                        }
-                    }
-                    Emittable::Segment(segment_name, span, inner) => {
-                        let prev_segment = self.segments.current_segment_name();
-                        match self.segments.try_get(&segment_name) {
-                            Some(_) => {
-                                self.segments.set_current(Some(segment_name.clone()));
-                                match inner.is_empty() {
-                                    true => {
-                                        // This segment is set without an inner scope
-                                        None
-                                    }
-                                    false => {
-                                        // We have an inner scope, so reset the old segment afterwards
-                                        let inner = self.emit_emittables(inner, error_on_failure);
-                                        self.segments.set_current(prev_segment);
-                                        match inner.is_empty() {
-                                            true => None,
-                                            false => {
-                                                Some(Emittable::Segment(segment_name, span, inner))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            None => {
-                                if error_on_failure {
-                                    self.push_error(CodegenError::new(
-                                        span,
-                                        DetailedCodegenError::UnknownIdentifier(
-                                            IdentifierPath::new(&[Identifier(segment_name)]),
-                                        ),
-                                    ));
-                                    None
-                                } else {
-                                    Some(Emittable::Segment(segment_name, span, inner))
-                                }
-                            }
-                        }
-                    }
-                    Emittable::If(expr, if_, else_) => {
-                        let expr_result = self
-                            .evaluate(&expr.data, pc, error_on_failure)
-                            .map(|r| r.map(|r| r > 0));
-                        match expr_result {
-                            Ok(Some(res)) => {
-                                log::trace!("result of ifdef: {}", res);
-                                if res {
-                                    let inner = self.emit_emittables(if_, error_on_failure);
-                                    match inner.is_empty() {
-                                        true => None,
-                                        false => Some(Emittable::If(expr, inner, vec![])),
-                                    }
-                                } else {
-                                    let inner = self.emit_emittables(else_, error_on_failure);
-                                    match inner.is_empty() {
-                                        true => None,
-                                        false => Some(Emittable::If(expr, vec![], inner)),
-                                    }
-                                }
-                            }
-                            _ => {
-                                log::trace!("result of ifdef undetermined");
-                                Some(Emittable::If(expr, if_, else_))
-                            }
+    ) -> Option<Emittable<'a>> {
+        log::trace!("Processing emittable: {:?}", emittable);
+        let pc = self.segments.try_current().map(|seg| seg.current_pc());
+        match emittable {
+            Emittable::Label(id) => match pc {
+                Some(pc) => {
+                    match self
+                        .symbols
+                        .register(&id.data, Symbol::Label(pc), Some(&id.span), false)
+                    {
+                        Ok(_) => None,
+                        Err(e) => {
+                            self.push_error(e);
+                            None
                         }
                     }
                 }
-            })
-            .collect();
+                None => Some(Emittable::Label(id)),
+            },
+            Emittable::SegmentDefinition(cfg) => {
+                let start = self.evaluate_or_error(
+                    "start",
+                    &cfg,
+                    pc,
+                    error_on_failure,
+                    "Could not determine start address for segment",
+                );
 
-        for r in &result {
-            log::trace!("Result: {:?}", r);
+                let target_pc = self.evaluate_or_error(
+                    "pc",
+                    &cfg,
+                    pc,
+                    error_on_failure,
+                    "Could not determine target PC for segment",
+                );
+
+                match start {
+                    Some(start) => {
+                        let start = ProgramCounter::new(start as usize);
+                        let initial_pc = match target_pc {
+                            Some(pc) => ProgramCounter::new(pc as usize),
+                            None => start,
+                        };
+
+                        let name = cfg.value_as_identifier_path("name").single().0.as_str();
+                        let write = match cfg.try_value_as_identifier_path("write") {
+                            Some(val) => bool::from_str(&val.single().0).unwrap_or(true),
+                            None => true,
+                        };
+                        let options = SegmentOptions {
+                            initial_pc,
+                            write,
+                            target_address: start,
+                        };
+                        let segment = Segment::new(name, options);
+                        self.segments.insert(name, segment);
+                        None
+                    }
+                    None => {
+                        // try again later
+                        Some(Emittable::SegmentDefinition(cfg))
+                    }
+                }
+            }
+            Emittable::Single(provided_pc, token) => {
+                let pc = match provided_pc {
+                    Some(pc) => Some(pc),
+                    None => pc,
+                };
+                match self.emit_single(&token, pc, error_on_failure) {
+                    Ok(result) => match result {
+                        EmitResult::TryLater(_, _) | EmitResult::TryLaterNoData => {
+                            Some(Emittable::Single(pc, token))
+                        }
+                        EmitResult::Success(_, _) => None,
+                        EmitResult::SuccessNoData => None,
+                    },
+                    Err(e) => {
+                        self.push_error(e);
+                        None
+                    }
+                }
+            }
+            Emittable::Nested(scope_name, inner) => {
+                self.symbols.enter(&scope_name);
+                let inner = inner
+                    .into_iter()
+                    .filter_map(|e| self.emit_emittable(e, error_on_failure))
+                    .collect_vec();
+                self.symbols.leave();
+                match inner.is_empty() {
+                    true => None,
+                    false => Some(Emittable::Nested(scope_name, inner)),
+                }
+            }
+            Emittable::Segment(segment_name, span, inner) => {
+                let prev_segment = self.segments.current_segment_name();
+                match self.segments.try_get(&segment_name) {
+                    Some(_) => {
+                        log::trace!("Setting segment to '{:?}'", &segment_name);
+                        self.segments.set_current(Some(segment_name.clone()));
+
+                        let inner_had_contents = inner.is_some();
+                        let inner = inner
+                            .map(|i| self.emit_emittable(*i, error_on_failure))
+                            .flatten();
+                        log::trace!(
+                            "Setting segment back to '{:?}': {}",
+                            &prev_segment,
+                            inner_had_contents
+                        );
+                        if inner_had_contents {
+                            // We have an inner scope which limits the current segment, so reset to the old segment
+                            self.segments.set_current(prev_segment);
+                        }
+
+                        inner.map(|i| Emittable::Segment(segment_name, span, Some(Box::new(i))))
+                    }
+                    None => {
+                        if error_on_failure {
+                            self.push_error(CodegenError::new(
+                                span,
+                                DetailedCodegenError::UnknownIdentifier(IdentifierPath::new(&[
+                                    Identifier(segment_name),
+                                ])),
+                            ));
+                            None
+                        } else {
+                            Some(Emittable::Segment(segment_name, span, inner))
+                        }
+                    }
+                }
+            }
+            Emittable::If(expr, if_, else_) => {
+                let expr_result = self
+                    .evaluate(&expr.data, pc, error_on_failure)
+                    .map(|r| r.map(|r| r > 0));
+                match expr_result {
+                    Ok(Some(res)) => {
+                        log::trace!("result of ifdef: {}", res);
+                        if res {
+                            let inner = self.emit_emittable(*if_.unwrap(), error_on_failure);
+                            inner.map(|i| Emittable::If(expr, Some(Box::new(i)), None))
+                        } else {
+                            else_
+                                .map(|e| {
+                                    let inner = self.emit_emittable(*e, error_on_failure);
+                                    inner.map(|i| Emittable::If(expr, None, Some(Box::new(i))))
+                                })
+                                .flatten()
+                        }
+                    }
+                    _ => {
+                        log::trace!("result of ifdef undetermined");
+                        Some(Emittable::If(expr, if_, else_))
+                    }
+                }
+            }
         }
-
-        result
     }
 
     fn generate_emittables<'a>(&mut self, tokens: &'a [Token]) -> Vec<Emittable<'a>> {
@@ -934,7 +921,7 @@ impl CodegenContext {
     fn generate_emittables_for_token<'a>(&mut self, token: &'a Token) -> Vec<Emittable<'a>> {
         match &token {
             Token::Definition { id, value, .. } => {
-                let definition_type = id.data.as_identifier().0.as_str();
+                let definition_type = id.data.0.as_str();
                 let cfg = value.as_ref().expect("Found empty definition");
                 let cfg = cfg.as_config_map();
                 let cfg_span = cfg.span();
@@ -953,32 +940,27 @@ impl CodegenContext {
                     _ => panic!("Unknown definition type: {}", id),
                 }
             }
-            Token::Segment { id, inner, .. } => {
-                let segment_name = id.data.as_identifier().0.as_str();
-                let inner = inner.as_ref().map(|b| b.as_braces());
-                let inner_emittables = inner
-                    .map(|i| self.generate_emittables(i))
-                    .unwrap_or_default();
+            Token::Segment { id, block, .. } => {
+                let segment_name = id.data.0.as_str();
+                let block_emittable = match block {
+                    Some(b) => Some(Box::new(self.create_block_emittable(None, &b.inner))),
+                    None => None,
+                };
                 vec![Emittable::Segment(
                     segment_name.into(),
                     id.span,
-                    inner_emittables,
+                    block_emittable,
                 )]
             }
-            Token::Braces { inner, .. } => {
-                vec![self.create_braces_emittable(None, &inner)]
+            Token::Braces(block) => {
+                vec![self.create_block_emittable(None, &block.inner)]
             }
-            Token::Label { id, braces, .. } => {
-                match braces {
-                    Some(braces) => {
-                        // The label contains braces, so also emit the inner data
-                        let braces_emittable = match braces.deref() {
-                            Token::Braces { inner, .. } => {
-                                self.create_braces_emittable(Some(&id.data.0), &inner)
-                            }
-                            _ => panic!(),
-                        };
-
+            Token::Label { id, block, .. } => {
+                match block {
+                    Some(block) => {
+                        // The label contains a code block, so also emit the inner data
+                        let braces_emittable =
+                            self.create_block_emittable(Some(&id.data.0), &block.inner);
                         vec![Emittable::Label(id), braces_emittable]
                     }
                     None => {
@@ -990,10 +972,10 @@ impl CodegenContext {
             Token::If {
                 value, if_, else_, ..
             } => {
-                let if_ = self.generate_emittables_for_token(&if_);
+                let if_ = Some(Box::new(self.create_block_emittable(None, &if_.inner)));
                 let else_ = match else_ {
-                    Some(e) => self.generate_emittables_for_token(&e),
-                    None => vec![],
+                    Some(e) => Some(Box::new(self.create_block_emittable(None, &e.inner))),
+                    None => None,
                 };
                 vec![Emittable::If(value, if_, else_)]
             }
@@ -1023,7 +1005,7 @@ impl CodegenContext {
         Ok(())
     }
 
-    fn create_braces_emittable<'a>(
+    fn create_block_emittable<'a>(
         &mut self,
         scope_name: Option<&str>,
         ast: &'a [Token],
@@ -1067,7 +1049,10 @@ fn codegen_impl(tree: Arc<ParseTree>, options: CodegenOptions) -> CodegenResult<
     while !to_process.is_empty() && num_passes < max_passes {
         log::trace!("==== PASS ================");
         let to_process_len = to_process.len();
-        let next_to_process = ctx.emit_emittables(to_process, error_on_failure);
+        let next_to_process = to_process
+            .into_iter()
+            .filter_map(|e| ctx.emit_emittable(e, error_on_failure))
+            .collect_vec();
 
         // If we haven't processed any tokens then the tokens that are left could not be resolved.
         if next_to_process.len() == to_process_len {
@@ -1305,8 +1290,10 @@ mod tests {
     }
 
     #[test]
-    fn can_use_forward_references_to_other_segments() -> TestResult {
-        let ctx = test_codegen(
+    fn cannot_use_forward_references_to_other_segments() {
+        // segment b can access 'bar' since it is in a root scope
+        // segment a cannot access 'foo' since it is in an unnamed nested scope
+        let err = test_codegen(
             r"
                 .define segment { name = a start = $1000 }
                 .define segment { name = b start = $2000 }
@@ -1314,13 +1301,14 @@ mod tests {
                 .segment b { foo: lda bar }
                 bar: nop
                 ",
-        )?;
+        )
+        .err()
+        .unwrap();
+
         assert_eq!(
-            ctx.segments().get("a").range_data(),
-            vec![0xad, 0x00, 0x20, 0xea]
+            err.to_string(),
+            "test.asm:4:21: error: unknown identifier: foo"
         );
-        assert_eq!(ctx.segments().get("b").range_data(), vec![0xad, 0x03, 0x10]);
-        Ok(())
     }
 
     #[test]
