@@ -943,7 +943,9 @@ impl CodegenContext {
             Token::Segment { id, block, .. } => {
                 let segment_name = id.data.0.as_str();
                 let block_emittable = match block {
-                    Some(b) => Some(Box::new(self.create_block_emittable(None, &b.inner))),
+                    Some(b) => Some(Box::new(
+                        self.create_block_emittable(Some(segment_name), &b.inner),
+                    )),
                     None => None,
                 };
                 vec![Emittable::Segment(
@@ -1290,25 +1292,25 @@ mod tests {
     }
 
     #[test]
-    fn cannot_use_forward_references_to_other_segments() {
+    fn can_use_forward_references_to_other_segments() -> TestResult {
         // segment b can access 'bar' since it is in a root scope
-        // segment a cannot access 'foo' since it is in an unnamed nested scope
-        let err = test_codegen(
+        // segment a can access 'foo' as 'b.foo' since it is in a segment scope
+        let ctx = test_codegen(
             r"
                 .define segment { name = a start = $1000 }
                 .define segment { name = b start = $2000 }
-                lda foo
+                lda b.foo
                 .segment b { foo: lda bar }
                 bar: nop
                 ",
-        )
-        .err()
-        .unwrap();
+        )?;
 
         assert_eq!(
-            err.to_string(),
-            "test.asm:4:21: error: unknown identifier: foo"
+            ctx.segments().get("a").range_data(),
+            vec![0xad, 0x00, 0x20, 0xea]
         );
+        assert_eq!(ctx.segments().get("b").range_data(), vec![0xad, 0x03, 0x10]);
+        Ok(())
     }
 
     #[test]
