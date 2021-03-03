@@ -19,7 +19,7 @@ impl RequestHandler<lsp_types::request::Formatting> for FormattingRequestHandler
             Some(Analysis {
                 tree: Some(tree), ..
             }) => {
-                let new_text = format(tree, FormattingOptions::default());
+                let new_text = format(tree.clone(), FormattingOptions::default());
                 let edit = TextEdit {
                     range: lsp_types::Range {
                         start: lsp_types::Position {

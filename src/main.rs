@@ -45,11 +45,10 @@ pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::Simpl
 #[cfg(test)]
 pub fn enable_default_tracing() {
     use simple_logger::*;
-    SimpleLogger::new()
+    let _ = SimpleLogger::new()
         .with_level(log::LevelFilter::Off)
         .with_module_level("mos", log::LevelFilter::Trace)
-        .init()
-        .unwrap();
+        .init();
 }
 
 fn get_app() -> App<'static> {

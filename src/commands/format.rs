@@ -23,8 +23,8 @@ pub fn format_command(args: &ArgMatches, cfg: Option<Config>) -> MosResult<()> {
 
     for input_name in input_names {
         let source = read_to_string(input_name)?;
-        let ast = parse_or_err(input_name.as_ref(), &source)?;
-        let formatted = format(&ast, formatting_options.unwrap_or_default());
+        let tree = parse_or_err(input_name.as_ref(), &source)?;
+        let formatted = format(tree, formatting_options.unwrap_or_default());
         let formatted = formatted.replace("\n", crate::LINE_ENDING);
         let mut output_file = OpenOptions::new()
             .truncate(true)

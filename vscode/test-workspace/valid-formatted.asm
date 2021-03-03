@@ -9,6 +9,8 @@
 .const test /* test value */ = 1
 .var test2 = 5
 
+// first comment
+// second comment
 * = $1000
 {
     lda data
@@ -29,15 +31,17 @@
 }
 
 .segment default {
-    nop
+    nop /* nice*/
 }
 
 .align 8
 
+// here is some data
 data: {
     /* here it is */
     .byte 1 // hello
     .word 4
+
     nop
 }
 

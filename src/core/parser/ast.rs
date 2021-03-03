@@ -51,6 +51,14 @@ impl ParseTree {
     pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
+
+    pub fn trace(&self) {
+        log::trace!("==== ParseTree AST trace start ================================");
+        for item in &self.tokens {
+            log::trace!("{:#?}", item);
+        }
+        log::trace!("==== ParseTree AST trace end ==================================");
+    }
 }
 
 /// The state of the parser
@@ -399,6 +407,18 @@ pub enum Expression {
     },
 }
 
+impl Expression {
+    /// Grab the trivia that comes before the first item in the token (e.g. stuff that could be to the right of the previous token)
+    pub fn trivia(&self) -> Option<&Vec<Trivia>> {
+        let t = match self {
+            Expression::BinaryExpression(expr) => &expr.lhs.trivia,
+            Expression::Factor { factor, .. } => &factor.trivia,
+        };
+
+        t.as_ref().map(|t| &t.data)
+    }
+}
+
 /// User-defined variables
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum VariableType {
@@ -474,9 +494,6 @@ pub enum Token {
         id: Located<Identifier>,
         value: Option<Box<Token>>,
     },
-    /// Since during parsing the trivia that is attached to the tokens is the trivia to the left side of the token. If there is any trivia
-    /// to the right-hand side, until the end of the line, then this token is additionally emitted just to store this additional trivia.
-    EolTrivia(Located<()>),
     Eof(Located<()>),
     Error(Located<()>),
     Expression(Expression),
@@ -517,6 +534,32 @@ pub enum Token {
 }
 
 impl Token {
+    /// Grab the trivia that comes before the first item in the token (e.g. stuff that could be to the right of the previous token)
+    pub fn trivia(&self) -> Option<&Vec<Trivia>> {
+        let t = match self {
+            Token::Align { tag, .. } => &tag.trivia,
+            Token::Braces(block) => &block.lparen.trivia,
+            Token::Config(block) => &block.lparen.trivia,
+            Token::ConfigPair { key, .. } => &key.trivia,
+            Token::Data { size, .. } => &size.trivia,
+            Token::Definition { tag, .. } => &tag.trivia,
+            Token::Eof(empty) => &empty.trivia,
+            Token::Error(_) => panic!(),
+            Token::Expression(expr) => {
+                return expr.trivia();
+            }
+            Token::If { tag_if, .. } => &tag_if.trivia,
+            Token::Instruction(i) => &i.mnemonic.trivia,
+            Token::Include { tag, .. } => &tag.trivia,
+            Token::Label { id, .. } => &id.trivia,
+            Token::ProgramCounterDefinition { star, .. } => &star.trivia,
+            Token::Segment { tag, .. } => &tag.trivia,
+            Token::VariableDefinition { ty, .. } => &ty.trivia,
+        };
+
+        t.as_ref().map(|t| &t.data)
+    }
+
     pub(crate) fn as_config_map(&self) -> ConfigMap {
         match self {
             Token::Config(block) => ConfigMap::new(block.lparen.span, &block.inner),
@@ -554,6 +597,12 @@ pub struct Located<T> {
     pub span: Span,
     pub data: T,
     pub trivia: Option<Box<Located<Vec<Trivia>>>>,
+}
+
+impl<T> AsRef<Located<T>> for Located<T> {
+    fn as_ref(&self) -> &Located<T> {
+        &self
+    }
 }
 
 impl<T> Located<Located<T>> {
@@ -749,11 +798,8 @@ impl Display for Token {
                     .unwrap_or_else(|| "".to_string());
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, value)
             }
-            Token::Eof(triv) => {
+            Token::Eof(triv) | Token::Error(triv) => {
                 write!(f, "{}", format_trivia(&triv.trivia))
-            }
-            Token::EolTrivia(triv) | Token::Error(triv) => {
-                writeln!(f, "{}", format_trivia(&triv.trivia))
             }
             Token::Expression(e) => write!(f, "{}", e),
             Token::If {

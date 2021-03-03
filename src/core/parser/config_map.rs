@@ -21,7 +21,6 @@ impl<'a> ConfigMap<'a> {
             .filter_map(|pair| {
                 let kvp = match &pair {
                     Token::ConfigPair { key, value, .. } => Some((&key.data, value)),
-                    Token::EolTrivia(_) => None,
                     _ => panic!(),
                 };
 
@@ -189,11 +188,7 @@ fn kvp(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a config map
 pub fn config_map(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((
-            multiline_ws(char('{')),
-            many0(alt((kvp, end_of_line))),
-            ws(char('}')),
-        )),
+        tuple((ws(char('{')), many0(kvp), ws(char('}')))),
         move |(lparen, inner, rparen)| {
             Token::Config(Block {
                 lparen,

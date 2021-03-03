@@ -6,6 +6,8 @@ start=$2000 + 4 -%00100}
 .const   test   /* test value */   =1
 .var   test2    = 5
 
+// first comment
+// second comment
 *=$1000
   {lda data
   sta data
@@ -14,8 +16,9 @@ start=$2000 + 4 -%00100}
             .if test { sta             $d020 ,  x }    else {  nop       }
         rts
 }
-.segment default     {nop }
+.segment default     {nop /* nice*/}
   .align   8
+
   // here is some data
             data: {          /* here it is */
  .byte          1// hello
