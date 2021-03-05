@@ -72,6 +72,9 @@ pub struct State {
 
     /// Which errors did we encounter?
     pub errors: Rc<RefCell<Vec<ParseError>>>,
+
+    /// Should the next error be ignored?
+    ignore_next_error: Rc<RefCell<bool>>,
 }
 
 impl State {
@@ -83,12 +86,25 @@ impl State {
             code_map: Rc::new(RefCell::new(code_map)),
             file,
             errors: Rc::new(RefCell::new(Vec::new())),
+            ignore_next_error: Rc::new(RefCell::new(false)),
         }
+    }
+
+    /// Mark the next reported error to be ignored (since it may be redundant or something)
+    pub fn ignore_next_error(&self) {
+        log::trace!("Ignoring next error");
+        *self.ignore_next_error.borrow_mut() = true;
     }
 
     /// When there is an error during parsing we don't want to fail. Instead, we continue but log the error via this method
     pub fn report_error(&self, error: ParseError) {
-        self.errors.borrow_mut().push(error);
+        if *self.ignore_next_error.borrow() {
+            log::trace!("Ignoring error: {:?}", error);
+            *self.ignore_next_error.borrow_mut() = false;
+        } else {
+            log::trace!("Pushing error: {:?}", error);
+            self.errors.borrow_mut().push(error);
+        }
     }
 }
 
