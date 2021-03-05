@@ -828,7 +828,6 @@ pub fn parse_or_err<'a>(filename: &'a Path, source: &'a str) -> MosResult<Arc<Pa
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::enable_default_tracing;
 
     #[test]
     fn parse_instruction() {
@@ -1024,7 +1023,7 @@ mod test {
 
     #[test]
     fn parse_comments() {
-        /*check(
+        check(
             ".const test /* test value */ = 1\n.segment default {nop /* nice*/}\nfoo: {/* here it is */}// hi",
             ".CONST test /* test value */ = 1\n.SEGMENT default {NOP /* nice*/}\nfoo: {/* here it is */}// hi"
         );
@@ -1033,10 +1032,9 @@ mod test {
         check(
             ".const test /* a /* b /* c */ */ */ = 1",
             ".CONST test /* a /* b /* c */ */ */ = 1",
-        );*/
+        );
 
         // unbalanced comment
-        enable_default_tracing();
         check_err(
             ".const test /* a = 1",
             "test.asm:1:21: error: unterminated block comment",
