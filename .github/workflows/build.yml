@@ -1,6 +1,11 @@
-on: [push, pull_request]
-
 name: CI
+on:
+  push:
+    branches:
+      - '!docs'
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
 
 jobs:
   check:
