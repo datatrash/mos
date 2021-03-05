@@ -39,18 +39,15 @@ impl RequestHandler<SemanticTokensFullRequest> for FullRequest {
         params: SemanticTokensParams,
     ) -> MosResult<Option<SemanticTokensResult>> {
         match ctx.documents.get(&params.text_document.uri) {
-            Some(parsed) => match &parsed.tree {
-                Some(tree) => {
-                    let semtoks = emit_semantic_ast(tree.code_map(), tree.tokens());
-                    let data = to_deltas(semtoks);
-                    let tokens = SemanticTokens {
-                        result_id: None,
-                        data,
-                    };
-                    Ok(Some(SemanticTokensResult::Tokens(tokens)))
-                }
-                None => Ok(None),
-            },
+            Some(analysis) => {
+                let semtoks = emit_semantic_ast(analysis.tree.code_map(), analysis.tree.tokens());
+                let data = to_deltas(semtoks);
+                let tokens = SemanticTokens {
+                    result_id: None,
+                    data,
+                };
+                Ok(Some(SemanticTokensResult::Tokens(tokens)))
+            }
             None => Ok(None),
         }
     }
@@ -151,11 +148,12 @@ fn emit_expression_semantic(code_map: &CodeMap, lt: &Located<Expression>) -> Vec
     match &lt.data {
         Expression::BinaryExpression(bin) => {
             let mut lhs = emit_expression_semantic(code_map, &bin.lhs);
-            let rhs = emit_expression_semantic(code_map, &bin.lhs);
+            let rhs = emit_expression_semantic(code_map, &bin.rhs);
             lhs.extend(rhs);
             lhs
         }
         Expression::Factor { factor, .. } => match &factor.data {
+            ExpressionFactor::ExprParens { inner, .. } => emit_expression_semantic(code_map, inner),
             ExpressionFactor::Number { value, .. } => {
                 let r = SemTok::new(code_map, value.span, 2);
                 vec![r]

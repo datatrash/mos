@@ -2,7 +2,8 @@ use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::parse;
 use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
-use crate::lsp::{Analysis, LspContext, NotificationHandler};
+use crate::lsp::analysis::Analysis;
+use crate::lsp::{LspContext, NotificationHandler};
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, PublishDiagnostics,
 };
@@ -48,19 +49,16 @@ fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     let path = PathBuf::from(uri.path());
     let source = source.to_string();
 
-    let mut analysis = Analysis::new();
     let (tree, error) = parse(path.as_path(), &source);
-    analysis.tree = Some(tree.clone());
-    match error {
-        Some(e) => analysis.error = Some(e),
-        None => match codegen(tree, CodegenOptions::default()) {
-            Ok(_) => {}
-            Err(e) => {
-                analysis.error = Some(e);
-            }
+    let error = match error {
+        Some(e) => Some(e),
+        None => match codegen(tree.clone(), CodegenOptions::default()) {
+            Ok(_) => None,
+            Err(e) => Some(e),
         },
-    }
+    };
 
+    let analysis = Analysis::new(tree, error);
     ctx.documents.insert(uri.clone(), analysis);
 }
 

@@ -1,7 +1,10 @@
-use crate::core::parser::ParseTree;
-use crate::errors::{MosError, MosResult};
+use crate::errors::MosResult;
+use crate::lsp::analysis::Analysis;
 use crate::lsp::diagnostics::{DidChange, DidOpen};
+use crate::lsp::formatting::FormattingRequestHandler;
+use crate::lsp::goto::GoToDefinitionHandler;
 use crate::lsp::highlighting::FullRequest;
+use codemap::SpanLoc;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{InitializeParams, OneOf, ServerCapabilities, TextDocumentSyncKind, Url};
@@ -10,27 +13,14 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod analysis;
 mod diagnostics;
 mod formatting;
+mod goto;
 mod highlighting;
 mod traits;
 
-use crate::lsp::formatting::FormattingRequestHandler;
 pub use traits::*;
-
-pub struct Analysis {
-    tree: Option<Arc<ParseTree>>,
-    error: Option<MosError>,
-}
-
-impl Analysis {
-    fn new() -> Self {
-        Self {
-            tree: None,
-            error: None,
-        }
-    }
-}
 
 pub struct LspContext {
     connection: Arc<Connection>,
@@ -101,6 +91,7 @@ impl LspServer {
     pub fn register_handlers(&mut self) {
         self.register_request_handler(FullRequest {});
         self.register_request_handler(FormattingRequestHandler {});
+        self.register_request_handler(GoToDefinitionHandler {});
         self.register_notification_handler(DidOpen {});
         self.register_notification_handler(DidChange {});
     }
@@ -125,6 +116,7 @@ impl LspServer {
             semantic_tokens_provider: Some(highlighting::caps().into()),
             text_document_sync: Some(TextDocumentSyncKind::Full.into()),
             document_formatting_provider: Some(OneOf::Left(true)),
+            definition_provider: Some(OneOf::Left(true)),
             ..Default::default()
         };
         let server_capabilities = serde_json::to_value(&caps).unwrap();
@@ -171,5 +163,21 @@ impl LspServer {
         }
 
         Ok(())
+    }
+}
+
+fn to_lsp_location(span: SpanLoc) -> lsp_types::Location {
+    lsp_types::Location {
+        uri: Url::from_file_path(span.file.name()).unwrap(),
+        range: lsp_types::Range {
+            start: lsp_types::Position {
+                line: span.begin.line as u32,
+                character: span.begin.column as u32,
+            },
+            end: lsp_types::Position {
+                line: span.end.line as u32,
+                character: span.end.column as u32,
+            },
+        },
     }
 }

@@ -234,7 +234,7 @@ impl Display for AddressModifier {
 }
 
 /// A path of multiple identifiers, usually written as being separated by dots (e.g. `foo.bar.baz`)
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IdentifierPath(Vec<Identifier>);
 
 impl Display for IdentifierPath {

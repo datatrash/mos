@@ -508,7 +508,10 @@ impl CodegenContext {
             (MM::Txa, AM::Implied, None) => v![(0x8a, 0)],
             (MM::Tya, AM::Implied, None) => v![(0x98, 0)],
             (MM::Txs, AM::Implied, None) => v![(0x9a, 0)],
-            _ => panic!("Invalid instruction"),
+            _ => {
+                // Invalid, ignore
+                return Ok(EmitResult::SuccessNoData);
+            }
         };
 
         // For all possible opcodes, pick the one that best matches the operand's size
