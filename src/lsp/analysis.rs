@@ -5,8 +5,9 @@ use crate::core::parser::{
 };
 use crate::errors::MosError;
 use codemap::{File, Span, SpanLoc};
-use lsp_types::Position;
+use lsp_types::{Position, Url};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -14,6 +15,49 @@ pub struct Analysis {
     pub tree: Arc<ParseTree>,
     pub error: Option<MosError>,
     pub definitions: DefinitionMap,
+}
+
+pub struct AnalysisSpan(SpanLoc);
+
+impl Display for AnalysisSpan {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<SpanLoc> for AnalysisSpan {
+    fn from(sl: SpanLoc) -> Self {
+        Self(sl)
+    }
+}
+
+impl From<AnalysisSpan> for lsp_types::Location {
+    fn from(a: AnalysisSpan) -> Self {
+        let span = &a.0;
+        Self {
+            uri: Url::from_file_path(span.file.name()).unwrap(),
+            range: lsp_types::Range {
+                start: lsp_types::Position {
+                    line: span.begin.line as u32,
+                    character: span.begin.column as u32,
+                },
+                end: lsp_types::Position {
+                    line: span.end.line as u32,
+                    character: span.end.column as u32,
+                },
+            },
+        }
+    }
+}
+
+impl From<AnalysisSpan> for lsp_types::DocumentHighlight {
+    fn from(a: AnalysisSpan) -> Self {
+        let loc: lsp_types::Location = a.into();
+        Self {
+            range: loc.range,
+            kind: None,
+        }
+    }
 }
 
 pub struct DefinitionMap {
@@ -37,14 +81,13 @@ impl DefinitionMap {
         self.map.entry(path.clone()).or_insert_with(Definition::new)
     }
 
-    pub fn find(&self, pos: Position) -> Option<(&Definition, SpanLoc)> {
+    pub fn find(&self, pos: Position) -> Option<&Definition> {
         for def in self.map.values() {
             if let Some(def_location) = &def.location {
                 if self.span_contains(def_location, pos)
                     || def.usages.iter().any(|s| self.span_contains(s, pos))
                 {
-                    let loc = self.tree.code_map().look_up_span(*def_location);
-                    return Some((def, loc));
+                    return Some(def);
                 }
             }
         }
@@ -63,8 +106,8 @@ impl DefinitionMap {
 
 #[derive(Debug)]
 pub struct Definition {
-    location: Option<Span>,
-    usages: Vec<Span>,
+    pub location: Option<Span>,
+    pub usages: Vec<Span>,
 }
 
 impl Definition {
@@ -87,7 +130,11 @@ impl Analysis {
         }
     }
 
-    pub fn find(&self, pos: Position) -> Option<(&Definition, SpanLoc)> {
+    pub fn look_up_span(&self, span: Span) -> AnalysisSpan {
+        self.tree.code_map().look_up_span(span).into()
+    }
+
+    pub fn find(&self, pos: Position) -> Option<&Definition> {
         self.definitions.find(pos)
     }
 }
@@ -179,16 +226,22 @@ mod tests {
     #[test]
     fn can_find_basic_token() -> MosResult<()> {
         let analysis = analysis("lda foo\nfoo: nop");
-        let (_, loc) = analysis.find(Position::new(0, 4)).unwrap();
-        assert_eq!(loc.to_string(), "test.asm:2:1: 2:4");
+        let def = analysis.find(Position::new(0, 4)).unwrap();
+        assert_eq!(
+            analysis.look_up_span(def.location.unwrap()).to_string(),
+            "test.asm:2:1: 2:4"
+        );
         Ok(())
     }
 
     #[test]
     fn can_find_complex_token() -> MosResult<()> {
         let analysis = analysis("lda a.super.b.foo\na: {foo: nop}\nb: {foo: nop}");
-        let (_, loc) = analysis.find(Position::new(0, 4)).unwrap();
-        assert_eq!(loc.to_string(), "test.asm:3:5: 3:8");
+        let def = analysis.find(Position::new(0, 4)).unwrap();
+        assert_eq!(
+            analysis.look_up_span(def.location.unwrap()).to_string(),
+            "test.asm:3:5: 3:8"
+        );
         Ok(())
     }
 

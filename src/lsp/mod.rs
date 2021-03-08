@@ -2,9 +2,10 @@ use crate::errors::MosResult;
 use crate::lsp::analysis::Analysis;
 use crate::lsp::diagnostics::{DidChange, DidOpen};
 use crate::lsp::formatting::FormattingRequestHandler;
-use crate::lsp::goto::GoToDefinitionHandler;
-use crate::lsp::highlighting::FullRequest;
-use codemap::SpanLoc;
+use crate::lsp::references::{
+    DocumentHighlightRequestHandler, FindReferencesHandler, GoToDefinitionHandler,
+};
+use crate::lsp::semantic_highlighting::FullRequest;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{InitializeParams, OneOf, ServerCapabilities, TextDocumentSyncKind, Url};
@@ -16,8 +17,8 @@ use std::sync::Arc;
 mod analysis;
 mod diagnostics;
 mod formatting;
-mod goto;
-mod highlighting;
+mod references;
+mod semantic_highlighting;
 mod traits;
 
 pub use traits::*;
@@ -92,6 +93,8 @@ impl LspServer {
         self.register_request_handler(FullRequest {});
         self.register_request_handler(FormattingRequestHandler {});
         self.register_request_handler(GoToDefinitionHandler {});
+        self.register_request_handler(FindReferencesHandler {});
+        self.register_request_handler(DocumentHighlightRequestHandler {});
         self.register_notification_handler(DidOpen {});
         self.register_notification_handler(DidChange {});
     }
@@ -113,9 +116,11 @@ impl LspServer {
         eprintln!("Starting MOS language server");
 
         let caps = ServerCapabilities {
-            semantic_tokens_provider: Some(highlighting::caps().into()),
+            semantic_tokens_provider: Some(semantic_highlighting::caps().into()),
             text_document_sync: Some(TextDocumentSyncKind::Full.into()),
+            references_provider: Some(OneOf::Left(true)),
             document_formatting_provider: Some(OneOf::Left(true)),
+            document_highlight_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
             ..Default::default()
         };
@@ -163,21 +168,5 @@ impl LspServer {
         }
 
         Ok(())
-    }
-}
-
-fn to_lsp_location(span: SpanLoc) -> lsp_types::Location {
-    lsp_types::Location {
-        uri: Url::from_file_path(span.file.name()).unwrap(),
-        range: lsp_types::Range {
-            start: lsp_types::Position {
-                line: span.begin.line as u32,
-                character: span.begin.column as u32,
-            },
-            end: lsp_types::Position {
-                line: span.end.line as u32,
-                character: span.end.column as u32,
-            },
-        },
     }
 }
