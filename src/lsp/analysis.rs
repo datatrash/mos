@@ -160,7 +160,7 @@ impl<'a> DefinitionGenerator<'a> {
 
     fn gen_def_token(&mut self, token: &Token) {
         match token {
-            Token::Braces(block) | Token::Config(block) => self.gen_def_tokens(&block.inner),
+            Token::Braces { block, .. } | Token::Config(block) => self.gen_def_tokens(&block.inner),
             Token::If { value, .. } => {
                 self.gen_def_expression(value);
             }

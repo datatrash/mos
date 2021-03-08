@@ -75,6 +75,9 @@ pub struct State {
 
     /// Should the next error be ignored?
     ignore_next_error: Rc<RefCell<bool>>,
+
+    /// Current anonymous scope index
+    anonymous_scope_index: Rc<RefCell<usize>>,
 }
 
 impl State {
@@ -87,6 +90,7 @@ impl State {
             file,
             errors: Rc::new(RefCell::new(Vec::new())),
             ignore_next_error: Rc::new(RefCell::new(false)),
+            anonymous_scope_index: Rc::new(RefCell::new(0)),
         }
     }
 
@@ -105,6 +109,12 @@ impl State {
             log::trace!("Pushing error: {:?}", error);
             self.errors.borrow_mut().push(error);
         }
+    }
+
+    pub fn new_anonymous_scope(&self) -> Identifier {
+        let mut index = self.anonymous_scope_index.borrow_mut();
+        *index += 1;
+        Identifier::anonymous(*index)
     }
 }
 
@@ -439,10 +449,13 @@ pub enum Token {
         tag: Located<String>,
         value: Located<Expression>,
     },
-    Braces(Block),
+    Braces {
+        block: Block,
+        scope: Identifier,
+    },
     Config(Block),
     ConfigPair {
-        key: Located<Identifier>,
+        key: Located<String>,
         eq: Located<char>,
         value: Box<Located<Token>>,
     },
@@ -462,8 +475,10 @@ pub enum Token {
         tag_if: Located<String>,
         value: Located<Expression>,
         if_: Block,
+        if_scope: Box<Identifier>,
         tag_else: Option<Located<String>>,
         else_: Option<Block>,
+        else_scope: Box<Identifier>,
     },
     Include {
         tag: Located<String>,
@@ -499,7 +514,7 @@ impl Token {
     pub fn trivia(&self) -> Option<&Vec<Trivia>> {
         let t = match self {
             Token::Align { tag, .. } => &tag.trivia,
-            Token::Braces(block) => &block.lparen.trivia,
+            Token::Braces { block, .. } => &block.lparen.trivia,
             Token::Config(block) => &block.lparen.trivia,
             Token::ConfigPair { key, .. } => &key.trivia,
             Token::Data { size, .. } => &size.trivia,
@@ -738,7 +753,7 @@ impl Display for Token {
             Token::Align { tag, value } => {
                 write!(f, "{}{}", format!("{}", tag).to_uppercase(), value)
             }
-            Token::Braces(block) | Token::Config(block) => {
+            Token::Braces { block, .. } | Token::Config(block) => {
                 write!(f, "{}", block)
             }
             Token::ConfigPair { key, eq, value } => {
@@ -769,6 +784,8 @@ impl Display for Token {
                 if_,
                 tag_else,
                 else_,
+                if_scope: _,
+                else_scope: _,
             } => {
                 let else_ = match (tag_else, else_) {
                     (Some(tag), Some(e)) => format!("{}{}", format!("{}", tag).to_uppercase(), e),

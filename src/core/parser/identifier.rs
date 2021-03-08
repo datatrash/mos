@@ -3,9 +3,21 @@ use std::fmt::Display;
 
 /// A Rust-style identifier that can be used to, well, identify things
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Identifier(pub String);
+pub struct Identifier(String);
 
 impl Identifier {
+    pub fn new<S: Into<String>>(s: S) -> Self {
+        Self(s.into())
+    }
+
+    pub fn anonymous(index: usize) -> Self {
+        Identifier::new(format!("$$scope_{}", index))
+    }
+
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+
     fn is_super(&self) -> bool {
         self.0.to_lowercase().eq("super")
     }
@@ -20,6 +32,12 @@ impl From<&str> for Identifier {
 impl<'a> From<&'a Identifier> for &'a str {
     fn from(id: &'a Identifier) -> Self {
         id.0.as_str()
+    }
+}
+
+impl<'a> From<&'a Identifier> for Identifier {
+    fn from(id: &'a Identifier) -> Self {
+        id.clone()
     }
 }
 
@@ -79,6 +97,10 @@ impl IdentifierPath {
 
     pub fn empty() -> Self {
         Self(vec![])
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 
     pub fn push(&mut self, id: &Identifier) {

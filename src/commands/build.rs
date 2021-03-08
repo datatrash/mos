@@ -7,7 +7,7 @@ use fs_err as fs;
 use itertools::Itertools;
 
 use crate::core::codegen::{codegen, CodegenOptions};
-use crate::core::io::SegmentMerger;
+use crate::core::io::{to_vice_symbols, SegmentMerger};
 use crate::core::parser;
 use crate::errors::{MosError, MosResult};
 
@@ -104,12 +104,7 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             .contains(&SymbolType::Vice)
         {
             let mut out = fs::File::create(target_dir.join(symbol_path))?;
-            out.write_all(
-                generated_code
-                    .symbol_table()
-                    .to_symbols(SymbolType::Vice)
-                    .as_bytes(),
-            )?;
+            out.write_all(to_vice_symbols(generated_code.symbol_table()).as_bytes())?;
         }
     }
 

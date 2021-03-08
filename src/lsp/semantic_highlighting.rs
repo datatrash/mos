@@ -108,7 +108,9 @@ fn emit_semantic_ast(code_map: &CodeMap, ast: &[Token]) -> Vec<SemTok> {
 
 fn emit_semantic(code_map: &CodeMap, token: &Token) -> Vec<SemTok> {
     match &token {
-        Token::Braces(block) | Token::Config(block) => emit_semantic_ast(code_map, &block.inner),
+        Token::Braces { block, .. } | Token::Config(block) => {
+            emit_semantic_ast(code_map, &block.inner)
+        }
         Token::Label { id, block, .. } => {
             let mut r = vec![];
             r.push(SemTok::new(code_map, id.span, 3));

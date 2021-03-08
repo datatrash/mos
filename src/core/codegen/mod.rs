@@ -1,5 +1,4 @@
 use crate::core::codegen::segment::{require_segment_options_fields, SegmentOptions};
-use crate::core::codegen::symbol_table::{Symbol, SymbolTable};
 use crate::errors::{MosError, MosResult};
 use crate::parser::*;
 use codemap::Span;
@@ -57,15 +56,13 @@ pub enum DetailedCodegenError {
     #[error("branch too far")]
     BranchTooFar(),
     #[error("cannot redefine symbol: {0}")]
-    SymbolRedefinition(Identifier),
+    SymbolRedefinition(IdentifierPath),
     #[error("operand size mismatch")]
     OperandSizeMismatch(),
     #[error("invalid definition: {0}: {1}")]
     InvalidDefinition(Identifier, String),
-    #[error("'super' is only allowed at the start of a path: {0}")]
-    SuperNotAllowed(String),
     #[error("segment '{0}' is out of range: beyond ${1:04X}")]
-    SegmentOutOfRange(String, ProgramCounter),
+    SegmentOutOfRange(Identifier, ProgramCounter),
 }
 
 impl CodegenError {
@@ -104,8 +101,8 @@ impl Default for CodegenOptions {
 }
 
 pub struct SegmentMap {
-    segments: HashMap<String, Segment>,
-    current: Option<String>,
+    segments: HashMap<Identifier, Segment>,
+    current: Option<Identifier>,
 }
 
 impl SegmentMap {
@@ -116,7 +113,7 @@ impl SegmentMap {
         }
     }
 
-    fn insert<N: Into<String>>(&mut self, name: N, segment: Segment) {
+    fn insert<N: Into<Identifier>>(&mut self, name: N, segment: Segment) {
         let name = name.into();
         self.segments.insert(name.clone(), segment);
         if self.current.is_none() {
@@ -124,17 +121,18 @@ impl SegmentMap {
         }
     }
 
-    fn try_get(&self, name: &str) -> Option<&Segment> {
-        self.segments.get(name)
+    fn try_get<I: Into<Identifier>>(&self, name: I) -> Option<&Segment> {
+        self.segments.get(&name.into())
     }
 
-    pub fn get(&self, name: &str) -> &Segment {
+    pub fn get<I: Into<Identifier>>(&self, name: I) -> &Segment {
+        let name = name.into();
         self.segments
-            .get(name)
+            .get(&name)
             .unwrap_or_else(|| panic!("Segment not found: {}", name))
     }
 
-    pub fn keys(&self) -> Vec<&String> {
+    pub fn keys(&self) -> Vec<&Identifier> {
         self.segments.keys().collect()
     }
 
@@ -151,12 +149,12 @@ impl SegmentMap {
         self.current.as_ref().map(|n| self.get(n))
     }
 
-    pub(crate) fn current_segment_name(&self) -> Option<String> {
-        self.current.as_ref().cloned()
+    pub(crate) fn current_segment_name(&self) -> Option<Identifier> {
+        self.current.clone()
     }
 
-    pub(crate) fn set_current(&mut self, name: Option<String>) {
-        self.current = name;
+    pub(crate) fn set_current<I: Into<Option<Identifier>>>(&mut self, name: I) {
+        self.current = name.into();
     }
 
     pub fn current_mut(&mut self) -> &mut Segment {
@@ -185,9 +183,9 @@ pub enum Emittable<'a> {
     Single(Option<ProgramCounter>, &'a Token),
     Label(&'a Located<Identifier>),
     /// (Name of the scope, the emittables in the scope)
-    Nested(String, Vec<Emittable<'a>>),
+    Nested(&'a Identifier, Vec<Emittable<'a>>),
     SegmentDefinition(ConfigMap<'a>),
-    Segment(String, Span, Option<Box<Emittable<'a>>>),
+    Segment(&'a Identifier, Span, Option<Box<Emittable<'a>>>),
     If(
         &'a Located<Expression>,
         Option<Box<Emittable<'a>>>,
@@ -200,7 +198,7 @@ pub struct CodegenContext {
     options: CodegenOptions,
     segments: SegmentMap,
     symbols: SymbolTable,
-    functions: HashMap<String, RegisteredFunction>,
+    functions: HashMap<Identifier, RegisteredFunction>,
     errors: Vec<CodegenError>,
 }
 
@@ -244,7 +242,7 @@ impl CodegenContext {
             ExpressionFactor::Number { value, .. } => Ok(Some(value.data.value())),
             ExpressionFactor::CurrentProgramCounter(_) => Ok(pc.map(|p| p.as_i64())),
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                let symbol_value = self.symbols.value(&lt.span, &path.data.to_str_vec())?;
+                let symbol_value = self.symbols.value(&path.data)?;
 
                 match (symbol_value, modifier, error_on_failure) {
                     (Some(val), None, _) => Ok(Some(val)),
@@ -264,7 +262,7 @@ impl CodegenContext {
                 for (arg, _comma) in args {
                     evaluated_args.push(self.evaluate(&arg.data, pc, error_on_failure)?);
                 }
-                match self.functions.get(&name.data.0) {
+                match self.functions.get(&name.data) {
                     Some(f) => f(evaluated_args),
                     None => Err(CodegenError::new(
                         name.span,
@@ -796,9 +794,9 @@ impl CodegenContext {
                             None => start,
                         };
 
-                        let name = cfg.value_as_identifier_path("name").single().0.as_str();
+                        let name = cfg.value_as_identifier_path("name").single();
                         let write = match cfg.try_value_as_identifier_path("write") {
-                            Some(val) => bool::from_str(&val.single().0).unwrap_or(true),
+                            Some(val) => bool::from_str(&val.single().value()).unwrap_or(true),
                             None => true,
                         };
                         let options = SegmentOptions {
@@ -836,7 +834,7 @@ impl CodegenContext {
                 }
             }
             Emittable::Nested(scope_name, inner) => {
-                self.symbols.enter(&scope_name);
+                self.symbols.enter(scope_name);
                 let inner = inner
                     .into_iter()
                     .filter_map(|e| self.emit_emittable(e, error_on_failure))
@@ -849,7 +847,7 @@ impl CodegenContext {
             }
             Emittable::Segment(segment_name, span, inner) => {
                 let prev_segment = self.segments.current_segment_name();
-                match self.segments.try_get(&segment_name) {
+                match self.segments.try_get(segment_name) {
                     Some(_) => {
                         log::trace!("Setting segment to '{:?}'", &segment_name);
                         self.segments.set_current(Some(segment_name.clone()));
@@ -874,9 +872,7 @@ impl CodegenContext {
                         if error_on_failure {
                             self.push_error(CodegenError::new(
                                 span,
-                                DetailedCodegenError::UnknownIdentifier(IdentifierPath::new(&[
-                                    Identifier(segment_name),
-                                ])),
+                                DetailedCodegenError::UnknownIdentifier(segment_name.into()),
                             ));
                             None
                         } else {
@@ -924,7 +920,7 @@ impl CodegenContext {
     fn generate_emittables_for_token<'a>(&mut self, token: &'a Token) -> Vec<Emittable<'a>> {
         match &token {
             Token::Definition { id, value, .. } => {
-                let definition_type = id.data.0.as_str();
+                let definition_type = id.data.value();
                 let cfg = value.as_ref().expect("Found empty definition");
                 let cfg = cfg.as_config_map();
                 let cfg_span = cfg.span();
@@ -944,28 +940,20 @@ impl CodegenContext {
                 }
             }
             Token::Segment { id, block, .. } => {
-                let segment_name = id.data.0.as_str();
                 let block_emittable = match block {
-                    Some(b) => Some(Box::new(
-                        self.create_block_emittable(Some(segment_name), &b.inner),
-                    )),
+                    Some(b) => Some(Box::new(self.create_block_emittable(&id.data, &b.inner))),
                     None => None,
                 };
-                vec![Emittable::Segment(
-                    segment_name.into(),
-                    id.span,
-                    block_emittable,
-                )]
+                vec![Emittable::Segment(&id.data, id.span, block_emittable)]
             }
-            Token::Braces(block) => {
-                vec![self.create_block_emittable(None, &block.inner)]
+            Token::Braces { block, scope } => {
+                vec![self.create_block_emittable(&scope, &block.inner)]
             }
             Token::Label { id, block, .. } => {
                 match block {
                     Some(block) => {
                         // The label contains a code block, so also emit the inner data
-                        let braces_emittable =
-                            self.create_block_emittable(Some(&id.data.0), &block.inner);
+                        let braces_emittable = self.create_block_emittable(&id.data, &block.inner);
                         vec![Emittable::Label(id), braces_emittable]
                     }
                     None => {
@@ -975,11 +963,16 @@ impl CodegenContext {
                 }
             }
             Token::If {
-                value, if_, else_, ..
+                value,
+                if_,
+                else_,
+                if_scope,
+                else_scope,
+                ..
             } => {
-                let if_ = Some(Box::new(self.create_block_emittable(None, &if_.inner)));
+                let if_ = Some(Box::new(self.create_block_emittable(if_scope, &if_.inner)));
                 let else_ = match else_ {
-                    Some(e) => Some(Box::new(self.create_block_emittable(None, &e.inner))),
+                    Some(e) => Some(Box::new(self.create_block_emittable(else_scope, &e.inner))),
                     None => None,
                 };
                 vec![Emittable::If(value, if_, else_)]
@@ -991,16 +984,17 @@ impl CodegenContext {
     fn after_pass(&mut self) -> CodegenResult<()> {
         // For every segment that we have, register appropriate symbols
         for segment_name in self.segments.keys() {
-            let segment = self.segments.get(&segment_name);
+            let segment = self.segments.get(segment_name);
             if let Some(target_range) = segment.target_range() {
-                self.symbols.register_path(
-                    &["segments", segment_name, "start"],
+                let segments_path: IdentifierPath = "segments".into();
+                self.symbols.register(
+                    segments_path.join(segment_name).join("start"),
                     Symbol::System(target_range.start as i64),
                     None,
                     true,
                 )?;
-                self.symbols.register_path(
-                    &["segments", segment_name, "end"],
+                self.symbols.register(
+                    segments_path.join(segment_name).join("end"),
                     Symbol::System(target_range.end as i64),
                     None,
                     true,
@@ -1012,11 +1006,10 @@ impl CodegenContext {
 
     fn create_block_emittable<'a>(
         &mut self,
-        scope_name: Option<&str>,
+        scope_name: &'a Identifier,
         ast: &'a [Token],
     ) -> Emittable<'a> {
-        let scope_name = self.symbols.add_child_scope(scope_name);
-        self.symbols.enter(&scope_name);
+        self.symbols.enter(scope_name.clone());
         let e = Emittable::Nested(scope_name, self.generate_emittables(ast));
         self.symbols.leave();
         e

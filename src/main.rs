@@ -24,6 +24,9 @@ mod errors;
 mod formatting;
 /// Language Server Protocol implementation
 mod lsp;
+/// Testing support
+#[cfg(test)]
+mod testing;
 
 #[cfg(windows)]
 /// A platform-specific newline.
@@ -31,25 +34,6 @@ pub const LINE_ENDING: &str = "\r\n";
 #[cfg(not(windows))]
 /// A platform-specific newline
 pub const LINE_ENDING: &str = "\n";
-
-#[cfg(test)]
-pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::SimpleLogger>(
-    customizer: F,
-) {
-    use simple_logger::*;
-    let logger = SimpleLogger::new().with_level(log::LevelFilter::Off);
-    let logger = customizer(logger);
-    logger.init().unwrap();
-}
-
-#[cfg(test)]
-pub fn enable_default_tracing() {
-    use simple_logger::*;
-    let _ = SimpleLogger::new()
-        .with_level(log::LevelFilter::Off)
-        .with_module_level("mos", log::LevelFilter::Trace)
-        .init();
-}
 
 fn get_app() -> App<'static> {
     App::new("mos")

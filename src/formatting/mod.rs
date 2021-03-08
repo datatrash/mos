@@ -244,10 +244,10 @@ impl CodeFormatter {
     fn format_token(&mut self, token: &Token) -> Fmt {
         match token {
             Token::Align { tag, value } => Fmt::new().push(&tag.data).spc().fmt(self, value),
-            Token::Braces(block) => Fmt::new().fmt(self, block),
+            Token::Braces { block, .. } => Fmt::new().fmt(self, block),
             Token::Config(block) => Fmt::new().fmt(self, block),
             Token::ConfigPair { key, eq, value } => Fmt::new()
-                .push(&key.data.0)
+                .push(&key.data)
                 .spc()
                 .fmt(self, eq)
                 .spc()
@@ -271,6 +271,8 @@ impl CodeFormatter {
                 if_,
                 tag_else,
                 else_,
+                if_scope: _,
+                else_scope: _,
             } => Fmt::new()
                 .push(&tag_if.data)
                 .spc()

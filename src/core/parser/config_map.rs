@@ -25,7 +25,7 @@ impl<'a> ConfigMap<'a> {
                 };
 
                 kvp.map(|(k, v)| {
-                    let k = k.clone().0;
+                    let k = k.clone();
                     (k, &v.data)
                 })
             })
@@ -179,6 +179,7 @@ fn kvp(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((ws(identifier_name), ws(char('=')), ws(value))),
         move |(key, eq, value)| {
+            let key = key.map(|k| k.value().to_string());
             let value = Box::new(value);
             Token::ConfigPair { key, eq, value }
         },

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use itertools::Itertools;
 
 use crate::core::codegen::Segment;
+use crate::core::parser::Identifier;
 use crate::errors::{MosError, MosResult};
 
 /// A segment of data that will be emitted to an output file.
@@ -16,7 +17,7 @@ pub struct TargetSegment<'a> {
     /// Which of the data is actually valid
     range: Option<Range<usize>>,
     /// Which segments are the source of the data in this target segment?
-    sources: HashMap<&'a str, &'a Segment>,
+    sources: HashMap<&'a Identifier, &'a Segment>,
 }
 
 impl<'a> TargetSegment<'a> {
@@ -31,7 +32,7 @@ impl<'a> TargetSegment<'a> {
         }
     }
 
-    fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) {
+    fn merge(&mut self, segment_name: &'a Identifier, segment: &'a Segment) {
         let target_range = segment.target_range().unwrap();
         self.sources.insert(segment_name, segment);
         self.data[target_range.clone()].copy_from_slice(segment.range_data());
@@ -57,7 +58,10 @@ impl<'a> TargetSegment<'a> {
     }
 
     #[allow(clippy::suspicious_operation_groupings)]
-    fn overlaps_with_sources(&self, new_range: &Range<usize>) -> Vec<(&&'a str, &&'a Segment)> {
+    fn overlaps_with_sources(
+        &self,
+        new_range: &Range<usize>,
+    ) -> Vec<(&'a Identifier, &'a Segment)> {
         self.sources
             .iter()
             .filter_map(|(segment_name, segment)| {
@@ -65,7 +69,7 @@ impl<'a> TargetSegment<'a> {
                 if (new_range.start >= sr.start && new_range.start < sr.end)
                     || (new_range.end > sr.start && new_range.end <= sr.end)
                 {
-                    Some((segment_name, segment))
+                    Some((*segment_name, *segment))
                 } else {
                     None
                 }
@@ -107,7 +111,7 @@ impl<'a> SegmentMerger<'a> {
     }
 
     /// Merge a segment into the existing merged segments, taking care to see it doesn't overlap with already present segments
-    pub fn merge(&mut self, segment_name: &'a str, segment: &'a Segment) -> MosResult<()> {
+    pub fn merge(&mut self, segment_name: &'a Identifier, segment: &'a Segment) -> MosResult<()> {
         if let Some(seg_range) = segment.target_range() {
             let target_name = &self.default_target;
             let target = match self.targets.entry(target_name.clone()) {

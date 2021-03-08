@@ -221,7 +221,7 @@ fn identifier_name(input: LocatedSpan) -> IResult<Identifier> {
             alt((alpha1, tag("_"))),
             many0(alt((alphanumeric1, tag("_")))),
         )),
-        move |id: LocatedSpan| Identifier(id.fragment().to_string()),
+        move |id: LocatedSpan| Identifier::new(id.fragment().to_string()),
     )(input)
 }
 
@@ -340,7 +340,8 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
 
 /// Tries to parse a bare block
 fn braces(input: LocatedSpan) -> IResult<Token> {
-    map(block, Token::Braces)(input)
+    let scope = input.extra.new_anonymous_scope();
+    map_once(block, move |block| Token::Braces { block, scope })(input)
 }
 
 /// Tries to parse a 6502 instruction consisting of a mnemonic and optionally an operand (e.g. `LDA #123`)
@@ -506,6 +507,8 @@ fn segment(input: LocatedSpan) -> IResult<Token> {
 
 /// Tries to parse an if/else statement
 fn if_(input: LocatedSpan) -> IResult<Token> {
+    let if_scope = Box::new(input.extra.new_anonymous_scope());
+    let else_scope = Box::new(input.extra.new_anonymous_scope());
     map_once(
         tuple((
             ws(tag_no_case(".if")),
@@ -525,8 +528,10 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
                 tag_if,
                 value,
                 if_,
+                if_scope,
                 tag_else,
                 else_,
+                else_scope,
             }
         },
     )(input)

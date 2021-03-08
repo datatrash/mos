@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::core::codegen::{CodegenError, CodegenResult, DetailedCodegenError, ProgramCounter};
-use crate::core::parser::{ConfigMap, ConfigMapValidatorBuilder, ParseTree};
+use crate::core::parser::{ConfigMap, ConfigMapValidatorBuilder, Identifier, ParseTree};
 use crate::errors::{MosError, MosResult};
 use codemap::Span;
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub fn require_segment_options_fields(
 }
 
 pub struct Segment {
-    name: String,
+    name: Identifier,
     data: [u8; 65536],
     range: Option<Range<usize>>,
     pc: usize,
@@ -55,7 +55,7 @@ impl Default for SegmentOptions {
 }
 
 impl Segment {
-    pub(crate) fn new<N: Into<String>>(name: N, options: SegmentOptions) -> Self {
+    pub(crate) fn new<N: Into<Identifier>>(name: N, options: SegmentOptions) -> Self {
         Self {
             name: name.into(),
             data: [0; 65536],
