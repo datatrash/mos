@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::errors::{MosError, MosResult};
 use codemap::Span;
 use itertools::Itertools;
@@ -26,6 +25,9 @@ pub mod config_map;
 pub mod identifier;
 /// Mnemonics are the instructions the 6502 supports.
 pub mod mnemonic;
+/// Testing support
+#[cfg(test)]
+mod testing;
 
 /// An error generated during parsing
 #[derive(Debug)]
@@ -810,8 +812,7 @@ pub fn parse<'a>(filename: &'a Path, source: &'a str) -> (Arc<ParseTree>, Option
     let (_, tokens) = all_consuming(source_file)(input).expect("parser cannot fail");
 
     let code_map = Rc::try_unwrap(code_map).ok().unwrap().into_inner();
-    let source_root = filename.parent().unwrap();
-    let tree = Arc::new(ParseTree::new(code_map, source_root, tokens));
+    let tree = Arc::new(ParseTree::new(code_map, tokens));
 
     let errors = Rc::try_unwrap(errors).ok().unwrap().into_inner();
     if errors.is_empty() {

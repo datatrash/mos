@@ -7,8 +7,7 @@ pub fn lsp_app() -> App<'static> {
 }
 
 pub fn lsp_command(_args: &ArgMatches) -> MosResult<()> {
-    let mut ctx = LspServer::new();
-    ctx.register_handlers();
+    let ctx = LspServer::new();
     ctx.start()?;
 
     Ok(())

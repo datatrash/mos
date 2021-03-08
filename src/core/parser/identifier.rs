@@ -118,10 +118,6 @@ impl IdentifierPath {
         IdentifierPath(p)
     }
 
-    pub fn to_str_vec(&self) -> Vec<&str> {
-        self.0.iter().map(|i| i.0.as_str()).collect()
-    }
-
     pub fn len(&self) -> usize {
         self.0.len()
     }

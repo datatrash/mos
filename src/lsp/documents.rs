@@ -2,54 +2,44 @@ use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::parser::parse;
 use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
-use crate::lsp::analysis::Analysis;
+use crate::lsp::analysis::{from_file_uri, Analysis};
 use crate::lsp::{LspContext, NotificationHandler};
-use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, PublishDiagnostics,
-};
+use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, PublishDiagnostics};
 use lsp_types::{
-    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    Position, PublishDiagnosticsParams, Range, Url,
+    Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position,
+    PublishDiagnosticsParams, Range, Url,
 };
-use std::path::PathBuf;
+use std::path::Path;
 
-pub struct DidOpen {}
-pub struct DidChange {}
-pub struct DidClose {}
+pub struct DidOpenTextDocumentHandler {}
+pub struct DidChangeTextDocumentHandler {}
 
-impl_notification_handler!(DidOpen);
-impl_notification_handler!(DidChange);
-impl_notification_handler!(DidClose);
+impl_notification_handler!(DidOpenTextDocumentHandler);
+impl_notification_handler!(DidChangeTextDocumentHandler);
 
-impl NotificationHandler<DidOpenTextDocument> for DidOpen {
+impl NotificationHandler<DidOpenTextDocument> for DidOpenTextDocumentHandler {
     fn handle(&self, ctx: &mut LspContext, params: DidOpenTextDocumentParams) -> MosResult<()> {
-        insert_parsed_document(ctx, &params.text_document.uri, &params.text_document.text);
+        perform_analysis(ctx, &params.text_document.uri, &params.text_document.text);
         publish_diagnostics(ctx, &params.text_document.uri)?;
         Ok(())
     }
 }
 
-impl NotificationHandler<DidChangeTextDocument> for DidChange {
+impl NotificationHandler<DidChangeTextDocument> for DidChangeTextDocumentHandler {
     fn handle(&self, ctx: &mut LspContext, params: DidChangeTextDocumentParams) -> MosResult<()> {
         let text_changes = params.content_changes.first().unwrap();
-        insert_parsed_document(ctx, &params.text_document.uri, &text_changes.text);
+        perform_analysis(ctx, &params.text_document.uri, &text_changes.text);
         publish_diagnostics(ctx, &params.text_document.uri)?;
         Ok(())
     }
 }
 
-impl NotificationHandler<DidCloseTextDocument> for DidClose {
-    fn handle(&self, ctx: &mut LspContext, params: DidCloseTextDocumentParams) -> MosResult<()> {
-        ctx.documents.remove(&params.text_document.uri);
-        Ok(())
-    }
-}
-
-fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
-    let path = PathBuf::from(uri.path());
+fn perform_analysis(ctx: &mut LspContext, uri: &Url, source: &str) {
+    let path = Path::new(from_file_uri(uri));
+    log::trace!("Performing analysis, caused by: {}", path.to_str().unwrap());
     let source = source.to_string();
 
-    let (tree, error) = parse(path.as_path(), &source);
+    let (tree, error) = parse(path, &source);
     let error = match error {
         Some(e) => Some(e),
         None => match codegen(tree.clone(), CodegenOptions::default()) {
@@ -58,15 +48,15 @@ fn insert_parsed_document(ctx: &mut LspContext, uri: &Url, source: &str) {
         },
     };
 
-    let analysis = Analysis::new(tree, error);
-    ctx.documents.insert(uri.clone(), analysis);
+    ctx.analysis = Some(Analysis::new(tree, error));
 }
 
 fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
-    let ast = ctx.documents.get(uri).unwrap();
+    let analysis = ctx.analysis.as_ref().unwrap();
     let params = PublishDiagnosticsParams::new(
         uri.clone(),
-        ast.error
+        analysis
+            .error
             .as_ref()
             .map(|e| to_diagnostics(e))
             .unwrap_or_default(),
@@ -97,7 +87,7 @@ fn to_diagnostics(error: &MosError) -> Vec<Diagnostic> {
         }
         MosError::Multiple(errors) => errors.iter().map(to_diagnostics).flatten().collect(),
         _ => {
-            eprintln!("Unknown parsing error: {:?}", error);
+            log::error!("Unknown parsing error: {:?}", error);
             vec![]
         }
     }

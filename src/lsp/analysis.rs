@@ -1,14 +1,11 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
 use crate::core::parser::{
-    Expression, ExpressionFactor, Identifier, IdentifierPath, Located, Operand, ParseTree, Token,
+    Expression, ExpressionFactor, IdentifierPath, Located, ParseTree, Token,
 };
 use crate::errors::MosError;
 use codemap::{File, Span, SpanLoc};
 use lsp_types::{Position, Url};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::ops::Deref;
 use std::sync::Arc;
 
 pub struct Analysis {
@@ -17,7 +14,36 @@ pub struct Analysis {
     pub definitions: DefinitionMap,
 }
 
+#[derive(Clone)]
 pub struct AnalysisSpan(SpanLoc);
+
+impl AnalysisSpan {
+    pub fn file(&self) -> Arc<File> {
+        self.0.file.clone()
+    }
+
+    pub fn uri(&self) -> Url {
+        to_file_uri(self.0.file.name())
+    }
+}
+
+pub fn to_file_uri(file: &str) -> Url {
+    let file = if file.starts_with('/') {
+        file.to_string()
+    } else {
+        format!("/{}", file)
+    };
+    Url::parse(&format!("file://{}", file)).unwrap()
+}
+
+pub fn from_file_uri(uri: &Url) -> &str {
+    let uri = uri.path();
+    if uri.starts_with('/') {
+        uri.split_at(1).1
+    } else {
+        uri
+    }
+}
 
 impl Display for AnalysisSpan {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
@@ -33,18 +59,24 @@ impl From<SpanLoc> for AnalysisSpan {
 
 impl From<AnalysisSpan> for lsp_types::Location {
     fn from(a: AnalysisSpan) -> Self {
+        Self {
+            uri: a.uri(),
+            range: a.into(),
+        }
+    }
+}
+
+impl From<AnalysisSpan> for lsp_types::Range {
+    fn from(a: AnalysisSpan) -> Self {
         let span = &a.0;
         Self {
-            uri: Url::from_file_path(span.file.name()).unwrap(),
-            range: lsp_types::Range {
-                start: lsp_types::Position {
-                    line: span.begin.line as u32,
-                    character: span.begin.column as u32,
-                },
-                end: lsp_types::Position {
-                    line: span.end.line as u32,
-                    character: span.end.column as u32,
-                },
+            start: lsp_types::Position {
+                line: span.begin.line as u32,
+                character: span.begin.column as u32,
+            },
+            end: lsp_types::Position {
+                line: span.end.line as u32,
+                character: span.end.column as u32,
             },
         }
     }
@@ -81,11 +113,11 @@ impl DefinitionMap {
         self.map.entry(path.clone()).or_insert_with(Definition::new)
     }
 
-    pub fn find(&self, pos: Position) -> Option<&Definition> {
+    pub fn find(&self, file: &str, pos: Position) -> Option<&Definition> {
         for def in self.map.values() {
             if let Some(def_location) = &def.location {
-                if self.span_contains(def_location, pos)
-                    || def.usages.iter().any(|s| self.span_contains(s, pos))
+                if self.span_contains(file, def_location, pos)
+                    || def.usages.iter().any(|s| self.span_contains(file, s, pos))
                 {
                     return Some(def);
                 }
@@ -95,9 +127,10 @@ impl DefinitionMap {
         None
     }
 
-    fn span_contains(&self, span: &Span, pos: Position) -> bool {
+    fn span_contains(&self, file: &str, span: &Span, pos: Position) -> bool {
         let loc = self.tree.code_map().look_up_span(*span);
-        pos.line >= loc.begin.line as u32
+        loc.file.name() == file
+            && pos.line >= loc.begin.line as u32
             && pos.line <= loc.end.line as u32
             && pos.character >= loc.begin.column as u32
             && pos.character <= loc.end.column as u32
@@ -117,6 +150,12 @@ impl Definition {
             usages: vec![],
         }
     }
+
+    pub fn definition_and_usages(&self) -> Vec<Span> {
+        let mut r = vec![self.location.unwrap()];
+        r.extend(self.usages.clone());
+        r
+    }
 }
 
 impl Analysis {
@@ -134,8 +173,8 @@ impl Analysis {
         self.tree.code_map().look_up_span(span).into()
     }
 
-    pub fn find(&self, pos: Position) -> Option<&Definition> {
-        self.definitions.find(pos)
+    pub fn find(&self, file: &str, pos: Position) -> Option<&Definition> {
+        self.definitions.find(&file, pos)
     }
 }
 
@@ -216,17 +255,15 @@ impl<'a> DefinitionGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::codegen::{codegen, CodegenOptions};
     use crate::core::parser::parse;
     use crate::errors::MosResult;
     use crate::lsp::analysis::Analysis;
-    use codemap::Span;
     use lsp_types::Position;
 
     #[test]
     fn can_find_basic_token() -> MosResult<()> {
         let analysis = analysis("lda foo\nfoo: nop");
-        let def = analysis.find(Position::new(0, 4)).unwrap();
+        let def = analysis.find("test.asm", Position::new(0, 4)).unwrap();
         assert_eq!(
             analysis.look_up_span(def.location.unwrap()).to_string(),
             "test.asm:2:1: 2:4"
@@ -237,7 +274,7 @@ mod tests {
     #[test]
     fn can_find_complex_token() -> MosResult<()> {
         let analysis = analysis("lda a.super.b.foo\na: {foo: nop}\nb: {foo: nop}");
-        let def = analysis.find(Position::new(0, 4)).unwrap();
+        let def = analysis.find("test.asm", Position::new(0, 4)).unwrap();
         assert_eq!(
             analysis.look_up_span(def.location.unwrap()).to_string(),
             "test.asm:3:5: 3:8"

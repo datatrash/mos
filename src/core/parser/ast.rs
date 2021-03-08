@@ -5,7 +5,6 @@ use codemap::{CodeMap, Span};
 use itertools::Itertools;
 use std::cell::RefCell;
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -21,7 +20,6 @@ pub type ArgItem = (Located<Expression>, Option<Located<char>>);
 /// The result of parsing
 pub struct ParseTree {
     code_map: CodeMap,
-    source_root: PathBuf,
     tokens: Vec<Token>,
 }
 
@@ -32,32 +30,16 @@ impl Debug for ParseTree {
 }
 
 impl ParseTree {
-    pub fn new(code_map: CodeMap, source_root: &Path, tokens: Vec<Token>) -> Self {
-        Self {
-            code_map,
-            source_root: source_root.into(),
-            tokens,
-        }
+    pub fn new(code_map: CodeMap, tokens: Vec<Token>) -> Self {
+        Self { code_map, tokens }
     }
 
     pub fn code_map(&self) -> &CodeMap {
         &self.code_map
     }
 
-    pub fn source_root(&self) -> &Path {
-        self.source_root.as_path()
-    }
-
     pub fn tokens(&self) -> &[Token] {
         &self.tokens
-    }
-
-    pub fn trace(&self) {
-        log::trace!("==== ParseTree AST trace start ================================");
-        for item in &self.tokens {
-            log::trace!("{:#?}", item);
-        }
-        log::trace!("==== ParseTree AST trace end ==================================");
     }
 }
 
@@ -595,11 +577,6 @@ impl<T> Located<Located<T>> {
 impl<T> Located<T> {
     /// Borrow the [Located] and map the data to something else
     pub fn map<U, F: Fn(&T) -> U>(&self, map_fn: F) -> Located<U> {
-        Located::new_with_trivia(self.span, map_fn(&self.data), self.trivia.clone())
-    }
-
-    /// Borrow the [Located] and map the data to something else using an FnOnce
-    pub fn map_once<U, F: FnOnce(&T) -> U>(&self, map_fn: F) -> Located<U> {
         Located::new_with_trivia(self.span, map_fn(&self.data), self.trivia.clone())
     }
 

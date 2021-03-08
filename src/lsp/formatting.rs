@@ -12,10 +12,9 @@ impl RequestHandler<lsp_types::request::Formatting> for FormattingRequestHandler
     fn handle(
         &self,
         ctx: &mut LspContext,
-        params: DocumentFormattingParams,
+        _params: DocumentFormattingParams,
     ) -> MosResult<Option<Vec<TextEdit>>> {
-        let analysis = ctx.documents.get(&params.text_document.uri);
-        match analysis {
+        match &ctx.analysis {
             Some(analysis) => {
                 let new_text = format(analysis.tree.clone(), FormattingOptions::default());
                 let edit = TextEdit {

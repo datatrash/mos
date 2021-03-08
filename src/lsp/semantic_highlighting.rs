@@ -36,19 +36,18 @@ impl RequestHandler<SemanticTokensFullRequest> for FullRequest {
     fn handle(
         &self,
         ctx: &mut LspContext,
-        params: SemanticTokensParams,
+        _params: SemanticTokensParams,
     ) -> MosResult<Option<SemanticTokensResult>> {
-        match ctx.documents.get(&params.text_document.uri) {
-            Some(analysis) => {
-                let semtoks = emit_semantic_ast(analysis.tree.code_map(), analysis.tree.tokens());
-                let data = to_deltas(semtoks);
-                let tokens = SemanticTokens {
-                    result_id: None,
-                    data,
-                };
-                Ok(Some(SemanticTokensResult::Tokens(tokens)))
-            }
-            None => Ok(None),
+        if let Some(analysis) = &ctx.analysis {
+            let semtoks = emit_semantic_ast(analysis.tree.code_map(), analysis.tree.tokens());
+            let data = to_deltas(semtoks);
+            let tokens = SemanticTokens {
+                result_id: None,
+                data,
+            };
+            Ok(Some(SemanticTokensResult::Tokens(tokens)))
+        } else {
+            Ok(None)
         }
     }
 }

@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 pub use program_counter::*;
 pub use segment::*;
+use std::path::PathBuf;
 pub use symbol_table::*;
 
 mod program_counter;
@@ -667,7 +668,12 @@ impl CodegenContext {
             }
             Token::Include { filename, .. } => {
                 let span = filename.span;
-                let filename = self.tree.source_root().join(&filename.data);
+                let source_file: PathBuf =
+                    self.tree.code_map().look_up_span(span).file.name().into();
+                let filename = match source_file.parent() {
+                    Some(parent) => parent.join(&filename.data),
+                    None => PathBuf::from(&filename.data),
+                };
                 let bytes = fs::read(filename)?;
                 Ok(EmitResult::Success(Some(span), bytes))
             }
@@ -1082,8 +1088,8 @@ fn codegen_impl(tree: Arc<ParseTree>, options: CodegenOptions) -> CodegenResult<
     }
 
     if num_passes == max_passes {
-        eprintln!(
-            "infinite recursion during code generation. This is a bug in MOS, please report it."
+        log::error!(
+            "infinite loop during code generation. This is a bug in MOS, please report it."
         );
     }
 

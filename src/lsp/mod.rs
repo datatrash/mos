@@ -1,43 +1,65 @@
 use crate::errors::MosResult;
-use crate::lsp::analysis::Analysis;
-use crate::lsp::diagnostics::{DidChange, DidOpen};
+use crate::lsp::analysis::{from_file_uri, Analysis, Definition};
+use crate::lsp::documents::{DidChangeTextDocumentHandler, DidOpenTextDocumentHandler};
 use crate::lsp::formatting::FormattingRequestHandler;
 use crate::lsp::references::{
     DocumentHighlightRequestHandler, FindReferencesHandler, GoToDefinitionHandler,
 };
+use crate::lsp::rename::RenameHandler;
 use crate::lsp::semantic_highlighting::FullRequest;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
-use lsp_types::{InitializeParams, OneOf, ServerCapabilities, TextDocumentSyncKind, Url};
+use lsp_types::{
+    InitializeParams, OneOf, ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind,
+};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 mod analysis;
-mod diagnostics;
+mod documents;
 mod formatting;
 mod references;
+mod rename;
 mod semantic_highlighting;
+#[cfg(test)]
+mod testing;
 mod traits;
 
 pub use traits::*;
 
 pub struct LspContext {
-    connection: Arc<Connection>,
-    io_threads: IoThreads,
-    documents: HashMap<Url, Analysis>,
+    connection: Option<(Arc<Connection>, IoThreads)>,
+    analysis: Option<Analysis>,
+    #[cfg(test)]
+    responses: Arc<RefCell<Vec<lsp_server::Response>>>,
 }
 
 impl LspContext {
     fn new() -> Self {
-        let (connection, io_threads) = Connection::stdio();
-
         Self {
-            connection: Arc::new(connection),
-            io_threads,
-            documents: HashMap::new(),
+            connection: None,
+            analysis: None,
+            #[cfg(test)]
+            responses: Arc::new(RefCell::new(vec![])),
         }
+    }
+
+    fn start(&mut self) {
+        let (connection, io_threads) = Connection::stdio();
+        self.connection = Some((Arc::new(connection), io_threads));
+    }
+
+    fn connection(&self) -> Option<Arc<Connection>> {
+        self.connection.as_ref().map(|c| c.0.clone())
+    }
+
+    #[cfg(test)]
+    fn responses(self) -> Vec<lsp_server::Response> {
+        Arc::try_unwrap(self.responses).unwrap().into_inner()
     }
 
     fn publish_notification<N: Notification>(&self, params: N::Params) -> MosResult<()> {
@@ -46,7 +68,9 @@ impl LspContext {
             method: N::METHOD.into(),
             params,
         };
-        self.connection.sender.send(Message::Notification(n))?;
+        if let Some(conn) = self.connection() {
+            conn.sender.send(Message::Notification(n))?;
+        }
         Ok(())
     }
 
@@ -61,13 +85,33 @@ impl LspContext {
             result: Some(result),
             error: None,
         };
-        self.connection.sender.send(Message::Response(response))?;
+
+        #[cfg(test)]
+        {
+            self.responses.borrow_mut().push(response.clone());
+        }
+        if let Some(conn) = self.connection() {
+            conn.sender.send(Message::Response(response))?;
+        }
         Ok(())
     }
 
     fn join(self) -> MosResult<()> {
-        self.io_threads.join()?;
+        self.connection.unwrap().1.join()?;
         Ok(())
+    }
+
+    fn find_definition<'a>(
+        &'a self,
+        pos: &'a TextDocumentPositionParams,
+    ) -> Option<&'a Definition> {
+        if let Some(analysis) = &self.analysis {
+            if let Some(def) = analysis.find(from_file_uri(&pos.text_document.uri), pos.position) {
+                return Some(def);
+            }
+        }
+
+        None
     }
 }
 
@@ -82,21 +126,22 @@ impl LspServer {
         let request_handlers = HashMap::new();
         let notification_handlers = HashMap::new();
 
-        Self {
+        let mut ctx = Self {
             context: LspContext::new(),
             request_handlers,
             notification_handlers,
-        }
-    }
+        };
 
-    pub fn register_handlers(&mut self) {
-        self.register_request_handler(FullRequest {});
-        self.register_request_handler(FormattingRequestHandler {});
-        self.register_request_handler(GoToDefinitionHandler {});
-        self.register_request_handler(FindReferencesHandler {});
-        self.register_request_handler(DocumentHighlightRequestHandler {});
-        self.register_notification_handler(DidOpen {});
-        self.register_notification_handler(DidChange {});
+        ctx.register_request_handler(FullRequest {});
+        ctx.register_request_handler(FormattingRequestHandler {});
+        ctx.register_request_handler(GoToDefinitionHandler {});
+        ctx.register_request_handler(FindReferencesHandler {});
+        ctx.register_request_handler(DocumentHighlightRequestHandler {});
+        ctx.register_request_handler(RenameHandler {});
+        ctx.register_notification_handler(DidOpenTextDocumentHandler {});
+        ctx.register_notification_handler(DidChangeTextDocumentHandler {});
+
+        ctx
     }
 
     fn register_request_handler<T: 'static + UntypedRequestHandler>(&mut self, handler: T) {
@@ -113,7 +158,9 @@ impl LspServer {
     }
 
     pub fn start(mut self) -> MosResult<()> {
-        eprintln!("Starting MOS language server");
+        log::info!("Starting MOS language server");
+
+        self.context.start();
 
         let caps = ServerCapabilities {
             semantic_tokens_provider: Some(semantic_highlighting::caps().into()),
@@ -121,50 +168,62 @@ impl LspServer {
             references_provider: Some(OneOf::Left(true)),
             document_formatting_provider: Some(OneOf::Left(true)),
             document_highlight_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
             ..Default::default()
         };
         let server_capabilities = serde_json::to_value(&caps).unwrap();
-        let initialization_params = self.context.connection.initialize(server_capabilities)?;
+        let initialization_params = self
+            .context
+            .connection()
+            .unwrap()
+            .initialize(server_capabilities)?;
         self.main_loop(initialization_params)?;
         self.context.join()?;
 
-        eprintln!("Shutting down MOS language server");
+        log::info!("Shutting down MOS language server");
+        Ok(())
+    }
+
+    pub fn handle_message(&mut self, msg: Message) -> MosResult<()> {
+        log::trace!("Handling message: {:?}", msg);
+        match msg {
+            Message::Request(req) => match self.request_handlers.get(req.method.as_str()) {
+                Some(handler) => {
+                    handler.handle(&mut self.context, req)?;
+                }
+                None => {
+                    if req.method == "shutdown" {
+                        if self.context.connection().unwrap().handle_shutdown(&req)? {
+                            return Ok(());
+                        }
+                    } else {
+                        log::trace!("unknown request: {:?}", req);
+                    }
+                }
+            },
+            Message::Response(_resp) => {}
+            Message::Notification(not) => {
+                match self.notification_handlers.get(not.method.as_str()) {
+                    Some(handler) => {
+                        handler.handle(&mut self.context, not)?;
+                    }
+                    None => {
+                        log::trace!("unknown notification: {:?}", not);
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
     fn main_loop(&mut self, params: serde_json::Value) -> MosResult<()> {
+        let connection = self.context.connection().unwrap();
+
         let _params: InitializeParams = serde_json::from_value(params).unwrap();
-        for msg in &self.context.connection.clone().receiver {
-            //eprintln!("got msg: {:?}", msg);
-            match msg {
-                Message::Request(req) => {
-                    if self.context.connection.handle_shutdown(&req)? {
-                        return Ok(());
-                    }
-                    match self.request_handlers.get(req.method.as_str()) {
-                        Some(handler) => {
-                            handler.handle(&mut self.context, req)?;
-                        }
-                        None => {
-                            eprintln!("unknown request: {:?}", req);
-                        }
-                    }
-                }
-                Message::Response(_resp) => {
-                    //eprintln!("got response: {:?}", resp);
-                }
-                Message::Notification(not) => {
-                    match self.notification_handlers.get(not.method.as_str()) {
-                        Some(handler) => {
-                            handler.handle(&mut self.context, not)?;
-                        }
-                        None => {
-                            eprintln!("unknown notification: {:?}", not);
-                        }
-                    }
-                }
-            }
+        for msg in &connection.receiver {
+            self.handle_message(msg)?;
         }
 
         Ok(())
