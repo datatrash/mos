@@ -1,6 +1,6 @@
 use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
-use crate::core::parser::ParseError;
+use crate::core::parser::{Identifier, IdentifierPath, ParseError};
 use codemap::{CodeMap, Span};
 use itertools::Itertools;
 use std::cell::RefCell;
@@ -121,28 +121,6 @@ pub enum Trivia {
     CppStyle(String),
 }
 
-/// A Rust-style identifier that can be used to, well, identify things
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Identifier(pub String);
-
-impl From<&str> for Identifier {
-    fn from(id: &str) -> Self {
-        Identifier(id.to_string())
-    }
-}
-
-impl<'a> From<&'a Identifier> for &'a str {
-    fn from(id: &'a Identifier) -> Self {
-        id.0.as_str()
-    }
-}
-
-impl Display for Identifier {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 /// Registers used for indexing
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum IndexRegister {
@@ -230,39 +208,6 @@ impl Display for AddressModifier {
             Self::LowByte => write!(f, "<"),
             Self::HighByte => write!(f, ">"),
         }
-    }
-}
-
-/// A path of multiple identifiers, usually written as being separated by dots (e.g. `foo.bar.baz`)
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct IdentifierPath(Vec<Identifier>);
-
-impl Display for IdentifierPath {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.0.iter().map(|i| i.0.as_str()).collect_vec().join(".")
-        )
-    }
-}
-
-impl IdentifierPath {
-    pub fn new(ids: &[Identifier]) -> Self {
-        Self(ids.to_vec())
-    }
-
-    pub fn to_str_vec(&self) -> Vec<&str> {
-        self.0.iter().map(|i| i.0.as_str()).collect()
-    }
-
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn single(&self) -> &Identifier {
-        assert_eq!(self.len(), 1);
-        self.0.first().unwrap()
     }
 }
 

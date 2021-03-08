@@ -1,13 +1,12 @@
+use codemap::Span;
+use itertools::Itertools;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-
-use itertools::Itertools;
 
 use crate::commands::SymbolType;
 use crate::core::codegen::{CodegenError, CodegenResult, DetailedCodegenError, ProgramCounter};
 use crate::core::parser::Identifier;
 use crate::LINE_ENDING;
-use codemap::Span;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Symbol {

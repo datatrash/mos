@@ -23,10 +23,14 @@ pub struct DefinitionMap {
 
 impl DefinitionMap {
     pub fn new(tree: Arc<ParseTree>) -> Self {
-        Self {
+        let mut d = Self {
             tree,
             map: HashMap::new(),
-        }
+        };
+
+        DefinitionGenerator::generate(&mut d);
+
+        d
     }
 
     pub fn get_or_create_mut(&mut self, path: &IdentifierPath) -> &mut Definition {
@@ -74,7 +78,7 @@ impl Definition {
 
 impl Analysis {
     pub fn new(tree: Arc<ParseTree>, error: Option<MosError>) -> Self {
-        let definitions = generate_definitions(tree.clone());
+        let definitions = DefinitionMap::new(tree.clone());
 
         Self {
             tree,
@@ -88,60 +92,84 @@ impl Analysis {
     }
 }
 
-pub fn generate_definitions(tree: Arc<ParseTree>) -> DefinitionMap {
-    let mut defs = DefinitionMap::new(tree.clone());
-    gen_def_tokens(tree.tokens(), &mut defs);
-    defs
+struct DefinitionGenerator<'a> {
+    defs: &'a mut DefinitionMap,
+    scope: IdentifierPath,
 }
 
-pub fn gen_def_tokens(tokens: &[Token], defs: &mut DefinitionMap) {
-    tokens.iter().for_each(|token| gen_def_token(token, defs));
-}
+impl<'a> DefinitionGenerator<'a> {
+    fn generate(defs: &'a mut DefinitionMap) {
+        let tree = defs.tree.clone();
+        let mut gen = DefinitionGenerator {
+            defs,
+            scope: IdentifierPath::empty(),
+        };
+        gen.gen_def_tokens(tree.tokens());
+    }
 
-fn gen_def_token(token: &Token, defs: &mut DefinitionMap) {
-    match token {
-        Token::Braces(block) | Token::Config(block) => gen_def_tokens(&block.inner, defs),
-        Token::If { value, .. } => {
-            gen_def_expression(value, defs);
+    fn gen_def_tokens(&mut self, tokens: &[Token]) {
+        tokens.iter().for_each(|token| self.gen_def_token(token));
+    }
+
+    fn gen_def_token(&mut self, token: &Token) {
+        match token {
+            Token::Braces(block) | Token::Config(block) => self.gen_def_tokens(&block.inner),
+            Token::If { value, .. } => {
+                self.gen_def_expression(value);
+            }
+            Token::Instruction(i) => {
+                if let Some(o) = &i.operand {
+                    self.gen_def_expression(&o.expr);
+                }
+            }
+            Token::Label { id, block, .. } => {
+                self.defs
+                    .get_or_create_mut(&self.scope.join(&id.data))
+                    .location = Some(id.span);
+
+                if let Some(b) = block {
+                    self.scope.push(&id.data);
+                    self.gen_def_tokens(&b.inner);
+                    self.scope.pop();
+                }
+            }
+            Token::VariableDefinition { id, .. } => {
+                self.defs
+                    .get_or_create_mut(&self.scope.join(&id.data))
+                    .location = Some(id.span);
+            }
+            _ => (),
         }
-        Token::Instruction(i) => {
-            if let Some(o) = &i.operand {
-                gen_def_expression(&o.expr, defs);
+    }
+
+    fn gen_def_expression(&mut self, expr: &Located<Expression>) {
+        match &expr.data {
+            Expression::Factor { factor, .. } => self.gen_def_expression_factor(&factor),
+            Expression::BinaryExpression(bexp) => {
+                self.gen_def_expression(&bexp.lhs);
+                self.gen_def_expression(&bexp.rhs);
             }
         }
-        Token::Label { id, .. } | Token::VariableDefinition { id, .. } => {
-            defs.get_or_create_mut(&IdentifierPath::new(&[id.data.clone()]))
-                .location = Some(id.span);
-        }
-        _ => (),
     }
-}
 
-fn gen_def_expression(expr: &Located<Expression>, defs: &mut DefinitionMap) {
-    match &expr.data {
-        Expression::Factor { factor, .. } => gen_def_expression_factor(&factor, defs),
-        Expression::BinaryExpression(bexp) => {
-            gen_def_expression(&bexp.lhs, defs);
-            gen_def_expression(&bexp.rhs, defs);
+    fn gen_def_expression_factor(&mut self, factor: &Located<ExpressionFactor>) {
+        match &factor.data {
+            ExpressionFactor::ExprParens { inner, .. } => {
+                self.gen_def_expression(inner);
+            }
+            ExpressionFactor::IdentifierValue { path, .. } => {
+                let full_path = self.scope.join(&path.data).canonicalize();
+                let def = self.defs.get_or_create_mut(&full_path);
+                def.usages.push(path.span);
+            }
+            _ => (),
         }
-    }
-}
-
-fn gen_def_expression_factor(factor: &Located<ExpressionFactor>, defs: &mut DefinitionMap) {
-    match &factor.data {
-        ExpressionFactor::ExprParens { inner, .. } => {
-            gen_def_expression(inner, defs);
-        }
-        ExpressionFactor::IdentifierValue { path, .. } => {
-            let def = defs.get_or_create_mut(&path.data);
-            def.usages.push(path.span);
-        }
-        _ => (),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::core::codegen::{codegen, CodegenOptions};
     use crate::core::parser::parse;
     use crate::errors::MosResult;
     use crate::lsp::analysis::Analysis;
@@ -149,11 +177,23 @@ mod tests {
     use lsp_types::Position;
 
     #[test]
-    fn can_find_token() -> MosResult<()> {
-        let (tree, error) = parse("test.asm".as_ref(), "lda foo\nfoo: nop");
-        let analysis = Analysis::new(tree.clone(), error);
+    fn can_find_basic_token() -> MosResult<()> {
+        let analysis = analysis("lda foo\nfoo: nop");
         let (_, loc) = analysis.find(Position::new(0, 4)).unwrap();
         assert_eq!(loc.to_string(), "test.asm:2:1: 2:4");
         Ok(())
+    }
+
+    #[test]
+    fn can_find_complex_token() -> MosResult<()> {
+        let analysis = analysis("lda a.super.b.foo\na: {foo: nop}\nb: {foo: nop}");
+        let (_, loc) = analysis.find(Position::new(0, 4)).unwrap();
+        assert_eq!(loc.to_string(), "test.asm:3:5: 3:8");
+        Ok(())
+    }
+
+    fn analysis(src: &str) -> Analysis {
+        let (tree, error) = parse("test.asm".as_ref(), src);
+        Analysis::new(tree.clone(), error)
     }
 }
