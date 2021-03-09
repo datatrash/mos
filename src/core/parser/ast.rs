@@ -557,6 +557,18 @@ pub struct Located<T> {
     pub trivia: Option<Box<Located<Vec<Trivia>>>>,
 }
 
+impl<T> Into<Span> for Located<T> {
+    fn into(self) -> Span {
+        self.span
+    }
+}
+
+impl<T> Into<Span> for &Located<T> {
+    fn into(self) -> Span {
+        self.span
+    }
+}
+
 impl<T> AsRef<Located<T>> for Located<T> {
     fn as_ref(&self) -> &Located<T> {
         &self
