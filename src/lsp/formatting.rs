@@ -16,7 +16,7 @@ impl RequestHandler<lsp_types::request::Formatting> for FormattingRequestHandler
         ctx: &mut LspContext,
         _params: DocumentFormattingParams,
     ) -> MosResult<Option<Vec<TextEdit>>> {
-        do_formatting(ctx)
+        Ok(do_formatting(ctx))
     }
 }
 
@@ -26,29 +26,26 @@ impl RequestHandler<lsp_types::request::OnTypeFormatting> for OnTypeFormattingRe
         ctx: &mut LspContext,
         _params: DocumentOnTypeFormattingParams,
     ) -> MosResult<Option<Vec<TextEdit>>> {
-        do_formatting(ctx)
+        Ok(do_formatting(ctx))
     }
 }
 
-fn do_formatting(ctx: &mut LspContext) -> MosResult<Option<Vec<TextEdit>>> {
-    match &ctx.analysis {
-        Some(analysis) => {
-            let new_text = format(analysis.tree.clone(), FormattingOptions::default());
-            let edit = TextEdit {
-                range: lsp_types::Range {
-                    start: lsp_types::Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: lsp_types::Position {
-                        line: u32::MAX - 1,
-                        character: 0,
-                    },
+fn do_formatting(ctx: &mut LspContext) -> Option<Vec<TextEdit>> {
+    ctx.analysis.as_ref().map(|analysis| {
+        let new_text = format(analysis.tree.clone(), FormattingOptions::default());
+        let edit = TextEdit {
+            range: lsp_types::Range {
+                start: lsp_types::Position {
+                    line: 0,
+                    character: 0,
                 },
-                new_text,
-            };
-            Ok(Some(vec![edit]))
-        }
-        _ => Ok(None),
-    }
+                end: lsp_types::Position {
+                    line: u32::MAX - 1,
+                    character: 0,
+                },
+            },
+            new_text,
+        };
+        vec![edit]
+    })
 }
