@@ -11,7 +11,7 @@ export function activate(_context: vscode.ExtensionContext) {
     log.appendLine("Trying to launch MOS language server from: " + mosPath);
 
     let serverOptions: ServerOptions = {
-        command: mosPath, args: ["lsp"], options: {}
+        command: mosPath, args: ["-v", "lsp"], options: {}
     };
 
     let clientOptions: LanguageClientOptions = {

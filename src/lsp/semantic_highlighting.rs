@@ -28,11 +28,11 @@ pub fn caps() -> SemanticTokensOptions {
     }
 }
 
-pub struct FullRequest {}
+pub struct SemanticTokensFullRequestHandler {}
 
-impl_request_handler!(FullRequest);
+impl_request_handler!(SemanticTokensFullRequestHandler);
 
-impl RequestHandler<SemanticTokensFullRequest> for FullRequest {
+impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHandler {
     fn handle(
         &self,
         ctx: &mut LspContext,

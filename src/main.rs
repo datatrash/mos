@@ -44,6 +44,7 @@ fn get_app() -> App<'static> {
             Arg::new("verbose")
                 .short('v')
                 .multiple(true)
+                .takes_value(false)
                 .about("Sets the level of verbosity"),
         )
         .arg(
@@ -112,7 +113,7 @@ fn main() {
     let args = get_app().get_matches();
 
     loggerv::Logger::new()
-        .verbosity(args.occurrences_of("v"))
+        .verbosity(args.occurrences_of("verbose"))
         .colors(!args.is_present("no-color"))
         .module_path(false)
         .init()
@@ -162,6 +163,12 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn can_invoke_subcommand_with_verbose_logging() {
+        let args = get_app().get_matches_from(vec!["mos", "-vvv", "format", "test.asm"]);
+        assert_eq!(args.subcommand_name(), Some("format"));
     }
 
     #[test]

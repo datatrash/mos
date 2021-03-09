@@ -1,16 +1,17 @@
 use crate::errors::MosResult;
 use crate::lsp::analysis::{from_file_uri, Analysis, Definition};
 use crate::lsp::documents::{DidChangeTextDocumentHandler, DidOpenTextDocumentHandler};
-use crate::lsp::formatting::FormattingRequestHandler;
+use crate::lsp::formatting::{FormattingRequestHandler, OnTypeFormattingRequestHandler};
 use crate::lsp::references::{
     DocumentHighlightRequestHandler, FindReferencesHandler, GoToDefinitionHandler,
 };
 use crate::lsp::rename::RenameHandler;
-use crate::lsp::semantic_highlighting::FullRequest;
+use crate::lsp::semantic_highlighting::SemanticTokensFullRequestHandler;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    InitializeParams, OneOf, ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind,
+    DocumentOnTypeFormattingOptions, InitializeParams, OneOf, ServerCapabilities,
+    TextDocumentPositionParams, TextDocumentSyncKind,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -132,8 +133,9 @@ impl LspServer {
             notification_handlers,
         };
 
-        ctx.register_request_handler(FullRequest {});
+        ctx.register_request_handler(SemanticTokensFullRequestHandler {});
         ctx.register_request_handler(FormattingRequestHandler {});
+        ctx.register_request_handler(OnTypeFormattingRequestHandler {});
         ctx.register_request_handler(GoToDefinitionHandler {});
         ctx.register_request_handler(FindReferencesHandler {});
         ctx.register_request_handler(DocumentHighlightRequestHandler {});
@@ -167,6 +169,10 @@ impl LspServer {
             text_document_sync: Some(TextDocumentSyncKind::Full.into()),
             references_provider: Some(OneOf::Left(true)),
             document_formatting_provider: Some(OneOf::Left(true)),
+            document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                first_trigger_character: "}".to_string(),
+                more_trigger_character: None,
+            }),
             document_highlight_provider: Some(OneOf::Left(true)),
             rename_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
