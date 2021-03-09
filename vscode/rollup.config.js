@@ -9,7 +9,7 @@ export default {
     input: 'out/extension.js',
     plugins: [
         resolve({
-            preferBuiltins: true
+            preferBuiltins: false
         }),
         commonjs()
     ],

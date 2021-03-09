@@ -1,5 +1,4 @@
 {
     "editor.formatOnType": true,
     "mos.path": "../../target/debug/mos"
-    //,"mos.trace.server": "verbose"
 }

@@ -1,5 +1,7 @@
-out
-dist
-node_modules
-.vscode-test/
-*.vsix
+**
+!language-configuration.json
+!out/extension.js
+!package.json
+!package-lock.json
+!icon.png
+!README.md

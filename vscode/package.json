@@ -10,7 +10,7 @@
   "version": "0.0.1",
   "preview": true,
   "license": "MIT",
-  "homepage": "readme.md",
+  "homepage": "README.md",
   "galleryBanner": {
     "color": "#668",
     "theme": "dark"
