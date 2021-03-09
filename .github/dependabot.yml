@@ -5,3 +5,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 99
+  - package-ecosystem: npm
+    directory: "docs"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 99
+  - package-ecosystem: npm
+    directory: "vscode"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 99

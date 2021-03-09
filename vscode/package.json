@@ -4,6 +4,12 @@
   "displayName": "mos",
   "description": "MOS 6502 extension",
   "version": "0.0.1",
+  "preview": true,
+  "license": "MIT",
+  "repository": {
+    "url": "https://github.com/datatrash/mos.git",
+    "type": "git"
+  },
   "engines": {
     "vscode": "^1.52.0"
   },
