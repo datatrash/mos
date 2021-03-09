@@ -64,6 +64,8 @@ pub enum DetailedCodegenError {
     InvalidDefinition(Identifier, String),
     #[error("segment '{0}' is out of range: beyond ${1:04X}")]
     SegmentOutOfRange(Identifier, ProgramCounter),
+    #[error("file not found: {0}")]
+    FileNotFound(PathBuf),
 }
 
 impl CodegenError {
@@ -674,8 +676,13 @@ impl CodegenContext {
                     Some(parent) => parent.join(&filename.data),
                     None => PathBuf::from(&filename.data),
                 };
-                let bytes = fs::read(filename)?;
-                Ok(EmitResult::Success(Some(span), bytes))
+                match fs::read(&filename) {
+                    Ok(bytes) => Ok(EmitResult::Success(Some(span), bytes)),
+                    Err(_) => Err(CodegenError::Detailed(
+                        span,
+                        DetailedCodegenError::FileNotFound(filename),
+                    )),
+                }
             }
             _ => Ok(EmitResult::SuccessNoData),
         }?;
