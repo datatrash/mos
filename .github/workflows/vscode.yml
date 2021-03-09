@@ -15,4 +15,4 @@ jobs:
         working-directory: vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: node_modules/vsce/out/vsce publish
+        run: npm run publish
