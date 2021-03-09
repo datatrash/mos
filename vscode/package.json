@@ -32,7 +32,17 @@
         ],
         "configuration": "language-configuration.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "MOS",
+      "properties": {
+        "mos.path": {
+          "type": "string",
+          "default": "mos",
+          "markdownDescription": "Path to the `mos` executable."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

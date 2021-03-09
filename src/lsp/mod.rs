@@ -146,19 +146,6 @@ impl LspServer {
         ctx
     }
 
-    fn register_request_handler<T: 'static + UntypedRequestHandler>(&mut self, handler: T) {
-        self.request_handlers
-            .insert(handler.method(), Box::new(handler));
-    }
-
-    fn register_notification_handler<T: 'static + UntypedNotificationHandler>(
-        &mut self,
-        handler: T,
-    ) {
-        self.notification_handlers
-            .insert(handler.method(), Box::new(handler));
-    }
-
     pub fn start(mut self) -> MosResult<()> {
         log::info!("Starting MOS language server");
 
@@ -233,5 +220,18 @@ impl LspServer {
         }
 
         Ok(())
+    }
+
+    fn register_request_handler<T: 'static + UntypedRequestHandler>(&mut self, handler: T) {
+        self.request_handlers
+            .insert(handler.method(), Box::new(handler));
+    }
+
+    fn register_notification_handler<T: 'static + UntypedNotificationHandler>(
+        &mut self,
+        handler: T,
+    ) {
+        self.notification_handlers
+            .insert(handler.method(), Box::new(handler));
     }
 }

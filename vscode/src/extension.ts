@@ -1,14 +1,30 @@
 import * as vscode from 'vscode';
 import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
-import log from "./log";
 import * as path from "path";
+import * as fs from "fs";
 
 let client: LanguageClient;
 
-export function activate(_context: vscode.ExtensionContext) {
-    let extensionPath = vscode.extensions.getExtension("datatra.sh.mos")!.extensionPath;
-    let mosPath = path.join(extensionPath, "..", "target", "debug", "mos");
-    log.appendLine("Trying to launch MOS language server from: " + mosPath);
+export async function activate(_context: vscode.ExtensionContext) {
+    let mosPath;
+    while (true) {
+        let cfg = vscode.workspace.getConfiguration("mos");
+        mosPath = cfg.get<string>("path", "mos");
+
+        if (!path.isAbsolute(mosPath)) {
+            // Relative path, so make it absolute from the workspace folder
+            if (vscode.workspace.workspaceFolders !== undefined) {
+                let workspacePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
+                mosPath = path.join(workspacePath, mosPath);
+            }
+        }
+
+        if (fs.existsSync(mosPath)) {
+            break;
+        } else {
+            await vscode.window.showErrorMessage("Could not find mos executable. Please configure the mos.path setting.", "Retry");
+        }
+    }
 
     let serverOptions: ServerOptions = {
         command: mosPath, args: ["-v", "lsp"], options: {}
