@@ -61,7 +61,7 @@ fn mos_toml_path<P: Into<PathBuf>>(
     root: Option<&Path>,
     starting_path: P,
 ) -> MosResult<Option<PathBuf>> {
-    let starting_path = starting_path.into();
+    let starting_path = starting_path.into().canonicalize().unwrap();
     let mut path = starting_path.as_path();
     loop {
         let toml = path.join("mos.toml");
@@ -87,17 +87,24 @@ fn mos_toml_path<P: Into<PathBuf>>(
 
 fn run(args: ArgMatches) -> MosResult<()> {
     let mos_toml = mos_toml_path(None, &Path::new("."))?;
-    let cfg = match mos_toml {
+    let (root, cfg) = match mos_toml {
         Some(path) => {
-            let toml = fs::read_to_string(path)?;
-            Some(Config::from_toml(&toml)?)
+            log::trace!("Using configuration from: {}", &path.to_str().unwrap());
+            let toml = fs::read_to_string(&path)?;
+            (
+                path.parent().unwrap().to_path_buf(),
+                Config::from_toml(&toml)?,
+            )
         }
-        None => None,
+        None => {
+            log::trace!("No configuration file found. Using defaults.");
+            (PathBuf::from("."), Config::default())
+        }
     };
 
     match args.subcommand() {
-        Some(("build", args)) => build_command(args),
-        Some(("format", args)) => format_command(args, cfg),
+        Some(("build", _)) => build_command(&root, &cfg),
+        Some(("format", _)) => format_command(&cfg),
         Some(("lsp", args)) => lsp_command(args),
         _ => {
             let _ = get_app().print_help()?;
@@ -133,7 +140,6 @@ mod tests {
     use std::path::Path;
 
     use fs_err as fs;
-    use itertools::Itertools;
     use tempfile::tempdir;
 
     use crate::errors::MosResult;
@@ -141,33 +147,19 @@ mod tests {
 
     #[test]
     fn can_invoke_build() {
-        let args = get_app().get_matches_from(vec!["mos", "build", "test.asm"]);
+        let args = get_app().get_matches_from(vec!["mos", "build"]);
         assert_eq!(args.subcommand_name(), Some("build"));
-
-        match args.subcommand() {
-            Some(("build", args)) => {
-                assert_eq!(args.values_of("input").unwrap().collect_vec(), ["test.asm"]);
-            }
-            _ => panic!(),
-        }
     }
 
     #[test]
     fn can_invoke_format() {
-        let args = get_app().get_matches_from(vec!["mos", "format", "test.asm"]);
+        let args = get_app().get_matches_from(vec!["mos", "format"]);
         assert_eq!(args.subcommand_name(), Some("format"));
-
-        match args.subcommand() {
-            Some(("format", args)) => {
-                assert_eq!(args.values_of("input").unwrap().collect_vec(), ["test.asm"]);
-            }
-            _ => panic!(),
-        }
     }
 
     #[test]
     fn can_invoke_subcommand_with_verbose_logging() {
-        let args = get_app().get_matches_from(vec!["mos", "-vvv", "format", "test.asm"]);
+        let args = get_app().get_matches_from(vec!["mos", "-vvv", "format"]);
         assert_eq!(args.subcommand_name(), Some("format"));
     }
 

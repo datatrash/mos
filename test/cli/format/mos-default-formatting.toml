@@ -1,9 +1,9 @@
 [mnemonics]
 casing = 'lowercase'
-register-casing = 'lowercase'
+register_casing = 'lowercase'
 
 [braces]
-position = 'same-line'
+position = 'same_line'
 
 [whitespace]
 indent = 4

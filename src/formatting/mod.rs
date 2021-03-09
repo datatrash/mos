@@ -8,7 +8,7 @@ use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum Casing {
     Uppercase,
     Lowercase,
@@ -24,7 +24,7 @@ impl Casing {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct MnemonicOptions {
     pub casing: Casing,
     pub register_casing: Casing,
@@ -40,14 +40,14 @@ impl Default for MnemonicOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "snake_case")]
 pub enum BracePosition {
     SameLine,
     NewLine,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct BraceOptions {
     pub position: BracePosition,
 }
@@ -61,7 +61,7 @@ impl Default for BraceOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct WhitespaceOptions {
     pub indent: usize,
 }
@@ -73,7 +73,7 @@ impl Default for WhitespaceOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct FormattingOptions {
     pub mnemonics: MnemonicOptions,
     pub braces: BraceOptions,

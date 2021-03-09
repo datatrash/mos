@@ -1,17 +1,36 @@
+use clap::App;
+use fs_err as fs;
+use serde::Deserialize;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::Path;
 use std::str::FromStr;
 
-use clap::{App, Arg, ArgMatches};
-use fs_err as fs;
-use itertools::Itertools;
-
+use crate::config::Config;
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::io::{to_vice_symbols, SegmentMerger};
 use crate::core::parser;
 use crate::errors::{MosError, MosResult};
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+pub struct BuildOptions {
+    pub entry: String,
+    pub target_directory: String,
+    pub symbols: Vec<SymbolType>,
+}
+
+impl Default for BuildOptions {
+    fn default() -> Self {
+        Self {
+            entry: "main.asm".into(),
+            target_directory: "target".into(),
+            symbols: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum SymbolType {
     Vice,
 }
@@ -28,41 +47,18 @@ impl FromStr for SymbolType {
 }
 
 pub fn build_app() -> App<'static> {
-    App::new("build")
-        .about("Assembles input file(s)")
-        .arg(
-            Arg::new("input")
-                .about("Sets the input file to use")
-                .required(true)
-                .multiple(true),
-        )
-        .arg(
-            Arg::new("target-dir")
-                .about("Directory for generated files")
-                .long("target-dir")
-                .default_value("."),
-        )
-        .arg(
-            Arg::new("symbols")
-                .about("Generate symbols")
-                .case_insensitive(true)
-                .long("symbols")
-                .possible_values(&["vice"]),
-        )
+    App::new("build").about("Assembles input file(s)")
 }
 
-pub fn build_command(args: &ArgMatches) -> MosResult<()> {
-    let input_names = args.values_of("input").unwrap().collect_vec();
-    let target_dir = PathBuf::from(args.value_of("target-dir").unwrap());
+pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
+    let input_names = vec![cfg.build.entry.clone()];
+    let target_dir = root.join(&cfg.build.target_directory);
+    fs::create_dir_all(&target_dir)?;
 
     for input_name in input_names {
-        let input_path = PathBuf::from(input_name);
-        let output_path = PathBuf::from(format!(
+        let input_path = root.join(input_name);
+        let output_path = root.join(format!(
             "{}.prg",
-            input_path.file_stem().unwrap().to_string_lossy()
-        ));
-        let symbol_path = PathBuf::from(format!(
-            "{}.vs",
             input_path.file_stem().unwrap().to_string_lossy()
         ));
 
@@ -98,13 +94,18 @@ pub fn build_command(args: &ArgMatches) -> MosResult<()> {
             }
         }
 
-        if args
-            .values_of_t::<SymbolType>("symbols")
-            .unwrap_or_else(|_| vec![])
-            .contains(&SymbolType::Vice)
-        {
-            let mut out = fs::File::create(target_dir.join(symbol_path))?;
-            out.write_all(to_vice_symbols(generated_code.symbol_table()).as_bytes())?;
+        for symbol_type in &cfg.build.symbols {
+            match symbol_type {
+                SymbolType::Vice => {
+                    let symbol_path = root.join(format!(
+                        "{}.vs",
+                        input_path.file_stem().unwrap().to_string_lossy()
+                    ));
+
+                    let mut out = fs::File::create(target_dir.join(symbol_path))?;
+                    out.write_all(to_vice_symbols(generated_code.symbol_table()).as_bytes())?;
+                }
+            }
         }
     }
 
@@ -118,22 +119,23 @@ mod tests {
     use anyhow::Result;
     use itertools::Itertools;
 
-    use crate::commands::{build_app, build_command};
+    use crate::commands::{build_command, BuildOptions, SymbolType};
+    use crate::config::Config;
 
     #[test]
     fn can_invoke_build() -> Result<()> {
         let root = env!("CARGO_MANIFEST_DIR");
-        let input = &format!("{}/test/cli/build/valid.asm", root);
-
-        let args = build_app().get_matches_from(vec![
-            "build",
-            input,
-            "--target-dir",
-            &format!("{}/target", root),
-            "--symbols",
-            "vice",
-        ]);
-        build_command(&args)?;
+        let entry = format!("{}/test/cli/build/valid.asm", root);
+        let cfg = Config {
+            build: BuildOptions {
+                entry,
+                target_directory: format!("{}/target", root),
+                symbols: vec![SymbolType::Vice],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        build_command(PathBuf::from(root).as_path(), &cfg)?;
 
         let out_path = &format!("{}/target/valid.prg", root);
         let out_bytes = std::fs::read(out_path)?;
@@ -161,15 +163,17 @@ mod tests {
 
     fn build_and_compare(input: &str) -> Result<()> {
         let root = env!("CARGO_MANIFEST_DIR");
-        let full_input_path = &format!("{}/test/cli/build/{}", root, input);
+        let entry = format!("{}/test/cli/build/{}", root, input);
 
-        let args = build_app().get_matches_from(vec![
-            "build",
-            full_input_path.as_str(),
-            "--target-dir",
-            &format!("{}/target", root),
-        ]);
-        build_command(&args)?;
+        let cfg = Config {
+            build: BuildOptions {
+                entry: entry.clone(),
+                target_directory: format!("{}/target", root),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        build_command(PathBuf::from(root).as_path(), &cfg)?;
 
         let actual_path = &format!(
             "{}/target/{}",
@@ -177,9 +181,7 @@ mod tests {
             PathBuf::from(input).with_extension("prg").to_string_lossy()
         );
         let actual_bytes = std::fs::read(actual_path)?;
-        let expected_prg_path = PathBuf::from(full_input_path)
-            .with_extension("prg")
-            .into_os_string();
+        let expected_prg_path = PathBuf::from(entry).with_extension("prg").into_os_string();
         let expected_prg_bytes = std::fs::read(expected_prg_path)?;
         assert_eq!(actual_bytes, expected_prg_bytes);
 
