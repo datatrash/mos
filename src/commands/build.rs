@@ -57,7 +57,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
 
     for input_name in input_names {
         let input_path = root.join(input_name);
-        let output_path = root.join(format!(
+        let output_path = target_dir.join(format!(
             "{}.prg",
             input_path.file_stem().unwrap().to_string_lossy()
         ));
