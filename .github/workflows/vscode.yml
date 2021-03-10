@@ -5,6 +5,9 @@ on:
       mos_version:
         description: 'The version of the MOS binary to download'
         required: true
+      extension_version:
+        description: 'The version of the extension to release'
+        required: true
 
 jobs:
   publish:
@@ -21,4 +24,4 @@ jobs:
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
           MOS_VERSION: ${{ github.event.inputs.mos_version }}
-        run: npm run publish
+        run: npm run publish -- ${{ github.event.inputs.extension_version }}
