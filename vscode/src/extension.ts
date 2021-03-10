@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
-import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
 import {existsSync, promises as fs} from "fs";
 import {getMosBinary} from "./download_binary";
 import {log} from "./log";
+import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
 
 let client: LanguageClient;
 
@@ -24,6 +24,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
         await vscode.window.showErrorMessage("Could not find MOS executable. Please configure the mos.path setting or leave it blank to automatically download the latest version.", "Retry");
     }
+    log.info(`Using mos executable: ${mosPath}`);
 
     let serverOptions: ServerOptions = {
         command: mosPath, args: ["-v", "lsp"], options: {}

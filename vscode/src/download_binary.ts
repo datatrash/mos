@@ -1,16 +1,14 @@
 import * as vscode from "vscode";
 import * as path from "path";
-import {createReadStream, createWriteStream, promises as fs, renameSync} from "fs";
+import {promises as fs, renameSync} from "fs";
 import {download, fetchRelease} from "./net";
 import * as os from "os";
-import {x as tar_extract} from "tar";
-import {Parse} from "unzipper";
-import rimraf = require("rimraf");
-import {execFile} from "child_process";
+import rimraf from "rimraf";
 import {promisify} from "util";
+import decompress from "decompress";
 
 export async function getMosBinary(ctx: vscode.ExtensionContext): Promise<string | undefined> {
-    const mos_version = await fs.readFile(path.join(vscode.extensions.getExtension("datatrash.mos")!!.extensionPath, "MOS_VERSION"), "utf8");
+    const mos_version = await fs.readFile(path.join(vscode.extensions.getExtension("datatrash.mos")!!.extensionPath, "out", "MOS_VERSION"), "utf8");
 
     let cfg = vscode.workspace.getConfiguration("mos");
     const explicitPath = cfg.get<string>("path");
@@ -87,35 +85,13 @@ export async function getMosBinary(ctx: vscode.ExtensionContext): Promise<string
     });
 
     await fs.mkdir(bin_extract_path, { recursive: true });
-    switch (arch_ext) {
-        case "tar.gz": {
-            await tar_extract({
-                file: full_archive_path,
-                cwd: bin_extract_path,
-                strip: 1,
-            });
-            break;
+    await decompress(full_archive_path, bin_extract_path, {
+        filter: file => file.type === "file",
+        map: file => {
+            file.path = path.basename(file.path);
+            return file;
         }
-        case "zip": {
-            let unzip = new Promise<void>(function(resolve, reject) {
-                createReadStream(full_archive_path)
-                    .pipe(Parse({ path: bin_extract_path }))
-                    .on('entry', entry => {
-                        // Strip path
-                        entry.path = path.join(bin_extract_path, path.basename(entry.path));
-                        if (entry.type === 'File') {
-                            entry.pipe(createWriteStream(entry.path));
-                        } else {
-                            entry.autodrain();
-                        }
-                    })
-                    .on('end', () => resolve())
-                    .on('error', reject)
-            });
-            await unzip;
-            break;
-        }
-    }
+    });
     await fs.unlink(full_archive_path);
 
     // Binary path can be removed, and extracted binary path can be swapped
