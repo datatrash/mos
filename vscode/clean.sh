@@ -1,3 +1,3 @@
-rm -rf "~/Library/Application Support/Code/CachedExtensionVSIXs/datatrash*"
-rm -rf "~/Library/Application Support/Code/User/globalStorage/datatrash*"
-rm -rf ~/.vscode/extensions/datatrash*
+rm -rfv ~/Library/Application\ Support/Code/CachedExtensionVSIXs/datatrash*
+rm -rfv ~/Library/Application\ Support/Code/User/globalStorage/datatrash.mos
+rm -rfv ~/.vscode/extensions/datatrash*

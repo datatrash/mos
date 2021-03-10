@@ -1,4 +1,4 @@
 {
     "editor.formatOnType": true
-    //,"mos.path": "../../target/debug/mos"
+    ,"mos.path": "../../target/debug/mos"
 }
