@@ -48,7 +48,6 @@
       "properties": {
         "mos.path": {
           "type": "string",
-          "default": "mos",
           "description": "Path to the mos executable",
           "markdownDescription": "Path to the `mos` executable"
         }
@@ -57,13 +56,23 @@
   },
   "scripts": {
     "publish": "vsce publish",
-    "vscode:prepublish": "npm run compile && rollup -c",
+    "mos-version": "node mos-version",
+    "vscode:prepublish": "npm run mos-version && npm run compile && rollup -c",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
+    "@types/node-fetch": "^2.5.8",
+    "@types/rimraf": "^3.0.0",
+    "@types/tar": "^4.0.4",
+    "@types/unzipper": "^0.10.3",
+    "https-proxy-agent": "^5.0.0",
+    "node-fetch": "^2.6.1",
+    "rimraf": "^3.0.2",
+    "tar": "^6.1.0",
+    "unzipper": "^0.10.11",
     "vsce": "^1.85.1",
     "vscode-languageclient": "^7.0.0"
   },

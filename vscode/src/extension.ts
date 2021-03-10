@@ -1,29 +1,28 @@
 import * as vscode from 'vscode';
 import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
-import * as path from "path";
-import * as fs from "fs";
+import {existsSync, promises as fs} from "fs";
+import {getMosBinary} from "./download_binary";
+import {log} from "./log";
 
 let client: LanguageClient;
 
-export async function activate(_context: vscode.ExtensionContext) {
+export async function activate(ctx: vscode.ExtensionContext) {
+    await fs.mkdir(ctx.globalStorageUri.fsPath, { recursive: true });
+
     let mosPath;
     while (true) {
-        let cfg = vscode.workspace.getConfiguration("mos");
-        mosPath = cfg.get<string>("path", "mos");
-
-        if (!path.isAbsolute(mosPath)) {
-            // Relative path, so make it absolute from the workspace folder
-            if (vscode.workspace.workspaceFolders !== undefined) {
-                let workspacePath = vscode.workspace.workspaceFolders[0].uri.fsPath;
-                mosPath = path.join(workspacePath, mosPath);
-            }
+        mosPath = await getMosBinary(ctx);
+        if (!mosPath) {
+            // User chose not to locate or download a binary, so bail
+            log.info("No MOS binary found or downloaded. Extension will not activate.");
+            return;
         }
 
-        if (fs.existsSync(mosPath)) {
+        if (existsSync(mosPath)) {
             break;
-        } else {
-            await vscode.window.showErrorMessage("Could not find mos executable. Please configure the mos.path setting.", "Retry");
         }
+
+        await vscode.window.showErrorMessage("Could not find MOS executable. Please configure the mos.path setting or leave it blank to automatically download the latest version.", "Retry");
     }
 
     let serverOptions: ServerOptions = {

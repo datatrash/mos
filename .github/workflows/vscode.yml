@@ -1,5 +1,10 @@
 name: Publish VSCode Extension
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      mos_version:
+        description: 'The version of the MOS binary to download'
+        required: true
 
 jobs:
   publish:
@@ -15,4 +20,5 @@ jobs:
         working-directory: vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          MOS_VERSION: ${{ github.event.inputs.mos_version }}
         run: npm run publish
