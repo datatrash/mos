@@ -11,6 +11,7 @@ pub type MosResult<T> = Result<T, MosError>;
 pub enum MosError {
     BuildError(String),
     Clap(#[from] clap::Error),
+    Cli(String),
     Codegen {
         tree: Arc<ParseTree>,
         span: codemap::Span,
@@ -79,6 +80,15 @@ impl MosError {
     pub fn format(&self, use_color: bool) -> String {
         use ansi_term::Colour::Red;
 
+        fn format_error<M: ToString>(use_color: bool, message: M) -> String {
+            let err = if use_color {
+                Red.paint("error:")
+            } else {
+                "error:".into()
+            };
+            format!("{} {}", err, message.to_string())
+        }
+
         match self {
             MosError::Codegen {
                 tree,
@@ -97,27 +107,16 @@ impl MosError {
                     location.begin.line + 1,
                     location.begin.column + 1
                 );
-                let err = if use_color {
-                    Red.paint("error:")
-                } else {
-                    "error:".into()
-                };
-                format!("{}{} {}", location, err, message)
+                format!("{}{}", location, format_error(use_color, message))
             }
-            MosError::Io(err) => format!("{}", err),
-            MosError::Clap(err) => format!("{}", err),
-            MosError::Toml(err) => format!("{}", err),
-            MosError::Protocol(err) => format!("{}", err),
-            MosError::Crossbeam(err) => format!("{}", err),
-            MosError::BuildError(message) => {
-                let err = if use_color {
-                    Red.paint("error:")
-                } else {
-                    "error:".into()
-                };
-                format!("{} {}", err, message)
-            }
-            MosError::Unknown => "unknown error".to_string(),
+            MosError::Io(err) => format_error(use_color, err),
+            MosError::Clap(err) => format_error(use_color, err),
+            MosError::Cli(err) => format_error(use_color, err),
+            MosError::Toml(err) => format_error(use_color, err),
+            MosError::Protocol(err) => format_error(use_color, err),
+            MosError::Crossbeam(err) => format_error(use_color, err),
+            MosError::BuildError(message) => format_error(use_color, message),
+            MosError::Unknown => format_error(use_color, "unknown error"),
             MosError::Multiple(errors) => errors
                 .iter()
                 .map(|e| e.format(use_color))

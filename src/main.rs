@@ -54,6 +54,7 @@ fn get_app() -> App<'static> {
         )
         .subcommand(build_app())
         .subcommand(format_app())
+        .subcommand(init_app())
         .subcommand(lsp_app())
 }
 
@@ -105,6 +106,7 @@ fn run(args: ArgMatches) -> MosResult<()> {
     match args.subcommand() {
         Some(("build", _)) => build_command(&root, &cfg),
         Some(("format", _)) => format_command(&cfg),
+        Some(("init", _)) => init_command(&root, &cfg),
         Some(("lsp", args)) => lsp_command(args),
         _ => {
             let _ = get_app().print_help()?;
@@ -155,6 +157,12 @@ mod tests {
     fn can_invoke_format() {
         let args = get_app().get_matches_from(vec!["mos", "format"]);
         assert_eq!(args.subcommand_name(), Some("format"));
+    }
+
+    #[test]
+    fn can_invoke_init() {
+        let args = get_app().get_matches_from(vec!["mos", "init"]);
+        assert_eq!(args.subcommand_name(), Some("init"));
     }
 
     #[test]
