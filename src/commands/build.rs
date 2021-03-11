@@ -2,7 +2,7 @@ use clap::App;
 use fs_err as fs;
 use serde::Deserialize;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::config::Config;
@@ -56,7 +56,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     fs::create_dir_all(&target_dir)?;
 
     for input_name in input_names {
-        let input_path = root.join(input_name);
+        let input_path = PathBuf::from(".").join(PathBuf::from(&input_name));
         let output_path = target_dir.join(format!(
             "{}.prg",
             input_path.file_stem().unwrap().to_string_lossy()
