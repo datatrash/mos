@@ -82,7 +82,8 @@ fn to_diagnostics(error: &MosError) -> Vec<Diagnostic> {
             let start = Position::new(l.begin.line as u32, l.begin.column as u32);
             let end = Position::new(l.end.line as u32, l.end.column as u32);
             let range = Range::new(start, end);
-            let d = Diagnostic::new_simple(range, message.clone());
+            let mut d = Diagnostic::new_simple(range, message.clone());
+            d.source = Some("mos".into());
             vec![d]
         }
         MosError::Multiple(errors) => errors.iter().map(to_diagnostics).flatten().collect(),
