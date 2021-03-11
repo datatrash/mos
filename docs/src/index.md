@@ -11,6 +11,6 @@ features:
 - title: Formatter
   details: Automatic source code formatting to make sure your code always looks its shiniest.
 - title: IDE-ready
-  details: Visual Studio Code plugin coming soon. 
+  details: Syntax highlighting, automatic indentation, refactoring support. 
 footer: MIT Licensed | Copyright © 2021-present datatra.sh
 ---

@@ -1,13 +1,31 @@
 # Overview
-MOS is a command-line tool that supports assembling and formatting of assembly code for the 6502.
+MOS is an assembler targeting the MOS 6502 CPU.
 
-::: warning
+::: danger
 **This documentation is preliminary.**
 
 It's just here to make sure current features at least have _some_ documentation. Everything is subject to change and will hopefully improve significantly :smile:
 :::
 
 # Getting started
+Let's dive into the **MOS** pit :metal: (...sorry).
+
+## Getting the tools
+There are two ways to work with MOS. You can download the CLI executable, but a quicker way is to install the Visual Studio Code extension.
+
+### Visual Studio Code extension
+Installing the extension consists of these steps:
+* Open Visual Studio Code
+* In the `Extensions` menu, install the extension called `mos`.
+* Open a folder and place an empty `mos.toml` in this folder. This is the main configuration file for `mos` and the presence of this file will activate the extension.
+* The extension will ask if you want to install the `mos` executable automatically. Allow it to do so.
+* Done! If you'd like to know more, you can find more detailed documentation [here](./ide/vscode).
+
+::: warning
+Not all of the functionality of MOS is currently exposed in the extension. Most notably, performing an application build (e.g. to run in an emulator) still needs to happen via the command line.
+:::
+
+### Command line
 You can download the latest release of MOS [here](https://github.com/datatrash/mos/releases).
 
 Extracting the archive will leave you with a binary called `mos`. You can put it in some easily accessible place. The rest of the documentation will assume it's in your `PATH`.
@@ -23,34 +41,29 @@ rts
 This is a tiny program that changes the border colour on a Commodore 64.
 
 Next, you can build it like so:
-```shell
-mos build test.asm
+```
+> mos build
 ```
 
-If everything went well you will see no output, but a `test.prg` file will have been created. You can load this `.prg` in your favourite C64 emulator. Run it by typing `sys 8192` in the BASIC prompt. The border colour will change, whoo!
+If everything went well you will see no output, but a `main.prg` file will have been created in a directory called `target`. You can load this `.prg` in your favourite C64 emulator. Run it by typing `sys 8192` in the BASIC prompt. The border colour will change, whoo!
+
+::: tip
+You may be wondering why MOS is compiling `main.asm` when no input filename was passed in. Well, you can configure the input filename and many other things by creating a configuration file called `mos.toml`. For now, let's just keep the defaults.
+:::
 
 ## Errors in your code
-What happens when there is an error? Well, let's edit `main.asm` and change it to this:
+What happens when there is an error :boom:? Well, let's edit `main.asm` and change it to this:
 ```asm6502
 inx $d020
 rts
 ```
 `inx $d020` is not a valid instruction, and this is what you will see:
-```shell
-mos build test.asm
-
+```{2}
+> mos build
 main.asm:1:5: error: unexpected '$d020'
 ```
 
-As you can see, MOS prints a few descriptive errors. Hopefully this allows you to fix the error quickly.
+The error indicates that it is located in file `main.asm`, on line 1, column 5. In this case, it didn't expect an operand because `inx` does not need any.
 
-## Formatting
-You can also apply automatic formatting to your code:
-```shell
-mos format test.asm
-```
-
-Again, if everything went well you will see no output, but your source file will have been updated.
-
-## Wrapping up
-Alright, that was the quickest possible introduction, let's now dive into more details.
+## What next?
+Alright, that was the quickest possible introduction! The remainder of the documentation will go over all the features in greater detail.

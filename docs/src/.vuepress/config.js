@@ -45,22 +45,32 @@ module.exports = {
           collapsable: false,
           children: [
             '',
+            'project-setup',
             'assembler',
-            'formatter',
+            'advanced'
           ]
         },
         {
-          title: 'Subcommands',
+          title: 'IDE support',
           collapsable: false,
           children: [
-            'subcommands/',
-            'subcommands/build',
-            'subcommands/format',
-            'subcommands/lsp',
+            'ide/',
+            'ide/vscode'
+          ]
+        },
+        {
+          title: 'CLI',
+          collapsable: false,
+          children: [
+            'cli/'
           ]
         }
       ],
     }
+  },
+
+  markdown: {
+    lineNumbers: true
   },
 
   /**
