@@ -120,10 +120,11 @@ fn main() {
     ansi_term::enable_ansi_support().unwrap();
 
     let args = get_app().get_matches();
+    let no_color = args.is_present("no-color");
 
     loggerv::Logger::new()
         .verbosity(args.occurrences_of("verbose"))
-        .colors(!args.is_present("no-color"))
+        .colors(!no_color)
         .module_path(false)
         .init()
         .unwrap();
@@ -131,7 +132,7 @@ fn main() {
     match run(args) {
         Ok(()) => (),
         Err(e) => {
-            log::error!("{}", e.format(true));
+            log::error!("{}", e.format(!no_color));
             std::process::exit(1);
         }
     }
