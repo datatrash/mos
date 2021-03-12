@@ -97,11 +97,8 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
         for symbol_type in &cfg.build.symbols {
             match symbol_type {
                 SymbolType::Vice => {
-                    let symbol_path = root.join(format!(
-                        "{}.vs",
-                        input_path.file_stem().unwrap().to_string_lossy()
-                    ));
-
+                    let symbol_path =
+                        format!("{}.vs", input_path.file_stem().unwrap().to_string_lossy());
                     let mut out = fs::File::create(target_dir.join(symbol_path))?;
                     out.write_all(to_vice_symbols(generated_code.symbol_table()).as_bytes())?;
                 }
