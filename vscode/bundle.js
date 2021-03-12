@@ -6,4 +6,7 @@ require('esbuild').build({
     minify: true,
     treeShaking: true,
     outfile: 'out/extension.js',
-}).catch(() => process.exit(1))
+}).catch(e => {
+    console.log(e);
+    process.exit(1);
+})
