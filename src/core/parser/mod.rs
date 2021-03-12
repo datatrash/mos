@@ -227,6 +227,14 @@ fn identifier_name(input: LocatedSpan) -> IResult<Identifier> {
     )(input)
 }
 
+/// Tries to parse a scope identifier ('-' or '+', not followed by any other alphanumeric)
+fn identifier_scope(input: LocatedSpan) -> IResult<Identifier> {
+    map_once(
+        tuple((alt((char('-'), char('+'))), not(alphanumeric1))),
+        move |(id, _)| Identifier::new(id.to_string()),
+    )(input)
+}
+
 /// Tries to parse an full identifier path (e.g. `foo.bar.baz`) that may also include address modifiers
 fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     located(|input| {
@@ -236,7 +244,10 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                 '>' => AddressModifier::HighByte,
                 _ => panic!(),
             }))),
-            ws(separated_list1(char('.'), identifier_name)),
+            ws(separated_list1(
+                char('.'),
+                alt((identifier_scope, identifier_name)),
+            )),
         ));
 
         map_once(id, move |(modifier, identifier_path)| {
@@ -709,37 +720,51 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     })(input)
 }
 
+/// A factor in an expression, without any flags
+fn expression_factor_inner(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
+    alt((
+        number,
+        fn_call,
+        identifier_value,
+        current_pc,
+        expression_parens,
+    ))(input)
+}
+
 /// Parses a factor used in an expression, such as a number or a function call
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
+    // See if we can parse the term without any flags. If we can't, there must be flags, so let's try again
     located(|input| {
-        map_once(
-            tuple((
-                opt(ws(char('!'))),
-                opt(ws(char('-'))),
-                alt((
-                    number,
-                    fn_call,
-                    identifier_value,
-                    current_pc,
-                    expression_parens,
+        alt((
+            map(expression_factor_inner, move |factor| Expression::Factor {
+                factor: Box::new(factor),
+                flags: ExpressionFactorFlags::empty(),
+                tag_not: None,
+                tag_neg: None,
+            }),
+            map(
+                tuple((
+                    opt(ws(char('!'))),
+                    opt(ws(char('-'))),
+                    expression_factor_inner,
                 )),
-            )),
-            move |(tag_not, tag_neg, factor)| {
-                let mut flags = ExpressionFactorFlags::empty();
-                if tag_not.is_some() {
-                    flags.set(ExpressionFactorFlags::NOT, true);
-                }
-                if tag_neg.is_some() {
-                    flags.set(ExpressionFactorFlags::NEG, true);
-                }
-                Expression::Factor {
-                    factor: Box::new(factor),
-                    flags,
-                    tag_not,
-                    tag_neg,
-                }
-            },
-        )(input)
+                move |(tag_not, tag_neg, factor)| {
+                    let mut flags = ExpressionFactorFlags::empty();
+                    if tag_not.is_some() {
+                        flags.set(ExpressionFactorFlags::NOT, true);
+                    }
+                    if tag_neg.is_some() {
+                        flags.set(ExpressionFactorFlags::NEG, true);
+                    }
+                    Expression::Factor {
+                        factor: Box::new(factor),
+                        flags,
+                        tag_not,
+                        tag_neg,
+                    }
+                },
+            ),
+        ))(input)
     })(input)
 }
 
@@ -861,13 +886,17 @@ mod test {
         check("lda #1 >> 4", "LDA #1 >> 4");
         check("lda #1 || 2", "LDA #1 || 2");
         check("lda #1 && 2", "LDA #1 && 2");
-        check("lda #-foo", "LDA #-foo");
-        check("lda #!foo", "LDA #!foo");
         check("lda  %11101", "LDA  %11101");
         check(
             "lda  %11101   +   [  $ff  * -12367 ] / foo",
             "LDA  %11101   +   [  $ff  * -12367 ] / foo",
         );
+    }
+
+    #[test]
+    fn parse_expression_factor_flags() {
+        check("lda #-foo", "LDA #-foo");
+        check("lda #!foo", "LDA #!foo");
     }
 
     #[test]
@@ -884,6 +913,12 @@ mod test {
     fn parse_identifier_paths() {
         check("lda a", "LDA a");
         check("lda   super.a", "LDA   super.a");
+    }
+
+    #[test]
+    fn parse_identifier_scopes() {
+        check("lda -", "LDA -");
+        check("lda   super.+", "LDA   super.+");
     }
 
     #[test]
