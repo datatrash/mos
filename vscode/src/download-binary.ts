@@ -6,6 +6,7 @@ import * as os from "os";
 import rimraf from "rimraf";
 import {promisify} from "util";
 import decompress from "decompress";
+import * as semver from 'semver';
 
 export async function getMosBinary(ctx: vscode.ExtensionContext): Promise<string | undefined> {
     const mos_version = await fs.readFile(path.join(vscode.extensions.getExtension("datatrash.mos")!!.extensionPath, "out", "MOS_VERSION"), "utf8");
@@ -47,15 +48,15 @@ export async function getMosBinary(ctx: vscode.ExtensionContext): Promise<string
         const execFile = promisify(require('child_process').execFile);
         let mos_version_output = await execFile(dest, ["--version"]);
         let existing_version = mos_version_output.stdout.split(" ")[1].trim();
-        if (existing_version == mos_version) {
-            return dest;
-        } else {
+        if (semver.gt(mos_version, existing_version)) {
             const updateResponse = await vscode.window.showInformationMessage(
                 `There is a new version of MOS (v${mos_version}), you currently have v${existing_version} installed.`,
                 "Update now",
                 "Dismiss"
             );
             if (updateResponse !== "Update now") return dest;
+        } else {
+            return dest;
         }
     } else {
         const userResponse = await vscode.window.showInformationMessage(
