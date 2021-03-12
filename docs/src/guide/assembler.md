@@ -21,6 +21,49 @@ label: {
 }
 ```
 
+## Variables and constants
+You can define variables and constants using the `.var` and `.const` directives respectively. They can then be used in expressions.
+
+For example:
+```asm6502
+.const BORDER_COLOUR = $d020
+
+lda #7
+sta BORDER_COLOUR
+```
+
+Variables may be redefined, constants may not.
+
+## Symbol scopes
+Labels, variables and constants are _symbols_. Symbols are defined in _scopes_. A scope is defined by a _block_ (starting with `{` and ending with `}`). As long as symbols reside in different scopes they can have duplicate names. You can use the `super` keyword to access symbols in outer scopes.
+
+Sounds complicated perhaps, so here's an example:
+```asm6502
+label: {
+    label: {
+        jmp label
+        jmp super.label
+    }
+}    
+```
+
+The first `jmp` will jump to the innermost label. The second `jmp` will jump to the outermost label.
+
+## Automatic symbols
+Some symbols are generated for you automatically.
+
+### `-` and `+`
+You can use `-` or `+` to refer to the start or the end of a block.
+
+For instance, the following code loops 64 times:
+```asm6502
+ldx #$40
+{
+    dex
+    bne -
+}
+```
+
 ## Expressions
 Simple calculations may be performed.
 
@@ -78,19 +121,6 @@ Currently the only built-in function is `defined` which evaluates to `1` if a va
 lda defined(ADDRESS)   // a will now contain '1'
 lda !defined(ADDRESS)  // a will now contain '0'
 ```
-
-## Variables and constants
-You can define variables and constants using the `.var` and `.const` directives respectively. They can then be used in expressions.
-
-For example:
-```asm6502
-.const BORDER_COLOUR = $d020
-
-lda #7
-sta BORDER_COLOUR
-```
-
-Variables may be redefined, constants may not.
 
 ## Data definition
 You may include data inline like so:

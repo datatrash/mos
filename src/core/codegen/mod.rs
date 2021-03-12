@@ -848,10 +848,20 @@ impl CodegenContext {
             }
             Emittable::Nested(scope_name, inner) => {
                 self.symbols.enter(scope_name);
+                if let Some(pc) = self.segments.try_current().map(|seg| seg.current_pc()) {
+                    self.symbols
+                        .register("-", Symbol::System(pc.as_i64()), None, true)
+                        .unwrap();
+                }
                 let inner = inner
                     .into_iter()
                     .filter_map(|e| self.emit_emittable(e, error_on_failure))
                     .collect_vec();
+                if let Some(pc) = self.segments.try_current().map(|seg| seg.current_pc()) {
+                    self.symbols
+                        .register("+", Symbol::System(pc.as_i64()), None, true)
+                        .unwrap();
+                }
                 self.symbols.leave();
                 match inner.is_empty() {
                     true => None,
@@ -1519,6 +1529,16 @@ mod tests {
         assert_eq!(
             ctx.segments().current().range_data(),
             vec![0xad, 0x03, 0xc0, 0xea]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_access_identifier_scopes() -> TestResult {
+        let ctx = test_codegen("{\nnop\n{\njmp -\njmp super.-\njmp +\n}\n}")?;
+        assert_eq!(
+            ctx.segments().current().range_data(),
+            vec![0xea, 0x4c, 0x01, 0xc0, 0x4c, 0x00, 0xc0, 0x4c, 0x0a, 0xc0]
         );
         Ok(())
     }

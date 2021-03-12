@@ -28,6 +28,23 @@ Let's say we want to assemble some code to `$c000` and some data to `$2000`. We 
 
 If there is only one segment it will be used automatically and there is no need for the `.segment` directive.
 
+### Segment dependencies
+It's also possible to relate the start or end of a segment to another segment.
+
+For instance, to have a segment start where another segment ends, you could do something like:
+
+```asm6502
+.define segment {
+    name = code
+    start = $c000
+}
+
+.define segment {
+    name = data
+    start = segments.code.start
+}
+```
+
 ### Available options
 
 | Key | Type | Description |
