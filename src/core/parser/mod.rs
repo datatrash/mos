@@ -3,7 +3,7 @@ use codemap::Span;
 use itertools::Itertools;
 use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take, take_till, take_till1};
-use nom::character::complete::{alpha1, alphanumeric1, char, hex_digit1, none_of, space1};
+use nom::character::complete::{alpha1, alphanumeric1, anychar, char, hex_digit1, none_of, space1};
 use nom::combinator::{all_consuming, map, not, opt, recognize, rest};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{pair, tuple};
@@ -392,17 +392,21 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
 /// When encountering an error, try to eat enough characters so that parsing may continue from a relatively clean state again
 fn error(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        ws(take_till1(|c| {
-            c == ')' || c == '}' || c == '\n' || c == '\r'
-        })),
-        move |input| {
-            let span = input.span;
+        tuple((
+            ws(recognize(take_till1(|c| {
+                c == ')' || c == '}' || c == '\n' || c == '\r'
+            }))),
+            opt(anychar),
+        )),
+        move |(input, char)| {
+            let char = char.map(|c| c.to_string()).unwrap_or_default();
             let err = ParseError {
-                span,
+                span: input.span,
                 message: format!("unexpected '{}'", input.data.fragment()),
             };
             input.data.extra.report_error(err);
-            Token::Error(Located::new(span, ()))
+            let input = input.map_into(|i| format!("{}{}", i.fragment(), char));
+            Token::Error(input)
         },
     )(input)
 }
@@ -832,12 +836,14 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
 pub fn parse<'a>(filename: &'a Path, source: &'a str) -> (Arc<ParseTree>, Option<MosError>) {
     let state = State::new(filename.as_os_str().to_string_lossy(), source);
     let code_map = state.code_map.clone();
+    let files = state.files.clone();
     let errors = state.errors.clone();
     let input = LocatedSpan::new_extra(source, state);
     let (_, tokens) = all_consuming(source_file)(input).expect("parser cannot fail");
 
     let code_map = Rc::try_unwrap(code_map).ok().unwrap().into_inner();
-    let tree = Arc::new(ParseTree::new(code_map, tokens));
+    let files = Rc::try_unwrap(files).ok().unwrap().into_inner();
+    let tree = Arc::new(ParseTree::new(code_map, files, tokens));
 
     let errors = Rc::try_unwrap(errors).ok().unwrap().into_inner();
     if errors.is_empty() {
@@ -1009,6 +1015,10 @@ mod test {
     fn use_segment() {
         check(".segment   foo", ".SEGMENT   foo");
         check("  .segment   foo   { nop }", "  .SEGMENT   foo   { NOP }");
+        check_ignore_err(
+            "  .segment   foo   {invalid}\nnop",
+            "  .SEGMENT   foo   {invalid}\nNOP",
+        );
     }
 
     #[test]
@@ -1090,6 +1100,12 @@ mod test {
         if let Some(e) = error {
             panic!(e.to_string());
         }
+        let actual = tree.tokens().iter().map(|e| format!("{}", e)).join("");
+        assert_eq!(actual, expected.to_string());
+    }
+
+    fn check_ignore_err(src: &str, expected: &str) {
+        let (tree, _) = parse(&Path::new("test.asm"), src);
         let actual = tree.tokens().iter().map(|e| format!("{}", e)).join("");
         assert_eq!(actual, expected.to_string());
     }

@@ -1,2 +1,5 @@
-inx $d020
-rts
+{
+    nop
+}
+
+nop

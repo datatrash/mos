@@ -1,6 +1,6 @@
 use crate::core::parser::{
-    AddressingMode, ArgItem, Block, Expression, ExpressionFactor, Identifier, Located, Operand,
-    ParseTree, Token, Trivia,
+    format_trivia, AddressingMode, ArgItem, Block, Expression, ExpressionFactor, Identifier,
+    Located, Operand, ParseTree, Token, Trivia,
 };
 use itertools::Itertools;
 use serde::Deserialize;
@@ -123,6 +123,12 @@ impl CodeFormatter {
                 let extra_newline = match tokens.get(token_idx + 1) {
                     Some(next_token) => {
                         let token = &tokens[token_idx];
+
+                        // If the next token is an error, don't do anything special. We just want to
+                        // paste the error right after this token.
+                        if let Token::Error(_) = next_token {
+                            return fmt;
+                        }
 
                         let (newline_if_same, newline_if_diff) = match token {
                             Token::If { .. } => (true, true),
@@ -263,7 +269,9 @@ impl CodeFormatter {
                 .spc()
                 .fmt(self, value),
             Token::Eof(_) => Fmt::new(),
-            Token::Error(_) => Fmt::new(),
+            Token::Error(invalid) => Fmt::new()
+                .push(format_trivia(&invalid.trivia))
+                .push(&invalid.data),
             Token::Expression(expr) => Fmt::new().fmt(self, expr),
             Token::If {
                 tag_if,
@@ -800,7 +808,7 @@ fn indent_prefix(indent: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{format, FormattingOptions};
-    use crate::core::parser::parse_or_err;
+    use crate::core::parser::{parse, parse_or_err};
     use crate::errors::{MosError, MosResult};
     use crate::formatting::BracePosition;
     use itertools::Itertools;
@@ -922,6 +930,16 @@ mod tests {
         let cfg: FormattingOptions = toml::from_str(toml).map_err(MosError::from)?;
         assert_eq!(cfg, FormattingOptions::default());
 
+        Ok(())
+    }
+
+    #[test]
+    fn format_with_errors() -> MosResult<()> {
+        let source = ".segment foo {boop}\n{nop}";
+        let expected = ".segment foo {boop}\n\n{\n    nop\n}";
+        let (ast, _) = parse("test.asm".as_ref(), source);
+        let actual = format(ast, FormattingOptions::default());
+        eq(actual, expected);
         Ok(())
     }
 

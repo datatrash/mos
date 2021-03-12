@@ -1,7 +1,7 @@
 use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::{Identifier, IdentifierPath, ParseError};
-use codemap::{CodeMap, Span};
+use codemap::{CodeMap, File, Span};
 use itertools::Itertools;
 use std::cell::RefCell;
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
@@ -20,6 +20,7 @@ pub type ArgItem = (Located<Expression>, Option<Located<char>>);
 /// The result of parsing
 pub struct ParseTree {
     code_map: CodeMap,
+    files: Vec<Arc<File>>,
     tokens: Vec<Token>,
 }
 
@@ -30,12 +31,20 @@ impl Debug for ParseTree {
 }
 
 impl ParseTree {
-    pub fn new(code_map: CodeMap, tokens: Vec<Token>) -> Self {
-        Self { code_map, tokens }
+    pub fn new(code_map: CodeMap, files: Vec<Arc<File>>, tokens: Vec<Token>) -> Self {
+        Self {
+            code_map,
+            files,
+            tokens,
+        }
     }
 
     pub fn code_map(&self) -> &CodeMap {
         &self.code_map
+    }
+
+    pub fn files(&self) -> &Vec<Arc<File>> {
+        &self.files
     }
 
     pub fn tokens(&self) -> &[Token] {
@@ -48,6 +57,9 @@ impl ParseTree {
 pub struct State {
     /// Codemap
     pub code_map: Rc<RefCell<CodeMap>>,
+
+    /// All files that were parsed
+    pub files: Rc<RefCell<Vec<Arc<codemap::File>>>>,
 
     /// Which file are we parsing?
     pub file: Arc<codemap::File>,
@@ -69,6 +81,7 @@ impl State {
 
         Self {
             code_map: Rc::new(RefCell::new(code_map)),
+            files: Rc::new(RefCell::new(vec![file.clone()])),
             file,
             errors: Rc::new(RefCell::new(Vec::new())),
             ignore_next_error: Rc::new(RefCell::new(false)),
@@ -451,7 +464,7 @@ pub enum Token {
         value: Option<Box<Token>>,
     },
     Eof(Located<()>),
-    Error(Located<()>),
+    Error(Located<String>),
     Expression(Expression),
     If {
         tag_if: Located<String>,
@@ -502,7 +515,7 @@ impl Token {
             Token::Data { size, .. } => &size.trivia,
             Token::Definition { tag, .. } => &tag.trivia,
             Token::Eof(empty) => &empty.trivia,
-            Token::Error(_) => panic!(),
+            Token::Error(invalid) => &invalid.trivia,
             Token::Expression(expr) => {
                 return expr.trivia();
             }
@@ -673,7 +686,7 @@ fn format_arglist(args: &[ArgItem]) -> String {
 }
 
 /// Formats all the [Trivia] enclosed in a [Located]
-fn format_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> String {
+pub fn format_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> String {
     trivia
         .as_ref()
         .map(|t| t.data.iter().map(|c| format!("{}", c)).join(""))
@@ -763,8 +776,11 @@ impl Display for Token {
                     .unwrap_or_else(|| "".to_string());
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, value)
             }
-            Token::Eof(triv) | Token::Error(triv) => {
+            Token::Eof(triv) => {
                 write!(f, "{}", format_trivia(&triv.trivia))
+            }
+            Token::Error(str) => {
+                write!(f, "{}", str)
             }
             Token::Expression(e) => write!(f, "{}", e),
             Token::If {
