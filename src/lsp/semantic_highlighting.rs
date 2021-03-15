@@ -1,4 +1,6 @@
-use crate::core::parser::{ArgItem, Block, Expression, ExpressionFactor, Token, VariableType};
+use crate::core::parser::{
+    ArgItem, Block, Expression, ExpressionFactor, Identifier, Token, VariableType,
+};
 use crate::errors::MosResult;
 use crate::impl_request_handler;
 use crate::lsp::{LspContext, RequestHandler};
@@ -215,9 +217,16 @@ impl SemTokBuilder {
         self
     }
 
-    fn args(mut self, args: &[ArgItem]) -> Self {
+    fn expression_args(mut self, args: &[ArgItem<Expression>]) -> Self {
         for (expr, _) in args {
             self = self.expression(&expr.data);
+        }
+        self
+    }
+
+    fn identifier_args(mut self, args: &[ArgItem<Identifier>]) -> Self {
+        for (id, _) in args {
+            self = self.identifier(id);
         }
         self
     }
@@ -237,7 +246,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         Token::Align { tag, value } => b.keyword(tag).expression(&value.data),
         Token::Braces { block, .. } | Token::Config(block) => b.block(block),
         Token::ConfigPair { key, value, .. } => b.push(key, TokenType::Keyword).token(&value.data),
-        Token::Data { values, size } => b.push(size, TokenType::Keyword).args(values),
+        Token::Data { values, size } => b.push(size, TokenType::Keyword).expression_args(values),
         Token::Definition { tag, id, value } => {
             let b = b.keyword(tag).identifier(id);
             match value {
@@ -279,12 +288,19 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 None => b,
             }
         }
-        Token::VariableDefinition { ty, id, value, .. } => {
-            let token_type = match &ty.data {
-                VariableType::Constant => TokenType::Constant,
-                VariableType::Variable => TokenType::Variable,
-            };
-            b.keyword(ty).identifier(id).push(value, token_type)
+        Token::MacroDefinition {
+            tag,
+            id,
+            args,
+            block,
+            ..
+        } => b
+            .keyword(tag)
+            .identifier(id)
+            .identifier_args(args)
+            .block(block),
+        Token::MacroInvocation { name, args, .. } => {
+            SemTokBuilder::new().identifier(name).expression_args(args)
         }
         Token::ProgramCounterDefinition { star, value, .. } => {
             b.push(star, TokenType::Keyword).expression(&value.data)
@@ -295,6 +311,13 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 Some(block) => b.block(block),
                 None => b,
             }
+        }
+        Token::VariableDefinition { ty, id, value, .. } => {
+            let token_type = match &ty.data {
+                VariableType::Constant => TokenType::Constant,
+                VariableType::Variable => TokenType::Variable,
+            };
+            b.keyword(ty).identifier(id).push(value, token_type)
         }
     }
 }
@@ -312,7 +335,7 @@ fn emit_expression_semantic(expression: &Expression) -> SemTokBuilder {
                 SemTokBuilder::new().push(pc, TokenType::Constant)
             }
             ExpressionFactor::FunctionCall { name, args, .. } => {
-                SemTokBuilder::new().identifier(name).args(args)
+                SemTokBuilder::new().identifier(name).expression_args(args)
             }
         },
     }

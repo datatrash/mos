@@ -256,34 +256,31 @@ impl<'a> DefinitionGenerator<'a> {
 #[cfg(test)]
 mod tests {
     use crate::core::parser::parse;
-    use crate::errors::MosResult;
     use crate::lsp::analysis::Analysis;
     use lsp_types::Position;
 
     #[test]
-    fn can_find_basic_token() -> MosResult<()> {
+    fn can_find_basic_token() {
         let analysis = analysis("lda foo\nfoo: nop");
         let def = analysis.find("test.asm", Position::new(0, 4)).unwrap();
         assert_eq!(
             analysis.look_up_span(def.location.unwrap()).to_string(),
             "test.asm:2:1: 2:4"
         );
-        Ok(())
     }
 
     #[test]
-    fn can_find_complex_token() -> MosResult<()> {
+    fn can_find_complex_token() {
         let analysis = analysis("lda a.super.b.foo\na: {foo: nop}\nb: {foo: nop}");
         let def = analysis.find("test.asm", Position::new(0, 4)).unwrap();
         assert_eq!(
             analysis.look_up_span(def.location.unwrap()).to_string(),
             "test.asm:3:5: 3:8"
         );
-        Ok(())
     }
 
     fn analysis(src: &str) -> Analysis {
         let (tree, error) = parse("test.asm".as_ref(), src);
-        Analysis::new(tree.clone(), error)
+        Analysis::new(tree, error)
     }
 }

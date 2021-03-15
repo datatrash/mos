@@ -316,6 +316,32 @@ impl CodeFormatter {
                 .fmt(self, colon)
                 .spc()
                 .fmt(self, block),
+            Token::MacroDefinition {
+                tag,
+                id,
+                lparen,
+                rparen,
+                args,
+                block,
+            } => Fmt::new()
+                .push(&tag.data)
+                .spc()
+                .fmt(self, id)
+                .spc()
+                .fmt(self, lparen)
+                .fmt(self, args)
+                .fmt(self, rparen)
+                .fmt(self, block),
+            Token::MacroInvocation {
+                name,
+                lparen,
+                args,
+                rparen,
+            } => Fmt::new()
+                .fmt(self, name)
+                .fmt(self, lparen)
+                .fmt(self, args)
+                .fmt(self, rparen),
             Token::ProgramCounterDefinition { star, eq, value } => Fmt::new()
                 .push(&star.data.to_string())
                 .spc()
@@ -427,10 +453,18 @@ impl CodeFormatter {
         }
     }
 
-    fn format_args(&mut self, args: &[ArgItem]) -> Fmt {
+    fn format_expression_args(&mut self, args: &[ArgItem<Expression>]) -> Fmt {
         let mut fmt = Fmt::new();
         for (expr, comma) in args {
             fmt = fmt.fmt(self, expr).fmt(self, comma);
+        }
+        fmt
+    }
+
+    fn format_identifier_args(&mut self, args: &[ArgItem<Identifier>]) -> Fmt {
+        let mut fmt = Fmt::new();
+        for (id, comma) in args {
+            fmt = fmt.fmt(self, id).fmt(self, comma);
         }
         fmt
     }
@@ -661,9 +695,15 @@ impl Formattable for &Box<Located<ExpressionFactor>> {
     }
 }
 
-impl Formattable for &Vec<ArgItem> {
+impl Formattable for &Vec<ArgItem<Expression>> {
     fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_args(self)
+        formatter.format_expression_args(self)
+    }
+}
+
+impl Formattable for &Vec<ArgItem<Identifier>> {
+    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
+        formatter.format_identifier_args(self)
     }
 }
 
@@ -934,13 +974,12 @@ mod tests {
     }
 
     #[test]
-    fn format_with_errors() -> MosResult<()> {
+    fn format_with_errors() {
         let source = ".segment foo {boop}\n{nop}";
         let expected = ".segment foo {boop}\n\n{\n    nop\n}";
         let (ast, _) = parse("test.asm".as_ref(), source);
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
-        Ok(())
     }
 
     // Cross-platform eq

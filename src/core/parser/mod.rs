@@ -389,6 +389,46 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
     ))(input)
 }
 
+/// Tries to parse a macro definition
+fn macro_definition(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(".macro")),
+            ws(identifier_name),
+            ws(char('(')),
+            opt(identifier_arg_list),
+            ws(char(')')),
+            block,
+        )),
+        move |(tag, id, lparen, args, rparen, block)| Token::MacroDefinition {
+            tag: tag.map_into(|_| ".macro".into()),
+            id,
+            lparen,
+            args: args.unwrap_or_default(),
+            rparen,
+            block,
+        },
+    )(input)
+}
+
+/// Tries to parse a macro invocation
+fn macro_invocation(input: LocatedSpan) -> IResult<Token> {
+    map_once(fn_call, |f| match f.data {
+        ExpressionFactor::FunctionCall {
+            name,
+            lparen,
+            args,
+            rparen,
+        } => Token::MacroInvocation {
+            name,
+            lparen,
+            args,
+            rparen,
+        },
+        _ => panic!(),
+    })(input)
+}
+
 /// When encountering an error, try to eat enough characters so that parsing may continue from a relatively clean state again
 fn error(input: LocatedSpan) -> IResult<Token> {
     map_once(
@@ -428,7 +468,7 @@ fn data(input: LocatedSpan) -> IResult<Token> {
                 map(ws(tag_no_case(".word")), |t| t.map(|_| DataSize::Word)),
                 map(ws(tag_no_case(".dword")), |t| t.map(|_| DataSize::Dword)),
             )),
-            expect(arg_list, "expected expression"),
+            expect(expression_arg_list, "expected expression"),
         )),
         move |(size, values)| Token::Data {
             values: values.unwrap_or_default(),
@@ -598,6 +638,8 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         const_definition,
         pc_definition,
         config_definition,
+        macro_definition,
+        macro_invocation,
         label,
         data,
         segment,
@@ -681,8 +723,8 @@ fn current_pc(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     })(input)
 }
 
-/// Parses a comma-separated list
-fn arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem>> {
+/// Parses a comma-separated list of expressions
+fn expression_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Expression>>> {
     map(
         tuple((
             many0(tuple((ws(expression), ws(char(','))))),
@@ -692,10 +734,30 @@ fn arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem>> {
             let list = list
                 .into_iter()
                 .map(|(expr, comma)| (expr.flatten(), Some(comma)))
-                .collect::<Vec<ArgItem>>();
-            let mut result: Vec<ArgItem> = vec![];
+                .collect::<Vec<_>>();
+            let mut result: Vec<_> = vec![];
             result.extend(list);
             result.push((last.flatten(), None));
+            result
+        },
+    )(input)
+}
+
+/// Parses a comma-separated list of identifiers (TODO: combine with expression_arg_list)
+fn identifier_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Identifier>>> {
+    map(
+        tuple((
+            many0(tuple((ws(identifier_name), ws(char(','))))),
+            ws(identifier_name),
+        )),
+        |(list, last)| {
+            let list = list
+                .into_iter()
+                .map(|(expr, comma)| (expr, Some(comma)))
+                .collect::<Vec<_>>();
+            let mut result: Vec<_> = vec![];
+            result.extend(list);
+            result.push((last, None));
             result
         },
     )(input)
@@ -708,7 +770,7 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
             tuple((
                 ws(identifier_name),
                 ws(char('(')),
-                opt(arg_list),
+                opt(expression_arg_list),
                 ws(char(')')),
             )),
             move |(name, lparen, args, rparen)| {
@@ -925,6 +987,13 @@ mod test {
     fn parse_identifier_scopes() {
         check("lda -", "LDA -");
         check("lda   super.+", "LDA   super.+");
+    }
+
+    #[test]
+    fn parse_macro() {
+        check(".macro foo() { nop }", ".MACRO foo() { NOP }");
+        check(".macro foo(val) { nop }", ".MACRO foo(val) { NOP }");
+        check("foo()", "foo()");
     }
 
     #[test]

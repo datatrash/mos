@@ -73,8 +73,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
         let generated_code = codegen(tree, CodegenOptions { pc: 0x2000.into() })?;
 
         let mut merger = SegmentMerger::new(output_path);
-        for segment_name in generated_code.segments().keys() {
-            let segment = generated_code.segments().get(segment_name);
+        for (segment_name, segment) in generated_code.segments() {
             if segment.options().write {
                 merger.merge(segment_name, segment)?;
             }
@@ -85,13 +84,15 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
         }
 
         for (path, m) in merger.targets() {
-            if let Some(range) = &m.range() {
-                log::trace!("Writing: (${:04x} - ${:04x})", range.start, range.end);
-                log::trace!("Writing: {:?}", m.range_data());
-                let mut out = fs::File::create(target_dir.join(path))?;
-                out.write_all(&(range.start as u16).to_le_bytes())?;
-                out.write_all(&m.range_data())?;
-            }
+            log::trace!(
+                "Writing: (${:04x} - ${:04x})",
+                m.range().start,
+                m.range().end
+            );
+            log::trace!("Writing: {:?}", m.range_data());
+            let mut out = fs::File::create(target_dir.join(path))?;
+            out.write_all(&(m.range().start as u16).to_le_bytes())?;
+            out.write_all(&m.range_data())?;
         }
 
         for symbol_type in &cfg.build.symbols {
@@ -100,7 +101,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
                     let symbol_path =
                         format!("{}.vs", input_path.file_stem().unwrap().to_string_lossy());
                     let mut out = fs::File::create(target_dir.join(symbol_path))?;
-                    out.write_all(to_vice_symbols(generated_code.symbol_table()).as_bytes())?;
+                    out.write_all(to_vice_symbols(generated_code.symbols()).as_bytes())?;
                 }
             }
         }
@@ -128,7 +129,6 @@ mod tests {
                 entry,
                 target_directory: format!("{}/target", root),
                 symbols: vec![SymbolType::Vice],
-                ..Default::default()
             },
             ..Default::default()
         };

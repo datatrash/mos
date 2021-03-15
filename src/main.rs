@@ -9,7 +9,6 @@ use fs_err as fs;
 
 use crate::commands::*;
 use crate::config::Config;
-use crate::core::parser;
 use crate::errors::MosResult;
 
 /// Contains the available CLI commands and their associated logic

@@ -1,4 +1,3 @@
-use crate::core::parser::config_map::ConfigMap;
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::{Identifier, IdentifierPath, ParseError};
 use codemap::{CodeMap, File, Span};
@@ -15,7 +14,7 @@ pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State>;
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
 
 /// An item in a comma-separated list
-pub type ArgItem = (Located<Expression>, Option<Located<char>>);
+pub type ArgItem<T> = (Located<T>, Option<Located<char>>);
 
 /// The result of parsing
 pub struct ParseTree {
@@ -143,7 +142,7 @@ impl Display for IndexRegister {
 }
 
 /// A 6502 instruction
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Instruction {
     pub mnemonic: Located<Mnemonic>,
     /// The operand is optional because some instructions (e.g. `NOP`) don't have an operand.
@@ -151,7 +150,7 @@ pub struct Instruction {
 }
 
 /// The addressing mode for the instruction
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AddressingMode {
     /// Absolute or Zero-Page addressing (e.g. `LDA $34`)
     AbsoluteOrZP,
@@ -166,7 +165,7 @@ pub enum AddressingMode {
 }
 
 /// The operand of an instruction
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Operand {
     pub expr: Located<Expression>,
     pub lchar: Option<Located<char>>,
@@ -176,7 +175,7 @@ pub struct Operand {
 }
 
 /// The optional register suffix of an operand
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RegisterSuffix {
     pub comma: Located<char>,
     pub register: Located<IndexRegister>,
@@ -251,6 +250,28 @@ pub enum BinaryOp {
     Or,
 }
 
+impl BinaryOp {
+    pub fn apply(&self, lhs: i64, rhs: i64) -> i64 {
+        match self {
+            BinaryOp::Add => lhs + rhs,
+            BinaryOp::Sub => lhs - rhs,
+            BinaryOp::Mul => lhs * rhs,
+            BinaryOp::Div => lhs / rhs,
+            BinaryOp::Shl => lhs << rhs,
+            BinaryOp::Shr => lhs >> rhs,
+            BinaryOp::Xor => lhs ^ rhs,
+            BinaryOp::Eq => (lhs == rhs) as i64,
+            BinaryOp::Ne => (lhs != rhs) as i64,
+            BinaryOp::Gt => (lhs > rhs) as i64,
+            BinaryOp::GtEq => (lhs >= rhs) as i64,
+            BinaryOp::Lt => (lhs < rhs) as i64,
+            BinaryOp::LtEq => (lhs <= rhs) as i64,
+            BinaryOp::And => (lhs != 0 && rhs != 0) as i64,
+            BinaryOp::Or => (lhs != 0 || rhs != 0) as i64,
+        }
+    }
+}
+
 impl Display for BinaryOp {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match &self {
@@ -274,7 +295,7 @@ impl Display for BinaryOp {
 }
 
 /// A binary expression of the form `lhs op rhs`
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BinaryExpression {
     pub op: Located<BinaryOp>,
     pub lhs: Box<Located<Expression>>,
@@ -282,7 +303,7 @@ pub struct BinaryExpression {
 }
 
 /// A factor that can be used on either side of an expression operation
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExpressionFactor {
     CurrentProgramCounter(Located<char>),
     ExprParens {
@@ -293,7 +314,7 @@ pub enum ExpressionFactor {
     FunctionCall {
         name: Located<Identifier>,
         lparen: Located<char>,
-        args: Vec<ArgItem>,
+        args: Vec<ArgItem<Expression>>,
         rparen: Located<char>,
     },
     IdentifierValue {
@@ -307,7 +328,7 @@ pub enum ExpressionFactor {
 }
 
 /// A wrapper that stores the original number string and its radix, so that any zero-prefixes are kept
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Number {
     radix: u32,
     data: String,
@@ -362,7 +383,7 @@ impl Display for ExpressionFactorFlags {
 }
 
 /// An expression consists of one or more factors, possibly contained within a binary (sub)expression
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Expression {
     BinaryExpression(BinaryExpression),
     Factor {
@@ -409,16 +430,6 @@ pub enum DataSize {
     Dword,
 }
 
-impl DataSize {
-    pub fn byte_len(&self) -> usize {
-        match self {
-            DataSize::Byte => 1,
-            DataSize::Word => 2,
-            DataSize::Dword => 4,
-        }
-    }
-}
-
 impl Display for DataSize {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
@@ -430,7 +441,7 @@ impl Display for DataSize {
 }
 
 /// A block of tokens
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Block {
     pub lparen: Located<char>,
     pub inner: Vec<Token>,
@@ -438,7 +449,7 @@ pub struct Block {
 }
 
 /// Tokens that, together, make up all possible source text
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Token {
     Align {
         tag: Located<String>,
@@ -455,7 +466,7 @@ pub enum Token {
         value: Box<Located<Token>>,
     },
     Data {
-        values: Vec<ArgItem>,
+        values: Vec<ArgItem<Expression>>,
         size: Located<DataSize>,
     },
     Definition {
@@ -485,6 +496,20 @@ pub enum Token {
         id: Located<Identifier>,
         colon: Located<char>,
         block: Option<Block>,
+    },
+    MacroDefinition {
+        tag: Located<String>,
+        id: Located<Identifier>,
+        lparen: Located<char>,
+        args: Vec<ArgItem<Identifier>>,
+        rparen: Located<char>,
+        block: Block,
+    },
+    MacroInvocation {
+        name: Located<Identifier>,
+        lparen: Located<char>,
+        args: Vec<ArgItem<Expression>>,
+        rparen: Located<char>,
     },
     ProgramCounterDefinition {
         star: Located<char>,
@@ -523,40 +548,14 @@ impl Token {
             Token::Instruction(i) => &i.mnemonic.trivia,
             Token::Include { tag, .. } => &tag.trivia,
             Token::Label { id, .. } => &id.trivia,
+            Token::MacroDefinition { tag, .. } => &tag.trivia,
+            Token::MacroInvocation { name, .. } => &name.trivia,
             Token::ProgramCounterDefinition { star, .. } => &star.trivia,
             Token::Segment { tag, .. } => &tag.trivia,
             Token::VariableDefinition { ty, .. } => &ty.trivia,
         };
 
         t.as_ref().map(|t| &t.data)
-    }
-
-    pub(crate) fn as_config_map(&self) -> ConfigMap {
-        match self {
-            Token::Config(block) => ConfigMap::new(block.lparen.span, &block.inner),
-            _ => panic!(),
-        }
-    }
-
-    pub(crate) fn as_expression(&self) -> &Expression {
-        match self {
-            Token::Expression(expr) => &expr,
-            _ => panic!(),
-        }
-    }
-
-    pub(crate) fn as_factor(&self) -> &ExpressionFactor {
-        match self {
-            Token::Expression(Expression::Factor { factor, .. }) => &factor.data,
-            _ => panic!(),
-        }
-    }
-
-    pub(crate) fn try_as_factor(&self) -> Option<&ExpressionFactor> {
-        match self {
-            Token::Expression(Expression::Factor { factor, .. }) => Some(&factor.data),
-            _ => None,
-        }
     }
 }
 
@@ -673,7 +672,7 @@ impl Display for ExpressionFactor {
 }
 
 /// Formats a list of [ArgItem], using its contained trivia to add the separating commas, etc
-fn format_arglist(args: &[ArgItem]) -> String {
+fn format_arglist<T: Display>(args: &[ArgItem<T>]) -> String {
     args.iter()
         .map(|(arg, comma)| {
             let comma = match comma {
@@ -863,6 +862,33 @@ impl Display for Token {
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", id, colon, block)
+            }
+            Token::MacroDefinition {
+                tag,
+                id,
+                lparen,
+                args,
+                rparen,
+                block,
+            } => {
+                write!(
+                    f,
+                    "{}{}{}{}{}{}",
+                    format!("{}", tag).to_uppercase(),
+                    id,
+                    lparen,
+                    format_arglist(args),
+                    rparen,
+                    block
+                )
+            }
+            Token::MacroInvocation {
+                name,
+                lparen,
+                args,
+                rparen,
+            } => {
+                write!(f, "{}{}{}{}", name, lparen, format_arglist(args), rparen)
             }
             Token::ProgramCounterDefinition { star, eq, value } => {
                 write!(f, "{}{}{}", star, eq, value)

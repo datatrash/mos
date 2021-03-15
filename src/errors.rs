@@ -2,6 +2,7 @@ use crate::core::parser::ParseTree;
 use crossbeam_channel::SendError;
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
+use std::str::ParseBoolError;
 use std::sync::Arc;
 
 pub type MosResult<T> = Result<T, MosError>;
@@ -27,6 +28,7 @@ pub enum MosError {
     Toml(#[from] toml::de::Error),
     Protocol(#[from] ProtocolError),
     Crossbeam(#[from] SendError<Message>),
+    ParseBoolError(#[from] ParseBoolError),
     Unknown,
 }
 
@@ -116,6 +118,7 @@ impl MosError {
             MosError::Protocol(err) => format_error(use_color, err),
             MosError::Crossbeam(err) => format_error(use_color, err),
             MosError::BuildError(message) => format_error(use_color, message),
+            MosError::ParseBoolError(err) => format_error(use_color, err),
             MosError::Unknown => format_error(use_color, "unknown error"),
             MosError::Multiple(errors) => errors
                 .iter()
