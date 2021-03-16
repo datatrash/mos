@@ -219,7 +219,12 @@ impl<'a> DefinitionGenerator<'a> {
                     self.scope.pop();
                 }
             }
-            Token::VariableDefinition { id, .. } => {
+            Token::MacroInvocation { id, .. } => {
+                let full_path = self.scope.join(&id.data).canonicalize();
+                let def = self.defs.get_or_create_mut(&full_path);
+                def.usages.push(id.span);
+            }
+            Token::MacroDefinition { id, .. } | Token::VariableDefinition { id, .. } => {
                 self.defs
                     .get_or_create_mut(&self.scope.join(&id.data))
                     .location = Some(id.span);

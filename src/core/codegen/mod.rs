@@ -642,7 +642,7 @@ impl CodegenContext {
                     }),
                 )?;
             }
-            Token::MacroInvocation { name, args, .. } => {
+            Token::MacroInvocation { id: name, args, .. } => {
                 let def = self
                     .get_symbol_data(name.span, &name.data)
                     .map(|d| d.as_macro_definition().clone());

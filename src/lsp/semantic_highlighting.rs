@@ -299,7 +299,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             .identifier(id)
             .identifier_args(args)
             .block(block),
-        Token::MacroInvocation { name, args, .. } => {
+        Token::MacroInvocation { id: name, args, .. } => {
             SemTokBuilder::new().identifier(name).expression_args(args)
         }
         Token::ProgramCounterDefinition { star, value, .. } => {

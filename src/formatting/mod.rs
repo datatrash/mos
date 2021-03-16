@@ -327,13 +327,13 @@ impl CodeFormatter {
                 .push(&tag.data)
                 .spc()
                 .fmt(self, id)
-                .spc()
                 .fmt(self, lparen)
                 .fmt(self, args)
                 .fmt(self, rparen)
+                .spc()
                 .fmt(self, block),
             Token::MacroInvocation {
-                name,
+                id: name,
                 lparen,
                 args,
                 rparen,
@@ -456,7 +456,7 @@ impl CodeFormatter {
     fn format_expression_args(&mut self, args: &[ArgItem<Expression>]) -> Fmt {
         let mut fmt = Fmt::new();
         for (expr, comma) in args {
-            fmt = fmt.fmt(self, expr).fmt(self, comma);
+            fmt = fmt.fmt(self, expr).fmt(self, comma).spc_if_next();
         }
         fmt
     }
@@ -464,7 +464,7 @@ impl CodeFormatter {
     fn format_identifier_args(&mut self, args: &[ArgItem<Identifier>]) -> Fmt {
         let mut fmt = Fmt::new();
         for (id, comma) in args {
-            fmt = fmt.fmt(self, id).fmt(self, comma);
+            fmt = fmt.fmt(self, id).fmt(self, comma).spc_if_next();
         }
         fmt
     }

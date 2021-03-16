@@ -39,10 +39,14 @@
 // here is some data
 data: {
     /* here it is */
-    .byte 1 // hello
+    .byte 1, 2 // hello
     .word 4
 
     nop
 }
 
 nop
+
+.macro MyMacro(arg1, arg2) {
+    brk
+}

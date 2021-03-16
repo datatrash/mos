@@ -1,5 +1,38 @@
 # Advanced features
 
+## Macros
+Macros may be defined by specifying a name and an argument list.
+
+For instance, here's a macro shamelessly stolen from the [KickAssembler documentation](http://theweb.dk/KickAssembler/webhelp/content/ch07s02.html):
+
+```asm6502
+.macro ClearScreen(screen, clearByte) {
+    lda #clearByte
+    ldx #0
+    {
+        sta screen, x
+        sta screen + $100, x
+        sta screen + $200, x
+        sta screen + $300, x
+        inx
+        bne -
+    }
+}
+```
+
+To invoke it, use something like:
+```asm6502
+ClearScreen($0400, 32)
+```
+
+Any labels, constants or variables that a macro defines appear in the scope of the caller. If you want to limit the macro's scope, you can enclose it in a scope of its own. For instance, with a label:
+
+```asm6502
+my_scope: {
+    ClearScreen($0400, 32)
+}
+```
+
 ## Segments
 Segments can be used to assemble different blocks to different memory locations. If no segment is configured, a default segment is created that starts at `$2000`.
 

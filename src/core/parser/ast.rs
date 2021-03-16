@@ -506,7 +506,7 @@ pub enum Token {
         block: Block,
     },
     MacroInvocation {
-        name: Located<Identifier>,
+        id: Located<Identifier>,
         lparen: Located<char>,
         args: Vec<ArgItem<Expression>>,
         rparen: Located<char>,
@@ -549,7 +549,7 @@ impl Token {
             Token::Include { tag, .. } => &tag.trivia,
             Token::Label { id, .. } => &id.trivia,
             Token::MacroDefinition { tag, .. } => &tag.trivia,
-            Token::MacroInvocation { name, .. } => &name.trivia,
+            Token::MacroInvocation { id: name, .. } => &name.trivia,
             Token::ProgramCounterDefinition { star, .. } => &star.trivia,
             Token::Segment { tag, .. } => &tag.trivia,
             Token::VariableDefinition { ty, .. } => &ty.trivia,
@@ -883,7 +883,7 @@ impl Display for Token {
                 )
             }
             Token::MacroInvocation {
-                name,
+                id: name,
                 lparen,
                 args,
                 rparen,

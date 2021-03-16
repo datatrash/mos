@@ -420,7 +420,7 @@ fn macro_invocation(input: LocatedSpan) -> IResult<Token> {
             args,
             rparen,
         } => Token::MacroInvocation {
-            name,
+            id: name,
             lparen,
             args,
             rparen,
