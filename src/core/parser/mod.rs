@@ -562,6 +562,23 @@ fn segment(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+/// Tries to parse a loop statement
+fn loop_(input: LocatedSpan) -> IResult<Token> {
+    let loop_scope = Box::new(input.extra.new_anonymous_scope());
+    map_once(
+        tuple((ws(tag_no_case(".loop")), expression, block)),
+        |(tag, expr, block)| {
+            let tag = tag.map_into(|_| ".loop".into());
+            Token::Loop {
+                tag,
+                loop_scope,
+                expr,
+                block,
+            }
+        },
+    )(input)
+}
+
 /// Tries to parse an if/else statement
 fn if_(input: LocatedSpan) -> IResult<Token> {
     let if_scope = Box::new(input.extra.new_anonymous_scope());
@@ -643,6 +660,7 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         label,
         data,
         segment,
+        loop_,
         if_,
         align,
         include,
@@ -1038,6 +1056,11 @@ mod test {
     #[test]
     fn parse_align() {
         check("   .align   123", "   .ALIGN   123");
+    }
+
+    #[test]
+    fn parse_loop() {
+        check("   .loop   123   {nop}", "   .LOOP   123   {NOP}");
     }
 
     #[test]

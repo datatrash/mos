@@ -64,6 +64,18 @@ ldx #$40
 }
 ```
 
+## Loops
+Loops may be generated using the `.loop` directive:
+
+```asm6502
+.loop 5 {
+    lda #$00
+    sta $0400 + index
+}
+```
+
+The `index` symbol contains the current loop index (zero-based).
+
 ## Expressions
 Simple calculations may be performed.
 
@@ -98,7 +110,7 @@ Equality tests may also be performed. They will evaluate to `0` when false and `
 - `&&` And
 - `||` Or
 
-### Nibble operators
+### Word operators
 Additionally, the high or low byte of 16-bit variables may be accessed using the `<` and `>` modifiers, e.g.:
 
 ```asm6502

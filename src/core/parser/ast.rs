@@ -497,6 +497,12 @@ pub enum Token {
         colon: Located<char>,
         block: Option<Block>,
     },
+    Loop {
+        tag: Located<String>,
+        loop_scope: Box<Identifier>,
+        expr: Located<Expression>,
+        block: Block,
+    },
     MacroDefinition {
         tag: Located<String>,
         id: Located<Identifier>,
@@ -548,6 +554,7 @@ impl Token {
             Token::Instruction(i) => &i.mnemonic.trivia,
             Token::Include { tag, .. } => &tag.trivia,
             Token::Label { id, .. } => &id.trivia,
+            Token::Loop { tag, .. } => &tag.trivia,
             Token::MacroDefinition { tag, .. } => &tag.trivia,
             Token::MacroInvocation { id: name, .. } => &name.trivia,
             Token::ProgramCounterDefinition { star, .. } => &star.trivia,
@@ -862,6 +869,14 @@ impl Display for Token {
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", id, colon, block)
+            }
+            Token::Loop {
+                tag,
+                loop_scope: _,
+                expr,
+                block,
+            } => {
+                write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), expr, block)
             }
             Token::MacroDefinition {
                 tag,

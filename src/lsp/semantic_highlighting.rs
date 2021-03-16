@@ -288,6 +288,12 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 None => b,
             }
         }
+        Token::Loop {
+            tag,
+            loop_scope: _,
+            expr,
+            block,
+        } => b.keyword(tag).expression(&expr.data).block(block),
         Token::MacroDefinition {
             tag,
             id,

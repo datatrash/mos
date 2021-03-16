@@ -316,6 +316,17 @@ impl CodeFormatter {
                 .fmt(self, colon)
                 .spc()
                 .fmt(self, block),
+            Token::Loop {
+                tag,
+                loop_scope: _,
+                expr,
+                block,
+            } => Fmt::new()
+                .push(&tag.data)
+                .spc()
+                .fmt(self, expr)
+                .spc()
+                .fmt(self, block),
             Token::MacroDefinition {
                 tag,
                 id,

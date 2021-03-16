@@ -628,6 +628,22 @@ impl CodegenContext {
                     self.with_scope(&id.data, |s| s.emit_tokens(&b.inner))?;
                 }
             }
+            Token::Loop {
+                expr,
+                loop_scope,
+                block,
+                ..
+            } => {
+                let loop_count = self.evaluate_expression(expr)?;
+                for index in 0..loop_count {
+                    self.with_scope(loop_scope, |s| {
+                        s.add_symbol(expr.span, "index", Symbol::constant(index))?;
+                        let result = s.emit_tokens(&block.inner);
+                        s.remove_symbol("index");
+                        result
+                    })?;
+                }
+            }
             Token::MacroDefinition {
                 id, args, block, ..
             } => {
@@ -1240,6 +1256,16 @@ mod tests {
     fn align() -> MosResult<()> {
         let ctx = test_codegen("nop\n.align 3\nnop")?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0, 0, 0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn loop_() -> MosResult<()> {
+        let ctx = test_codegen(".loop 3 { lda #index }")?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xa9, 0, 0xa9, 1, 0xa9, 2]
+        );
         Ok(())
     }
 
