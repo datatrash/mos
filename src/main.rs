@@ -9,7 +9,7 @@ use fs_err as fs;
 
 use crate::commands::*;
 use crate::config::Config;
-use crate::errors::MosResult;
+use crate::errors::*;
 
 /// Contains the available CLI commands and their associated logic
 mod commands;
@@ -128,12 +128,13 @@ fn main() {
         .init()
         .unwrap();
 
-    match run(args) {
-        Ok(()) => (),
-        Err(e) => {
-            log::error!("{}", e.format(!no_color));
-            std::process::exit(1);
-        }
+    if let Err(e) = run(args) {
+        let options = MosErrorOptions {
+            use_color: !no_color,
+            paths_relative_from: Some(std::env::current_dir().unwrap()),
+        };
+        log::error!("{}", e.format(&options));
+        std::process::exit(1);
     }
 }
 

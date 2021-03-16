@@ -2,6 +2,8 @@ use crate::core::parser::ParseTree;
 use crossbeam_channel::SendError;
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
+use pathdiff::diff_paths;
+use std::path::PathBuf;
 use std::str::ParseBoolError;
 use std::sync::Arc;
 
@@ -74,15 +76,22 @@ impl<T: Into<MosError>> From<Vec<T>> for MosError {
 
 impl std::fmt::Display for MosError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.format(false))
+        write!(f, "{}", self.format(&MosErrorOptions::default()))
     }
 }
 
+#[derive(Default)]
+pub struct MosErrorOptions {
+    pub use_color: bool,
+    pub paths_relative_from: Option<PathBuf>,
+}
+
 impl MosError {
-    pub fn format(&self, use_color: bool) -> String {
-        use ansi_term::Colour::Red;
+    pub fn format(&self, options: &MosErrorOptions) -> String {
+        let use_color = options.use_color;
 
         fn format_error<M: ToString>(use_color: bool, message: M) -> String {
+            use ansi_term::Colour::Red;
             let err = if use_color {
                 Red.paint("error:")
             } else {
@@ -103,9 +112,13 @@ impl MosError {
                 message,
             } => {
                 let location = tree.code_map().look_up_span(*span);
+                let mut filename: PathBuf = location.file.name().into();
+                if let Some(relative_from) = &options.paths_relative_from {
+                    filename = diff_paths(filename, relative_from).unwrap();
+                }
                 let location = format!(
                     "{}:{}:{}: ",
-                    location.file.name(),
+                    filename.to_string_lossy(),
                     location.begin.line + 1,
                     location.begin.column + 1
                 );
@@ -122,7 +135,7 @@ impl MosError {
             MosError::Unknown => format_error(use_color, "unknown error"),
             MosError::Multiple(errors) => errors
                 .iter()
-                .map(|e| e.format(use_color))
+                .map(|e| e.format(&options))
                 .collect_vec()
                 .join("\n"),
         }
