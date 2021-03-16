@@ -723,37 +723,21 @@ fn current_pc(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     })(input)
 }
 
-/// Parses a comma-separated list of expressions
-fn expression_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Expression>>> {
+#[doc(hidden)]
+fn arg_list<'a, T, F, G>(input: LocatedSpan<'a>, parse_item: G) -> IResult<'a, Vec<ArgItem<T>>>
+where
+    F: FnMut(LocatedSpan<'a>) -> IResult<'a, T>,
+    G: Fn() -> F,
+{
     map(
         tuple((
-            many0(tuple((ws(expression), ws(char(','))))),
-            ws(expression),
+            many0(tuple((ws(parse_item()), ws(char(','))))),
+            ws(parse_item()),
         )),
         |(list, last)| {
             let list = list
                 .into_iter()
-                .map(|(expr, comma)| (expr.flatten(), Some(comma)))
-                .collect::<Vec<_>>();
-            let mut result: Vec<_> = vec![];
-            result.extend(list);
-            result.push((last.flatten(), None));
-            result
-        },
-    )(input)
-}
-
-/// Parses a comma-separated list of identifiers (TODO: combine with expression_arg_list)
-fn identifier_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Identifier>>> {
-    map(
-        tuple((
-            many0(tuple((ws(identifier_name), ws(char(','))))),
-            ws(identifier_name),
-        )),
-        |(list, last)| {
-            let list = list
-                .into_iter()
-                .map(|(expr, comma)| (expr, Some(comma)))
+                .map(|(item, comma)| (item, Some(comma)))
                 .collect::<Vec<_>>();
             let mut result: Vec<_> = vec![];
             result.extend(list);
@@ -761,6 +745,16 @@ fn identifier_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Identifier>>> 
             result
         },
     )(input)
+}
+
+/// Parses a comma-separated list of expressions
+fn expression_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Expression>>> {
+    arg_list(input, || map(expression, |expr| expr.data))
+}
+
+/// Parses a comma-separated list of identifiers
+fn identifier_arg_list(input: LocatedSpan) -> IResult<Vec<ArgItem<Identifier>>> {
+    arg_list(input, || identifier_name)
 }
 
 /// Parses a function call when invoked in an expression
