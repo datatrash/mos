@@ -7,7 +7,7 @@ actionText: Get started →
 actionLink: /guide/
 features:
 - title: Assembler
-  details: A very fast multipass assembler that can quickly rip through any amount of code.
+  details: A very fast multipass macro assembler that can quickly rip through any amount of code.
 - title: Formatter
   details: Automatic source code formatting to make sure your code always looks its shiniest.
 - title: IDE-ready
