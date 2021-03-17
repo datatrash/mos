@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
-import {TaskGroup, TaskScope} from "vscode";
+import {TaskGroup} from "vscode";
 import {State} from "./extension";
-import {log} from "./log";
 
 interface MosTaskDefinition extends vscode.TaskDefinition {
     type: string
@@ -18,7 +17,7 @@ export class BuildTaskProvider implements vscode.TaskProvider {
         const definition: MosTaskDefinition = {
             type: "build"
         };
-        const exec = new vscode.ShellExecution(`${this.state.mosPath} build`);
+        const exec = new vscode.ShellExecution(this.state.mosPath, ['build']);
         const task = new vscode.Task(definition, this.state.workspaceFolder, "Build", "mos", exec, ['$mos']);
         task.group = TaskGroup.Build;
         return [task];
