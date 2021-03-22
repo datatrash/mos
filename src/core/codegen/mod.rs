@@ -296,7 +296,6 @@ impl CodegenContext {
 
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.borrow_mut().clear();
-        self.exports.clear();
     }
 
     fn try_current_target_pc(&self) -> Option<ProgramCounter> {
@@ -634,25 +633,26 @@ impl CodegenContext {
                         Some((_, path)) => path,
                         None => &arg.path,
                     };
-                    log::trace!(
-                        "Checking: {}: {}",
-                        target,
-                        self.symbols.contains_key(&target.data)
-                            || self.exports.contains_key(&target.data)
-                    );
-                    if self.symbols.contains_key(&target.data)
-                        || self.exports.contains_key(&target.data)
-                    {
-                        return self.error(
-                            target.span,
-                            format!("cannot import an already defined symbol: {}", target.data),
-                        );
-                    }
 
-                    // This export is valid, so move it from the 'new_exports' to the actual exports
                     log::trace!("Trying to remove: {}", &arg.path.data);
                     match new_exports.remove_entry(&arg.path.data) {
                         Some((_original_symbol_name, export)) => {
+                            let existing_export = self.exports.get(&target.data);
+
+                            // Don't allow import if there is already a symbol with the same name
+                            // _or_ an import that goes somehwere else
+                            if self.symbols.contains_key(&target.data)
+                                || (existing_export.is_some() && existing_export != Some(&export))
+                            {
+                                return self.error(
+                                    target.span,
+                                    format!(
+                                        "cannot import an already defined symbol: {}",
+                                        target.data
+                                    ),
+                                );
+                            }
+
                             self.exports.insert(target.data.clone(), export);
                         }
                         None => {
