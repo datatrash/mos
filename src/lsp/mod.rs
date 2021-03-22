@@ -56,6 +56,7 @@ impl LspParsingSource {
     }
 
     pub fn insert(&mut self, path: &Path, src: &str) {
+        log::trace!("Inserted file: {:?}", &path);
         self.files.insert(path.to_path_buf(), src.to_string());
     }
 
@@ -66,7 +67,14 @@ impl LspParsingSource {
 
 impl ParsingSource for LspParsingSource {
     fn get_contents(&self, path: &Path) -> MosResult<String> {
-        Ok(self.files.get(&path.to_path_buf()).unwrap().clone())
+        log::trace!("Trying to get file: {:?}", &path);
+        let path = path.to_path_buf();
+        if let Some(file) = self.files.get(&path) {
+            Ok(file.clone())
+        } else {
+            let data = fs_err::read_to_string(path)?;
+            Ok(data)
+        }
     }
 }
 

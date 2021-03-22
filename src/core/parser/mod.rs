@@ -684,7 +684,9 @@ fn import(input: LocatedSpan) -> IResult<Token> {
             let tag = tag.map_into(|_| ".import".to_string());
             let from = from.map_into(|_| "from".to_string());
 
-            let path: PathBuf = filename.data.clone().into();
+            let current_file: PathBuf = state.borrow().current_file.name().into();
+            let parent = current_file.parent().unwrap();
+            let path = parent.join(&filename.data);
 
             let imported_tokens = if state.borrow().cached_tokens.contains_key(&path) {
                 // Already imported?

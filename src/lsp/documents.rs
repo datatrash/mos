@@ -69,6 +69,7 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
 }
 
 fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
+    log::trace!("Publish diagnostics for: {}", uri);
     let analysis = ctx.analysis.as_ref().unwrap();
     let params = PublishDiagnosticsParams::new(
         uri.clone(),

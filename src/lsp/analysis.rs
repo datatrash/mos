@@ -37,12 +37,7 @@ pub fn to_file_uri(file: &str) -> Url {
 }
 
 pub fn from_file_uri(uri: &Url) -> &str {
-    let uri = uri.path();
-    if uri.starts_with('/') {
-        uri.split_at(1).1
-    } else {
-        uri
-    }
+    uri.path()
 }
 
 impl Display for AnalysisSpan {
