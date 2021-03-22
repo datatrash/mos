@@ -24,8 +24,10 @@ impl<'a> ConfigExtractor<'a> {
         match path.len() {
             1 => Ok(path.single().clone()),
             _ => Err(MosError::Codegen {
-                tree: ctx.tree.clone(),
-                span: self.get_located_token(key).span,
+                location: ctx
+                    .tree
+                    .code_map()
+                    .look_up_span(self.get_located_token(key).span),
                 message: "expected single identifier".into(),
             }),
         }
@@ -52,8 +54,10 @@ impl<'a> ConfigExtractor<'a> {
         match self.try_get_path(key) {
             Some(path) => Ok(path),
             None => Err(MosError::Codegen {
-                tree: ctx.tree.clone(),
-                span: self.get_located_token(key).span,
+                location: ctx
+                    .tree
+                    .code_map()
+                    .look_up_span(self.get_located_token(key).span),
                 message: "expected identifier".into(),
             }),
         }
@@ -75,8 +79,10 @@ impl<'a> ConfigExtractor<'a> {
         match self.try_get_i64(ctx, key)? {
             Some(val) => Ok(val),
             None => Err(MosError::Codegen {
-                tree: ctx.tree.clone(),
-                span: self.get_located_token(key).span,
+                location: ctx
+                    .tree
+                    .code_map()
+                    .look_up_span(self.get_located_token(key).span),
                 message: "expected expression".into(),
             }),
         }

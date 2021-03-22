@@ -1,5 +1,6 @@
+use crate::core::parser::source::ParsingSource;
 use crate::errors::{MosError, MosResult};
-use codemap::Span;
+use codemap::{Span, SpanLoc};
 use itertools::Itertools;
 use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take, take_till, take_till1};
@@ -8,7 +9,8 @@ use nom::combinator::{all_consuming, map, not, opt, recognize, rest};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{pair, tuple};
 use nom::InputTake;
-use std::path::Path;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -25,23 +27,24 @@ pub mod config_map;
 pub mod identifier;
 /// Mnemonics are the instructions the 6502 supports.
 pub mod mnemonic;
+/// ParsingSource trait and related things.
+pub mod source;
 /// Testing support
 #[cfg(test)]
-mod testing;
+pub mod testing;
 
 /// An error generated during parsing
 #[derive(Debug)]
 pub struct ParseError {
-    span: Span,
+    location: SpanLoc,
     message: String,
 }
 
-impl ParseError {
-    pub fn into_mos_error(self, tree: Arc<ParseTree>) -> MosError {
+impl From<ParseError> for MosError {
+    fn from(e: ParseError) -> Self {
         MosError::Parser {
-            tree,
-            span: self.span,
-            message: self.message,
+            location: e.location,
+            message: e.message,
         }
     }
 }
@@ -84,9 +87,9 @@ where
                     // is generated downstream
                 } else {
                     let end = i.location_offset();
-                    let span = to_span(&i, begin, end);
-                    let err = ParseError { span, message };
-                    i.extra.report_error(err);
+                    let location = to_span_loc(&i, begin, end);
+                    let err = ParseError { location, message };
+                    i.extra.borrow_mut().report_error(err);
                 }
                 Ok((i, None))
             }
@@ -131,7 +134,7 @@ fn c_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
             let (ni, tag) = expect(take(1usize), "unterminated block comment")(new_input)?;
             if tag.is_none() {
                 // Just eat the rest of the input and ignore the following 'unexpected...' error
-                ni.extra.ignore_next_error();
+                ni.extra.borrow_mut().ignore_next_error();
                 return rest(ni);
             }
             new_input = ni;
@@ -213,7 +216,17 @@ pub fn located_with_trivia<'a, F: FnOnce(LocatedSpan<'a>) -> IResult<'a, T>, T>(
 }
 
 fn to_span(input: &LocatedSpan, begin: usize, end: usize) -> Span {
-    input.extra.file.span.subspan(begin as u64, end as u64)
+    input
+        .extra
+        .borrow_mut()
+        .current_file
+        .span
+        .subspan(begin as u64, end as u64)
+}
+
+fn to_span_loc(input: &LocatedSpan, begin: usize, end: usize) -> SpanLoc {
+    let span = to_span(input, begin, end);
+    input.extra.borrow_mut().code_map.look_up_span(span)
 }
 
 /// Tries to parse a Rust-style identifier
@@ -235,7 +248,21 @@ fn identifier_scope(input: LocatedSpan) -> IResult<Identifier> {
     )(input)
 }
 
-/// Tries to parse an full identifier path (e.g. `foo.bar.baz`) that may also include address modifiers
+/// Tries to parse a full identifier path (e.g. `foo.bar.baz`)
+fn identifier_path(input: LocatedSpan) -> IResult<IdentifierPath> {
+    map_once(
+        ws(separated_list1(
+            char('.'),
+            alt((identifier_scope, identifier_name)),
+        )),
+        |ids| {
+            let path = ids.data.iter().cloned().collect_vec();
+            IdentifierPath::new(&path)
+        },
+    )(input)
+}
+
+/// Tries to parse a full identifier path (e.g. `foo.bar.baz`) that may also include address modifiers
 fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     located(|input| {
         let id = tuple((
@@ -244,23 +271,11 @@ fn identifier_value(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                 '>' => AddressModifier::HighByte,
                 _ => panic!(),
             }))),
-            ws(separated_list1(
-                char('.'),
-                alt((identifier_scope, identifier_name)),
-            )),
+            ws(identifier_path),
         ));
 
-        map_once(id, move |(modifier, identifier_path)| {
-            let span = identifier_path.span;
-            let identifier_path = identifier_path.map(|ids| {
-                let path = ids.iter().cloned().collect_vec();
-                Located::new(span, IdentifierPath::new(&path))
-            });
-
-            ExpressionFactor::IdentifierValue {
-                path: identifier_path.flatten(),
-                modifier,
-            }
+        map_once(id, move |(modifier, path)| {
+            ExpressionFactor::IdentifierValue { path, modifier }
         })(input)
     })(input)
 }
@@ -353,8 +368,11 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
 
 /// Tries to parse a bare block
 fn braces(input: LocatedSpan) -> IResult<Token> {
-    let scope = input.extra.new_anonymous_scope();
-    map_once(block, move |block| Token::Braces { block, scope })(input)
+    let state = input.extra.clone();
+    map_once(block, move |block| {
+        let scope = state.borrow_mut().new_anonymous_scope();
+        Token::Braces { block, scope }
+    })(input)
 }
 
 /// Tries to parse a 6502 instruction consisting of a mnemonic and optionally an operand (e.g. `LDA #123`)
@@ -441,10 +459,10 @@ fn error(input: LocatedSpan) -> IResult<Token> {
         move |(input, char)| {
             let char = char.map(|c| c.to_string()).unwrap_or_default();
             let err = ParseError {
-                span: input.span,
+                location: input.data.extra.borrow().code_map.look_up_span(input.span),
                 message: format!("unexpected '{}'", input.data.fragment()),
             };
-            input.data.extra.report_error(err);
+            input.data.extra.borrow_mut().report_error(err);
             let input = input.map_into(|i| format!("{}{}", i.fragment(), char));
             Token::Error(input)
         },
@@ -555,7 +573,7 @@ fn segment(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((ws(tag_no_case(".segment")), ws(identifier_name), opt(block))),
         move |(tag, id, block)| Token::Segment {
-            tag: tag.map_into(|_| ".segment".into()),
+            tag: tag.map_into(|_| ".segment".to_string()),
             id,
             block,
         },
@@ -564,11 +582,12 @@ fn segment(input: LocatedSpan) -> IResult<Token> {
 
 /// Tries to parse a loop statement
 fn loop_(input: LocatedSpan) -> IResult<Token> {
-    let loop_scope = Box::new(input.extra.new_anonymous_scope());
+    let state = input.extra.clone();
     map_once(
         tuple((ws(tag_no_case(".loop")), expression, block)),
         |(tag, expr, block)| {
-            let tag = tag.map_into(|_| ".loop".into());
+            let loop_scope = Box::new(state.borrow_mut().new_anonymous_scope());
+            let tag = tag.map_into(|_| ".loop".to_string());
             Token::Loop {
                 tag,
                 loop_scope,
@@ -581,8 +600,6 @@ fn loop_(input: LocatedSpan) -> IResult<Token> {
 
 /// Tries to parse an if/else statement
 fn if_(input: LocatedSpan) -> IResult<Token> {
-    let if_scope = Box::new(input.extra.new_anonymous_scope());
-    let else_scope = Box::new(input.extra.new_anonymous_scope());
     map_once(
         tuple((
             ws(tag_no_case(".if")),
@@ -591,10 +608,10 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
             opt(tuple((ws(tag_no_case("else")), block))),
         )),
         move |(tag_if, value, if_, else_)| {
-            let tag_if = tag_if.map_into(|_| ".if".into());
+            let tag_if = tag_if.map_into(|_| ".if".to_string());
             let (tag_else, else_) = match else_ {
                 Some((tag_else, else_)) => {
-                    (Some(tag_else.map_into(|_| "else".into())), Some(else_))
+                    (Some(tag_else.map_into(|_| "else".to_string())), Some(else_))
                 }
                 None => (None, None),
             };
@@ -602,10 +619,8 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
                 tag_if,
                 value,
                 if_,
-                if_scope,
                 tag_else,
                 else_,
-                else_scope,
             }
         },
     )(input)
@@ -616,28 +631,141 @@ fn align(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((ws(tag_no_case(".align")), ws(expression))),
         move |(tag, value)| {
-            let tag = tag.map_into(|_| ".align".into());
+            let tag = tag.map_into(|_| ".align".to_string());
             let value = value.flatten();
             Token::Align { tag, value }
         },
     )(input)
 }
 
-/// Tries to parse an include directive, of the form `.include "foo.bin"`
-fn include(input: LocatedSpan) -> IResult<Token> {
-    let filename = recognize(many1(none_of("\"\r\n")));
+// Parses a filename, up to (but not including) the closing quote
+fn filename(input: LocatedSpan) -> IResult<String> {
+    map_once(recognize(many1(none_of("\"\r\n"))), |span: LocatedSpan| {
+        span.fragment().to_string()
+    })(input)
+}
+
+/// Tries to parse an import directive, optionally enclosing a block.
+/// It will also parse the imported file.
+fn import(input: LocatedSpan) -> IResult<Token> {
+    let state = input.extra.clone();
+
+    let specific_arg = || {
+        map(
+            tuple((
+                ws(identifier_path),
+                opt(tuple((ws(tag_no_case("as")), ws(identifier_path)))),
+            )),
+            |(path, as_)| {
+                let as_ = as_.map(|(tag, path)| {
+                    let tag = tag.map_into(|_| "as".to_string());
+                    (tag, path)
+                });
+                SpecificImportArg { path, as_ }
+            },
+        )
+    };
 
     map_once(
         tuple((
-            ws(tag_no_case(".include")),
+            ws(tag_no_case(".import")),
+            alt((
+                map(ws(char('*')), ImportArgs::All),
+                map(|input| arg_list(input, specific_arg), ImportArgs::Specific),
+            )),
+            ws(tag_no_case("from")),
+            ws(char('"')),
+            located(filename),
+            char('"'),
+            opt(block),
+        )),
+        move |(tag, args, from, lquote, filename, _, block)| {
+            let import_scope = state.borrow_mut().new_anonymous_scope();
+            let tag = tag.map_into(|_| ".import".to_string());
+            let from = from.map_into(|_| "from".to_string());
+
+            let path: PathBuf = filename.data.clone().into();
+
+            let imported_tokens = if state.borrow().cached_tokens.contains_key(&path) {
+                // Already imported?
+                let tokens = state.borrow().cached_tokens.get(&path).unwrap().clone();
+
+                // If this was empty, it was a recursive import
+                if tokens.is_empty() {
+                    let err = ParseError {
+                        location: state.borrow().code_map.look_up_span(tag.span),
+                        message: format!("recursive import of '{}'", filename.data),
+                    };
+                    state.borrow_mut().report_error(err);
+                }
+
+                tokens
+            } else {
+                // No, so let's parse now
+
+                // Already add it, so we can detect a recursive import
+                state
+                    .borrow_mut()
+                    .cached_tokens
+                    .insert(path.clone(), Arc::new(vec![]));
+
+                let current_file = state.borrow().current_file.clone();
+                state.borrow_mut().add_file(&path).unwrap();
+                let tokens = parse_with_state(state.clone());
+                state.borrow_mut().current_file = current_file;
+
+                state
+                    .borrow_mut()
+                    .cached_tokens
+                    .insert(path.clone(), Arc::new(tokens));
+                state.borrow().cached_tokens.get(&path).unwrap().clone()
+            };
+
+            Token::Import {
+                tag,
+                args,
+                from,
+                lquote,
+                filename,
+                block,
+                import_scope,
+                imported_tokens,
+            }
+        },
+    )(input)
+}
+
+/// Tries to parse an export directive
+fn export(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(".export")),
+            ws(identifier_path),
+            opt(tuple((ws(tag_no_case("as")), ws(identifier_path)))),
+        )),
+        move |(tag, id, as_)| {
+            let tag = tag.map_into(|_| ".export".to_string());
+            let as_ = as_.map(|(tag, id)| {
+                let tag = tag.map_into(|_| "as".to_string());
+                (tag, id)
+            });
+            Token::Export { tag, id, as_ }
+        },
+    )(input)
+}
+
+/// Tries to parse a file directive, of the form `.file "foo.bin"`
+fn file(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            ws(tag_no_case(".file")),
             ws(char('"')),
             located(filename),
             char('"'),
         )),
         move |(tag, lquote, filename, _)| {
-            let tag = tag.map_into(|_| ".include".into());
-            let filename = filename.map(|v| v.fragment().to_string());
-            Token::Include {
+            let tag = tag.map_into(|_| ".file".to_string());
+            Token::File {
                 tag,
                 lquote,
                 filename,
@@ -663,7 +791,9 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         loop_,
         if_,
         align,
-        include,
+        import,
+        export,
+        file,
     ))(input)
 }
 
@@ -907,41 +1037,49 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
 }
 
 /// Parses an input file and returns a hopefully parsed file
-pub fn parse<'a>(filename: &'a Path, source: &'a str) -> (Arc<ParseTree>, Option<MosError>) {
-    let state = State::new(filename.as_os_str().to_string_lossy(), source);
-    let code_map = state.code_map.clone();
-    let files = state.files.clone();
-    let errors = state.errors.clone();
-    let input = LocatedSpan::new_extra(source, state);
-    let (_, tokens) = all_consuming(source_file)(input).expect("parser cannot fail");
+pub fn parse(
+    filename: &Path,
+    source: Arc<RefCell<dyn ParsingSource>>,
+) -> (Option<Arc<ParseTree>>, Option<MosError>) {
+    let state = State::new(filename.to_path_buf(), source);
+    if state.is_err() {
+        return (None, state.err().unwrap().into());
+    }
+    let state = Rc::new(RefCell::new(state.ok().unwrap()));
+    let tokens = parse_with_state(state.clone());
 
-    let code_map = Rc::try_unwrap(code_map).ok().unwrap().into_inner();
-    let files = Rc::try_unwrap(files).ok().unwrap().into_inner();
-    let tree = Arc::new(ParseTree::new(code_map, files, tokens));
+    let state = Rc::try_unwrap(state).ok().unwrap().into_inner();
+    let tree = Arc::new(ParseTree::new(state.code_map, state.files, tokens));
 
-    let errors = Rc::try_unwrap(errors).ok().unwrap().into_inner();
-    if errors.is_empty() {
-        (tree, None)
+    if state.errors.is_empty() {
+        (Some(tree), None)
     } else {
-        let errors = errors
-            .into_iter()
-            .map(|e| e.into_mos_error(tree.clone()))
-            .collect_vec();
-        (tree, Some(MosError::Multiple(errors)))
+        (Some(tree), Some(MosError::Multiple(state.errors)))
     }
 }
 
-pub fn parse_or_err<'a>(filename: &'a Path, source: &'a str) -> MosResult<Arc<ParseTree>> {
+pub fn parse_with_state(state: Rc<RefCell<State>>) -> Vec<Token> {
+    let program = state.borrow().current_file.source().to_string();
+    let input = LocatedSpan::new_extra(&program, state);
+    let (_, tokens) = all_consuming(source_file)(input).ok().unwrap();
+    tokens
+}
+
+pub fn parse_or_err(
+    filename: &Path,
+    source: Arc<RefCell<dyn ParsingSource>>,
+) -> MosResult<Arc<ParseTree>> {
     let (tree, error) = parse(filename, source);
     match error {
         Some(e) => Err(e),
-        None => Ok(tree),
+        None => Ok(tree.unwrap()),
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::core::parser::source::InMemoryParsingSource;
 
     #[test]
     fn parse_instruction() {
@@ -1139,8 +1277,81 @@ mod test {
     }
 
     #[test]
-    fn parse_include() {
-        check("   .include    \"foo.bin\"", "   .INCLUDE    \"foo.bin\"");
+    fn parse_file() {
+        check("   .file    \"foo.bin\"", "   .FILE    \"foo.bin\"");
+    }
+
+    #[test]
+    fn parse_import() {
+        check_with_parsing_source(
+            InMemoryParsingSource::new()
+                .add("test.asm", "   .import  * from     \"baz\"")
+                .add("baz", "nop")
+                .into(),
+            "   .IMPORT  * FROM     \"baz\"",
+        );
+
+        let tree = check_with_parsing_source(
+            InMemoryParsingSource::new()
+                .add(
+                    "test.asm",
+                    "   .import  foo,   bar  as boop   from     \"baz\"  { .const foo = 1 }",
+                )
+                .add("baz", "nop")
+                .into(),
+            "   .IMPORT  foo,   bar  AS boop   FROM     \"baz\"  { .CONST foo = 1 }",
+        );
+
+        // Now also check if 'baz' was parsed
+        let token = tree.tokens().first().unwrap();
+        match token {
+            Token::Import {
+                imported_tokens, ..
+            } => {
+                // Should just contain 'nop' and 'eof'
+                assert_eq!(imported_tokens.len(), 2);
+                match imported_tokens.first() {
+                    Some(Token::Instruction(i)) if i.mnemonic.data == Mnemonic::Nop => (),
+                    _ => panic!(),
+                }
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parse_import_errors() {
+        let (_, err) = parse(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new()
+                .add("test.asm", ".import * from \"baz\"")
+                .add("baz", "foo")
+                .into(),
+        );
+        assert_eq!(err.unwrap().to_string(), "baz:1:1: error: unexpected 'foo'");
+    }
+
+    #[test]
+    fn parse_recursive_import_errors() {
+        let (_, err) = parse(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new()
+                .add("test.asm", ".import * from \"test.asm\"")
+                .into(),
+        );
+        assert_eq!(
+            err.unwrap().to_string(),
+            "test.asm:1:1: error: recursive import of 'test.asm'"
+        );
+    }
+
+    #[test]
+    fn parse_export() {
+        check("   .export  foo", "   .EXPORT  foo");
+        check(
+            "   .export  foo.bar  as   bar.baz",
+            "   .EXPORT  foo.bar  AS   bar.baz",
+        );
     }
 
     #[test]
@@ -1182,37 +1393,67 @@ mod test {
     }
 
     fn check(src: &str, expected: &str) {
+        check_with_parsing_source(
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+            expected,
+        );
+    }
+
+    fn check_with_parsing_source(
+        src: Arc<RefCell<dyn ParsingSource>>,
+        expected: &str,
+    ) -> Arc<ParseTree> {
         let (tree, error) = parse(&Path::new("test.asm"), src);
         if let Some(e) = error {
             panic!(e.to_string());
         }
-        let actual = tree.tokens().iter().map(|e| format!("{}", e)).join("");
+        let tree = tree.unwrap();
+        let actual = tree
+            .clone()
+            .tokens()
+            .iter()
+            .map(|e| format!("{}", e))
+            .join("");
         assert_eq!(actual, expected.to_string());
+        tree
     }
 
     fn check_ignore_err(src: &str, expected: &str) {
-        let (tree, _) = parse(&Path::new("test.asm"), src);
-        let actual = tree.tokens().iter().map(|e| format!("{}", e)).join("");
+        let (tree, _) = parse(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        );
+        let actual = tree
+            .unwrap()
+            .tokens()
+            .iter()
+            .map(|e| format!("{}", e))
+            .join("");
         assert_eq!(actual, expected.to_string());
     }
 
     fn check_err(src: &str, expected: &str) {
-        let (_tree, error) = parse(&Path::new("test.asm"), src);
+        let (_tree, error) = parse(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        );
         assert!(error.is_some());
         let actual = error.unwrap().to_string();
         assert_eq!(actual, expected.to_string());
     }
 
     fn check_err_span(src: &str, start_column: usize, end_column: usize) {
-        let (_tree, error) = parse(&Path::new("test.asm"), src);
+        let (_tree, error) = parse(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        );
         match error.unwrap() {
             MosError::Multiple(errors) => {
                 assert_eq!(errors.len(), 1);
                 match errors.first().unwrap() {
-                    MosError::Parser { tree, span, .. } => {
-                        let loc = tree.code_map().look_up_span(*span);
-                        assert_eq!(loc.begin.column + 1, start_column);
-                        assert_eq!(loc.end.column + 1, end_column);
+                    MosError::Parser { location, .. } => {
+                        assert_eq!(location.begin.column + 1, start_column);
+                        assert_eq!(location.end.column + 1, end_column);
                     }
                     _ => panic!(),
                 }
@@ -1226,12 +1467,15 @@ mod test {
         parser: F,
     ) -> O {
         let src = src.into();
-        let state = State::new("test.asm", src.clone());
+        let state = State::new(
+            "test.asm",
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        )
+        .ok()
+        .unwrap();
+        let state = Rc::new(RefCell::new(state));
         let input = LocatedSpan::new_extra(&src, state);
         let result = parser(input);
-        if result.is_err() {
-            panic!(format!("{}", result.err().unwrap()));
-        }
         result.ok().unwrap().1.data
     }
 }

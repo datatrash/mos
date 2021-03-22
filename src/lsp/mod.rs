@@ -1,6 +1,8 @@
 use crate::errors::MosResult;
 use crate::lsp::analysis::{from_file_uri, Analysis, Definition};
-use crate::lsp::documents::{DidChangeTextDocumentHandler, DidOpenTextDocumentHandler};
+use crate::lsp::documents::{
+    DidChangeTextDocumentHandler, DidCloseTextDocumentHandler, DidOpenTextDocumentHandler,
+};
 use crate::lsp::formatting::{FormattingRequestHandler, OnTypeFormattingRequestHandler};
 use crate::lsp::references::{
     DocumentHighlightRequestHandler, FindReferencesHandler, GoToDefinitionHandler,
@@ -15,7 +17,6 @@ use lsp_types::{
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-#[cfg(test)]
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,13 +31,43 @@ mod semantic_highlighting;
 mod testing;
 mod traits;
 
+use crate::core::parser::source::ParsingSource;
+use std::cell::RefMut;
+use std::path::{Path, PathBuf};
 pub use traits::*;
 
 pub struct LspContext {
     connection: Option<(Arc<Connection>, IoThreads)>,
     analysis: Option<Analysis>,
+    parsing_source: Arc<RefCell<LspParsingSource>>,
     #[cfg(test)]
     responses: Arc<RefCell<Vec<lsp_server::Response>>>,
+}
+
+pub struct LspParsingSource {
+    files: HashMap<PathBuf, String>,
+}
+
+impl LspParsingSource {
+    fn new() -> Self {
+        Self {
+            files: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, path: &Path, src: &str) {
+        self.files.insert(path.to_path_buf(), src.to_string());
+    }
+
+    pub fn remove(&mut self, path: &Path) {
+        self.files.remove(path);
+    }
+}
+
+impl ParsingSource for LspParsingSource {
+    fn get_contents(&self, path: &Path) -> MosResult<String> {
+        Ok(self.files.get(&path.to_path_buf()).unwrap().clone())
+    }
 }
 
 impl LspContext {
@@ -44,6 +75,7 @@ impl LspContext {
         Self {
             connection: None,
             analysis: None,
+            parsing_source: Arc::new(RefCell::new(LspParsingSource::new())),
             #[cfg(test)]
             responses: Arc::new(RefCell::new(vec![])),
         }
@@ -56,6 +88,10 @@ impl LspContext {
 
     fn connection(&self) -> Option<Arc<Connection>> {
         self.connection.as_ref().map(|c| c.0.clone())
+    }
+
+    fn parsing_source(&self) -> RefMut<LspParsingSource> {
+        self.parsing_source.borrow_mut()
     }
 
     #[cfg(test)]
@@ -142,6 +178,7 @@ impl LspServer {
         ctx.register_request_handler(RenameHandler {});
         ctx.register_notification_handler(DidOpenTextDocumentHandler {});
         ctx.register_notification_handler(DidChangeTextDocumentHandler {});
+        ctx.register_notification_handler(DidCloseTextDocumentHandler {});
 
         ctx
     }

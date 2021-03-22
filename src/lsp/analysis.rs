@@ -261,6 +261,7 @@ impl<'a> DefinitionGenerator<'a> {
 #[cfg(test)]
 mod tests {
     use crate::core::parser::parse;
+    use crate::core::parser::source::InMemoryParsingSource;
     use crate::lsp::analysis::Analysis;
     use lsp_types::Position;
 
@@ -285,7 +286,10 @@ mod tests {
     }
 
     fn analysis(src: &str) -> Analysis {
-        let (tree, error) = parse("test.asm".as_ref(), src);
-        Analysis::new(tree, error)
+        let (tree, error) = parse(
+            "test.asm".as_ref(),
+            InMemoryParsingSource::new().add("test.asm", src).into(),
+        );
+        Analysis::new(tree.unwrap(), error)
     }
 }

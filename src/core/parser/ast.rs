@@ -1,14 +1,18 @@
 use crate::core::parser::mnemonic::Mnemonic;
-use crate::core::parser::{Identifier, IdentifierPath, ParseError};
+use crate::core::parser::source::ParsingSource;
+use crate::core::parser::{Identifier, IdentifierPath};
+use crate::errors::{MosError, MosResult};
 use codemap::{CodeMap, File, Span};
 use itertools::Itertools;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
 /// A span containing a fragment of the source text and the location of this fragment within the source
-pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, State>;
+pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, Rc<RefCell<State>>>;
 
 /// A convenience wrapper around nom's own [nom::IResult] to make use of our own [LocatedSpan] type
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
@@ -52,63 +56,87 @@ impl ParseTree {
 }
 
 /// The state of the parser
-#[derive(Clone, Debug)]
 pub struct State {
+    /// The parsing source
+    pub source: Arc<RefCell<dyn ParsingSource>>,
+
     /// Codemap
-    pub code_map: Rc<RefCell<CodeMap>>,
+    pub code_map: CodeMap,
 
     /// All files that were parsed
-    pub files: Rc<RefCell<Vec<Arc<codemap::File>>>>,
+    pub files: Vec<Arc<codemap::File>>,
+
+    /// Tokens of parsed files (used to cache imports),
+    pub cached_tokens: HashMap<PathBuf, Arc<Vec<Token>>>,
 
     /// Which file are we parsing?
-    pub file: Arc<codemap::File>,
+    pub current_file: Arc<codemap::File>,
 
     /// Which errors did we encounter?
-    pub errors: Rc<RefCell<Vec<ParseError>>>,
+    pub errors: Vec<MosError>,
 
     /// Should the next error be ignored?
-    ignore_next_error: Rc<RefCell<bool>>,
+    ignore_next_error: bool,
 
     /// Current anonymous scope index
-    anonymous_scope_index: Rc<RefCell<usize>>,
+    anonymous_scope_index: usize,
 }
 
 impl State {
-    pub fn new<P: Into<String>, S: Into<String>>(path: P, source: S) -> Self {
+    pub fn new<P: Into<PathBuf>>(
+        path: P,
+        source: Arc<RefCell<dyn ParsingSource>>,
+    ) -> MosResult<Self> {
         let mut code_map = CodeMap::new();
-        let file = code_map.add_file(path.into(), source.into());
+        let path = path.into();
+        let file = code_map.add_file(
+            path.to_str().unwrap().into(),
+            source.borrow().get_contents(&path)?,
+        );
 
-        Self {
-            code_map: Rc::new(RefCell::new(code_map)),
-            files: Rc::new(RefCell::new(vec![file.clone()])),
-            file,
-            errors: Rc::new(RefCell::new(Vec::new())),
-            ignore_next_error: Rc::new(RefCell::new(false)),
-            anonymous_scope_index: Rc::new(RefCell::new(0)),
-        }
+        Ok(Self {
+            source,
+            code_map,
+            files: vec![file.clone()],
+            cached_tokens: HashMap::new(),
+            current_file: file,
+            errors: vec![],
+            ignore_next_error: false,
+            anonymous_scope_index: 0,
+        })
+    }
+
+    pub fn add_file<P: Into<PathBuf>>(&mut self, path: P) -> MosResult<()> {
+        let path = path.into();
+        let file = self.code_map.add_file(
+            path.to_str().unwrap().into(),
+            self.source.borrow().get_contents(&path)?,
+        );
+        self.current_file = file;
+        Ok(())
     }
 
     /// Mark the next reported error to be ignored (since it may be redundant or something)
-    pub fn ignore_next_error(&self) {
+    pub fn ignore_next_error(&mut self) {
         log::trace!("Ignoring next error");
-        *self.ignore_next_error.borrow_mut() = true;
+        self.ignore_next_error = true;
     }
 
     /// When there is an error during parsing we don't want to fail. Instead, we continue but log the error via this method
-    pub fn report_error(&self, error: ParseError) {
-        if *self.ignore_next_error.borrow() {
+    pub fn report_error<E: Into<MosError>>(&mut self, error: E) {
+        let error = error.into();
+        if self.ignore_next_error {
             log::trace!("Ignoring error: {:?}", error);
-            *self.ignore_next_error.borrow_mut() = false;
+            self.ignore_next_error = false;
         } else {
             log::trace!("Pushing error: {:?}", error);
-            self.errors.borrow_mut().push(error);
+            self.errors.push(error);
         }
     }
 
-    pub fn new_anonymous_scope(&self) -> Identifier {
-        let mut index = self.anonymous_scope_index.borrow_mut();
-        *index += 1;
-        Identifier::anonymous(*index)
+    pub fn new_anonymous_scope(&mut self) -> Identifier {
+        self.anonymous_scope_index += 1;
+        Identifier::anonymous(self.anonymous_scope_index)
     }
 }
 
@@ -448,6 +476,30 @@ pub struct Block {
     pub rparen: Located<char>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpecificImportArg {
+    pub path: Located<IdentifierPath>,
+    pub as_: Option<(Located<String>, Located<IdentifierPath>)>,
+}
+
+impl Display for SpecificImportArg {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let as_ = match &self.as_ {
+            Some((tag, path)) => {
+                format!("{}{}", tag.map(|t| t.to_uppercase()), path)
+            }
+            None => "".to_string(),
+        };
+        write!(f, "{}{}", self.path, as_)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ImportArgs {
+    All(Located<char>),
+    Specific(Vec<ArgItem<SpecificImportArg>>),
+}
+
 /// Tokens that, together, make up all possible source text
 #[derive(Clone, Debug, PartialEq)]
 pub enum Token {
@@ -476,17 +528,30 @@ pub enum Token {
     },
     Eof(Located<()>),
     Error(Located<String>),
+    Export {
+        tag: Located<String>,
+        id: Located<IdentifierPath>,
+        as_: Option<(Located<String>, Located<IdentifierPath>)>,
+    },
     Expression(Expression),
     If {
         tag_if: Located<String>,
         value: Located<Expression>,
         if_: Block,
-        if_scope: Box<Identifier>,
         tag_else: Option<Located<String>>,
         else_: Option<Block>,
-        else_scope: Box<Identifier>,
     },
-    Include {
+    Import {
+        tag: Located<String>,
+        args: ImportArgs,
+        from: Located<String>,
+        lquote: Located<char>,
+        filename: Located<String>,
+        block: Option<Block>,
+        import_scope: Identifier,
+        imported_tokens: Arc<Vec<Token>>,
+    },
+    File {
         tag: Located<String>,
         lquote: Located<char>,
         filename: Located<String>,
@@ -547,12 +612,14 @@ impl Token {
             Token::Definition { tag, .. } => &tag.trivia,
             Token::Eof(empty) => &empty.trivia,
             Token::Error(invalid) => &invalid.trivia,
+            Token::Export { tag, .. } => &tag.trivia,
             Token::Expression(expr) => {
                 return expr.trivia();
             }
             Token::If { tag_if, .. } => &tag_if.trivia,
             Token::Instruction(i) => &i.mnemonic.trivia,
-            Token::Include { tag, .. } => &tag.trivia,
+            Token::Import { tag, .. } => &tag.trivia,
+            Token::File { tag, .. } => &tag.trivia,
             Token::Label { id, .. } => &id.trivia,
             Token::Loop { tag, .. } => &tag.trivia,
             Token::MacroDefinition { tag, .. } => &tag.trivia,
@@ -788,6 +855,18 @@ impl Display for Token {
             Token::Error(str) => {
                 write!(f, "{}", str)
             }
+            Token::Export { tag, id, as_ } => {
+                let as_ = as_
+                    .as_ref()
+                    .map(|(tag, id)| (tag.map(|t| t.to_uppercase()), id));
+                let as_ = match as_ {
+                    Some((tag_as, id_as)) => {
+                        format!("{}{}", tag_as, id_as)
+                    }
+                    None => "".to_string(),
+                };
+                write!(f, "{}{}{}", tag.map(|t| t.to_uppercase()), id, as_)
+            }
             Token::Expression(e) => write!(f, "{}", e),
             Token::If {
                 tag_if,
@@ -795,8 +874,6 @@ impl Display for Token {
                 if_,
                 tag_else,
                 else_,
-                if_scope: _,
-                else_scope: _,
             } => {
                 let else_ = match (tag_else, else_) {
                     (Some(tag), Some(e)) => format!("{}{}", format!("{}", tag).to_uppercase(), e),
@@ -811,7 +888,36 @@ impl Display for Token {
                     else_
                 )
             }
-            Token::Include {
+            Token::Import {
+                tag,
+                args,
+                from,
+                lquote,
+                filename,
+                block,
+                import_scope: _,
+                imported_tokens: _,
+            } => {
+                let block = match block {
+                    Some(block) => format!("{}", block),
+                    None => "".to_string(),
+                };
+                let args = match args {
+                    ImportArgs::All(c) => format!("{}", c),
+                    ImportArgs::Specific(args) => format_arglist(args),
+                };
+                write!(
+                    f,
+                    "{}{}{}{}{}{}",
+                    tag.map(|t| t.to_uppercase()),
+                    args,
+                    from.map(|t| t.to_uppercase()),
+                    lquote,
+                    format!("{}\"", filename),
+                    block
+                )
+            }
+            Token::File {
                 tag,
                 lquote,
                 filename,

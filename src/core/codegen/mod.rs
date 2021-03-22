@@ -9,7 +9,8 @@ use crate::core::codegen::config_validator::ConfigValidator;
 use crate::core::codegen::opcodes::get_opcode_bytes;
 use crate::core::parser::{
     AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
-    Identifier, IdentifierPath, Located, Mnemonic, ParseTree, Token, VariableType,
+    Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, SpecificImportArg, Token,
+    VariableType,
 };
 use crate::errors::{MosError, MosResult};
 use codemap::Span;
@@ -232,6 +233,9 @@ pub struct CodegenContext {
     undefined: Rc<RefCell<HashSet<UndefinedSymbol>>>,
     suppress_undefined_symbol_registration: bool,
     current_scope: IdentifierPath,
+
+    exports: HashMap<IdentifierPath, IdentifierPath>,
+    export_filter: Option<Vec<SpecificImportArg>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -251,6 +255,8 @@ impl CodegenContext {
             undefined: Rc::new(RefCell::new(HashSet::new())),
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
+            exports: HashMap::new(),
+            export_filter: None,
         }
     }
 
@@ -378,7 +384,14 @@ impl CodegenContext {
             let path = cur_scope.join(id).canonicalize();
             log::trace!("`--> Querying: {}", path);
             if let Some(symbol) = self.symbols.get(&path) {
+                log::trace!("`--> Found");
                 return Some(symbol);
+            }
+
+            log::trace!("`--> Querying exports: {}", path);
+            if let Some(exported) = self.exports.get(&path) {
+                log::trace!("`--> Was exported as: {}", exported);
+                return self.get_symbol(current_scope, exported);
             }
 
             if cur_scope.is_empty() {
@@ -423,9 +436,9 @@ impl CodegenContext {
     }
 
     fn error<T, M: Into<String>>(&self, span: Span, message: M) -> MosResult<T> {
+        let location = self.tree.code_map().look_up_span(span);
         Err(MosError::Codegen {
-            tree: self.tree.clone(),
-            span,
+            location,
             message: message.into(),
         })
     }
@@ -535,22 +548,70 @@ impl CodegenContext {
                     }
                 }
             }
+            Token::Export { id, as_, .. } => {
+                let target = match as_ {
+                    Some((_, target_id)) => target_id.data.clone(),
+                    None => id.data.clone(),
+                };
+                let id = self.current_scope.join(&id.data);
+
+                // See if we are allowed to export this (because it was requested during import)
+                // and, if so, if we need to rename the export target
+                let target = self.current_scope.parent().join(&target);
+                let target = if let Some(filter) = &self.export_filter {
+                    filter.iter().find_map(|f| {
+                        if target.has_parent(&f.path.data) {
+                            match &f.as_ {
+                                Some((_, target_id)) => Some(target_id.data.clone()),
+                                None => Some(f.path.data.clone()),
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    Some(target)
+                };
+
+                if let Some(target) = target {
+                    log::trace!("Exporting {} as: {}", id, target);
+                    self.exports.insert(target, id);
+                }
+            }
             Token::If {
-                value,
-                if_,
-                if_scope,
-                else_,
-                else_scope,
-                ..
+                value, if_, else_, ..
             } => {
                 let value = self.evaluate_expression(value)?;
                 if value != 0 {
-                    self.with_scope(if_scope, |s| s.emit_tokens(&if_.inner))?;
+                    self.emit_tokens(&if_.inner)?;
                 } else if let Some(e) = else_ {
-                    self.with_scope(else_scope, |s| s.emit_tokens(&e.inner))?;
+                    self.emit_tokens(&e.inner)?;
                 }
             }
-            Token::Include { filename, .. } => {
+            Token::Import {
+                args,
+                import_scope,
+                imported_tokens: tokens,
+                block,
+                ..
+            } => {
+                self.with_scope(import_scope, |s| {
+                    if let Some(block) = block {
+                        s.emit_tokens(&block.inner)?;
+                    }
+                    match args {
+                        ImportArgs::All(_) => s.emit_tokens(tokens),
+                        ImportArgs::Specific(args) => {
+                            let ids = args.iter().map(|(arg, _)| arg.data.clone()).collect_vec();
+                            s.export_filter = Some(ids);
+                            s.emit_tokens(tokens)
+                        }
+                    }
+                })?;
+
+                self.export_filter = None;
+            }
+            Token::File { filename, .. } => {
                 let span = filename.span;
                 let source_file: PathBuf =
                     self.tree.code_map().look_up_span(span).file.name().into();
@@ -866,8 +927,7 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
                 .filter_map(|item| {
                     if ctx.get_symbol(&item.scope, &item.id).is_none() {
                         Some(MosError::Codegen {
-                            tree: ctx.tree.clone(),
-                            span: item.span,
+                            location: ctx.tree.code_map().look_up_span(item.span),
                             message: format!("unknown identifier: {}", item.id),
                         })
                     } else {
@@ -891,10 +951,12 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
 mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
     use crate::core::codegen::{Segment, SegmentOptions};
+    use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::core::parser::{parse_or_err, Identifier};
     use crate::errors::MosResult;
-    use crate::testing::enable_default_tracing;
+    use std::cell::RefCell;
     use std::path::Path;
+    use std::sync::Arc;
 
     impl CodegenContext {
         pub fn get_segment<S: Into<Identifier>>(&self, key: S) -> &Segment {
@@ -1180,6 +1242,14 @@ mod tests {
     fn can_use_constants() -> MosResult<()> {
         let ctx = test_codegen(".const foo=49152\nlda #>foo")?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 0xc0]);
+
+        let ctx = test_codegen(".if !defined(foo) { .const foo=49152 }\nlda #>foo")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 0xc0]);
+
+        let ctx =
+            test_codegen(".const foo = 32768\n.if !defined(foo) { .const foo=49152 }\nlda #>foo")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 0x80]);
+
         Ok(())
     }
 
@@ -1270,10 +1340,10 @@ mod tests {
     }
 
     #[test]
-    fn include() -> MosResult<()> {
+    fn file() -> MosResult<()> {
         let root = env!("CARGO_MANIFEST_DIR");
         let input = &format!("{}/test/cli/build/include.bin", root);
-        let source = format!(".include \"{}\"", input);
+        let source = format!(".file \"{}\"", input);
 
         let ctx = test_codegen(&source)?;
         assert_eq!(
@@ -1313,7 +1383,6 @@ mod tests {
 
     #[test]
     fn can_access_forward_declared_labels_within_scope() -> MosResult<()> {
-        enable_default_tracing();
         let ctx = test_codegen("{ jmp my_label\nmy_label: nop }")?;
         assert_eq!(
             ctx.current_segment().range_data(),
@@ -1437,7 +1506,10 @@ mod tests {
     fn cannot_perform_too_far_branch_calculations() -> MosResult<()> {
         let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
         let src = format!("foo: {}bne foo", many_nops);
-        let ast = parse_or_err(&Path::new("test.asm"), &src)?;
+        let ast = parse_or_err(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        )?;
         let result = codegen(ast, CodegenOptions::default());
         assert_eq!(
             format!("{}", result.err().unwrap()),
@@ -1468,8 +1540,62 @@ mod tests {
         assert_eq!(seg.range(), 0x2000..0xc003);
     }
 
+    #[test]
+    fn can_use_wildcard_imports() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                ".import * from \"bar\"\nlda #defined(foo)\nlda #defined(bar)\nlda #defined(baz)",
+            )
+            .add("bar", "foo: nop\nbar: nop\n.export foo\n.export bar as baz")
+            .into();
+
+        let ctx = test_codegen_parsing_source(src)?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xea, 0xea, 0xa9, 1, 0xa9, 0, 0xa9, 1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_specific_imports() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                ".import biz.baz as boz from \"bar\"\nlda #defined(foo)\nlda #defined(bar)\nlda #defined(biz.baz)\nlda #defined(boz)",
+            )
+            .add("bar", "foo: nop\nbar: nop\n.export foo\n.export bar as biz.baz")
+            .into();
+
+        let ctx = test_codegen_parsing_source(src)?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xea, 0xea, 0xa9, 0, 0xa9, 0, 0xa9, 0, 0xa9, 1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_have_imports_with_block() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add("test.asm", ".import foo from \"bar\" { .const CONST = 1 }")
+            .add("bar", "lda #CONST")
+            .into();
+
+        let ctx = test_codegen_parsing_source(src)?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 1]);
+        Ok(())
+    }
+
     pub(super) fn test_codegen(code: &str) -> MosResult<CodegenContext> {
-        let ast = parse_or_err(&Path::new("test.asm"), &code)?;
+        test_codegen_parsing_source(InMemoryParsingSource::new().add("test.asm", &code).into())
+    }
+
+    pub(super) fn test_codegen_parsing_source(
+        src: Arc<RefCell<dyn ParsingSource>>,
+    ) -> MosResult<CodegenContext> {
+        let ast = parse_or_err(&Path::new("test.asm"), src)?;
         codegen(ast, CodegenOptions::default())
     }
 }

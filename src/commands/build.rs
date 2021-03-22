@@ -1,7 +1,7 @@
 use clap::App;
 use fs_err as fs;
 use serde::Deserialize;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::core::codegen::{codegen, CodegenOptions};
 use crate::core::io::{to_vice_symbols, SegmentMerger};
 use crate::core::parser;
+use crate::core::parser::source::FileSystemParsingSource;
 use crate::errors::{MosError, MosResult};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -62,14 +63,12 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             input_path.file_stem().unwrap().to_string_lossy()
         ));
 
-        let mut file = fs::File::open(&input_path)?;
-        let mut source = String::new();
-        file.read_to_string(&mut source)?;
-
-        let (tree, error) = parser::parse(&input_path, source.as_str());
+        let source = FileSystemParsingSource::new();
+        let (tree, error) = parser::parse(&input_path, source.into());
         if let Some(e) = error {
             return Err(e);
         }
+        let tree = tree.unwrap();
         let generated_code = codegen(tree, CodegenOptions { pc: 0x2000.into() })?;
 
         let mut merger = SegmentMerger::new(output_path);

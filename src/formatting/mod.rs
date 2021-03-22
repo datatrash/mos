@@ -1,6 +1,6 @@
 use crate::core::parser::{
     format_trivia, AddressingMode, ArgItem, Block, Expression, ExpressionFactor, Identifier,
-    Located, Operand, ParseTree, Token, Trivia,
+    ImportArgs, Located, Operand, ParseTree, SpecificImportArg, Token, Trivia,
 };
 use itertools::Itertools;
 use serde::Deserialize;
@@ -272,6 +272,21 @@ impl CodeFormatter {
             Token::Error(invalid) => Fmt::new()
                 .push(format_trivia(&invalid.trivia))
                 .push(&invalid.data),
+            Token::Export { tag, id, as_ } => {
+                let f = Fmt::new()
+                    .push(&tag.data)
+                    .spc()
+                    .fmt(self, id.map(|i| i.to_string()));
+
+                if let Some((tag_as, id_as)) = as_ {
+                    f.spc()
+                        .fmt(self, tag_as)
+                        .spc()
+                        .fmt(self, id_as.map(|i| i.to_string()))
+                } else {
+                    f
+                }
+            }
             Token::Expression(expr) => Fmt::new().fmt(self, expr),
             Token::If {
                 tag_if,
@@ -279,8 +294,6 @@ impl CodeFormatter {
                 if_,
                 tag_else,
                 else_,
-                if_scope: _,
-                else_scope: _,
             } => Fmt::new()
                 .push(&tag_if.data)
                 .spc()
@@ -291,7 +304,32 @@ impl CodeFormatter {
                 .fmt(self, tag_else)
                 .spc_if_next()
                 .fmt(self, else_),
-            Token::Include {
+            Token::Import {
+                tag,
+                args,
+                from,
+                lquote,
+                filename,
+                block,
+                import_scope: _,
+                imported_tokens: _,
+            } => {
+                let f = Fmt::new().push(&tag.data).spc();
+
+                let f = match args {
+                    ImportArgs::All(c) => f.fmt(self, c),
+                    ImportArgs::Specific(args) => f.fmt(self, args),
+                };
+
+                f.spc()
+                    .push(&from.data)
+                    .spc()
+                    .fmt(self, lquote)
+                    .fmt(self, filename.map(|f| format!("{}\"", f)))
+                    .spc_if_next()
+                    .fmt(self, block)
+            }
+            Token::File {
                 tag,
                 lquote,
                 filename,
@@ -476,6 +514,17 @@ impl CodeFormatter {
         let mut fmt = Fmt::new();
         for (id, comma) in args {
             fmt = fmt.fmt(self, id).fmt(self, comma).spc_if_next();
+        }
+        fmt
+    }
+
+    fn format_specific_import_args(&mut self, args: &[ArgItem<SpecificImportArg>]) -> Fmt {
+        let mut fmt = Fmt::new();
+        for (path, comma) in args {
+            fmt = fmt
+                .fmt(self, path.map(|p| p.to_string()))
+                .fmt(self, comma)
+                .spc_if_next();
         }
         fmt
     }
@@ -718,6 +767,12 @@ impl Formattable for &Vec<ArgItem<Identifier>> {
     }
 }
 
+impl Formattable for &Vec<ArgItem<SpecificImportArg>> {
+    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
+        formatter.format_specific_import_args(self)
+    }
+}
+
 impl Fmt {
     fn new() -> Self {
         Self {
@@ -859,16 +914,19 @@ fn indent_prefix(indent: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{format, FormattingOptions};
+    use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::core::parser::{parse, parse_or_err};
     use crate::errors::{MosError, MosResult};
     use crate::formatting::BracePosition;
     use itertools::Itertools;
+    use std::cell::RefCell;
+    use std::sync::Arc;
 
     #[test]
     fn newline_braces() -> MosResult<()> {
         let source = "{nop}";
         let expected = "{\n    nop\n}";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let mut opts = FormattingOptions::default();
         opts.braces.position = BracePosition::NewLine;
         let actual = format(ast, opts);
@@ -880,7 +938,7 @@ mod tests {
     fn no_newline_if_same() -> MosResult<()> {
         let source = "nop\nnop\n// hello\nnop\n\n// foo\n.align 8\n.align 16";
         let expected = "nop\nnop\n// hello\nnop\n\n// foo\n.align 8\n.align 16";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -890,7 +948,7 @@ mod tests {
     fn keep_standalone_comments() -> MosResult<()> {
         let source = "nop\n\n// standalone\nnop";
         let expected = "nop\n\n// standalone\nnop";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -900,7 +958,7 @@ mod tests {
     fn keep_grouped_comments() -> MosResult<()> {
         let source = "// a\n// b";
         let expected = "// a\n// b";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -910,7 +968,7 @@ mod tests {
     fn block_indentation() -> MosResult<()> {
         let source = "{stx data\n           .if test { nop  }      }";
         let expected = "{\n    stx data\n\n    .if test {\n        nop\n    }\n}";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -920,7 +978,7 @@ mod tests {
     fn simple_leading_trivia_block_comments() -> MosResult<()> {
         let source = "{\n/* nice*/\nnop}";
         let expected = "{\n    /* nice*/\n    nop\n}";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -930,7 +988,7 @@ mod tests {
     fn simple_block_comments() -> MosResult<()> {
         let source = "{nop/* nice*/}";
         let expected = "{\n    nop /* nice*/\n}";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -949,7 +1007,7 @@ mod tests {
 
     nop
 }";
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -959,7 +1017,7 @@ mod tests {
     fn default_formatting_options() -> MosResult<()> {
         let source = include_str!("../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -969,7 +1027,7 @@ mod tests {
     fn roundtrip_formatting() -> MosResult<()> {
         let source = include_str!("../../test/cli/format/valid-formatted.asm");
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
-        let ast = parse_or_err("test.asm".as_ref(), source)?;
+        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format(ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
@@ -988,9 +1046,13 @@ mod tests {
     fn format_with_errors() {
         let source = ".segment foo {boop}\n{nop}";
         let expected = ".segment foo {boop}\n\n{\n    nop\n}";
-        let (ast, _) = parse("test.asm".as_ref(), source);
-        let actual = format(ast, FormattingOptions::default());
+        let (ast, _) = parse("test.asm".as_ref(), get_source(source));
+        let actual = format(ast.unwrap(), FormattingOptions::default());
         eq(actual, expected);
+    }
+
+    fn get_source(src: &str) -> Arc<RefCell<dyn ParsingSource>> {
+        InMemoryParsingSource::new().add("test.asm", src).into()
     }
 
     // Cross-platform eq

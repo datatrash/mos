@@ -1,5 +1,6 @@
 use crate::core::parser::{
-    ArgItem, Block, Expression, ExpressionFactor, Identifier, Token, VariableType,
+    ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, SpecificImportArg, Token,
+    VariableType,
 };
 use crate::errors::MosResult;
 use crate::impl_request_handler;
@@ -230,6 +231,18 @@ impl SemTokBuilder {
         }
         self
     }
+
+    fn specific_import_args(mut self, args: &[ArgItem<SpecificImportArg>]) -> Self {
+        for (arg, _) in args {
+            let arg = &arg.data;
+            self = self.identifier(&arg.path);
+            self = match &arg.as_ {
+                Some((tag, id)) => self.keyword(tag).identifier(id),
+                None => self,
+            };
+        }
+        self
+    }
 }
 
 fn emit_semantic_ast(ast: &[Token]) -> Vec<SemTok> {
@@ -256,12 +269,42 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         }
         Token::Eof(_) => b,
         Token::Error(_) => b,
+        Token::Export { tag, id, as_ } => {
+            let b = b.keyword(tag).identifier(id);
+            if let Some((tag_as, id_as)) = as_ {
+                b.keyword(tag_as).identifier(id_as)
+            } else {
+                b
+            }
+        }
         Token::Expression(expr) => b.expression(&expr),
-        Token::Include { tag, filename, .. } => b
+        Token::File { tag, filename, .. } => b
             .push(tag, TokenType::Keyword)
             .push(filename, TokenType::Constant),
         Token::Label { id, block, .. } => {
             let b = b.identifier(id);
+            match block {
+                Some(block) => b.block(block),
+                None => b,
+            }
+        }
+        Token::Import {
+            tag,
+            args,
+            from,
+            lquote: _,
+            filename,
+            block,
+            import_scope: _,
+            imported_tokens: _,
+        } => {
+            let b = b.keyword(tag);
+
+            let b = match args {
+                ImportArgs::All(_) => b,
+                ImportArgs::Specific(args) => b.specific_import_args(args),
+            };
+            let b = b.keyword(from).push(filename, TokenType::Constant);
             match block {
                 Some(block) => b.block(block),
                 None => b,

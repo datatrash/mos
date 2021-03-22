@@ -4,22 +4,26 @@ use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
 use crate::lsp::analysis::{from_file_uri, Analysis};
 use crate::lsp::{LspContext, NotificationHandler};
-use lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument, PublishDiagnostics};
+use lsp_types::notification::{
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, PublishDiagnostics,
+};
 use lsp_types::{
-    Diagnostic, DidChangeTextDocumentParams, DidOpenTextDocumentParams, Position,
-    PublishDiagnosticsParams, Range, Url,
+    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    Position, PublishDiagnosticsParams, Range, Url,
 };
 use std::path::Path;
 
 pub struct DidOpenTextDocumentHandler {}
 pub struct DidChangeTextDocumentHandler {}
+pub struct DidCloseTextDocumentHandler {}
 
 impl_notification_handler!(DidOpenTextDocumentHandler);
 impl_notification_handler!(DidChangeTextDocumentHandler);
+impl_notification_handler!(DidCloseTextDocumentHandler);
 
 impl NotificationHandler<DidOpenTextDocument> for DidOpenTextDocumentHandler {
     fn handle(&self, ctx: &mut LspContext, params: DidOpenTextDocumentParams) -> MosResult<()> {
-        perform_analysis(ctx, &params.text_document.uri, &params.text_document.text);
+        register_document(ctx, &params.text_document.uri, &params.text_document.text);
         publish_diagnostics(ctx, &params.text_document.uri)?;
         Ok(())
     }
@@ -28,27 +32,40 @@ impl NotificationHandler<DidOpenTextDocument> for DidOpenTextDocumentHandler {
 impl NotificationHandler<DidChangeTextDocument> for DidChangeTextDocumentHandler {
     fn handle(&self, ctx: &mut LspContext, params: DidChangeTextDocumentParams) -> MosResult<()> {
         let text_changes = params.content_changes.first().unwrap();
-        perform_analysis(ctx, &params.text_document.uri, &text_changes.text);
+        register_document(ctx, &params.text_document.uri, &text_changes.text);
         publish_diagnostics(ctx, &params.text_document.uri)?;
         Ok(())
     }
 }
 
-fn perform_analysis(ctx: &mut LspContext, uri: &Url, source: &str) {
-    let path = Path::new(from_file_uri(uri));
-    log::trace!("Performing analysis, caused by: {}", path.to_str().unwrap());
-    let source = source.to_string();
+impl NotificationHandler<DidCloseTextDocument> for DidCloseTextDocumentHandler {
+    fn handle(&self, ctx: &mut LspContext, params: DidCloseTextDocumentParams) -> MosResult<()> {
+        let path = Path::new(from_file_uri(&params.text_document.uri));
+        ctx.parsing_source.borrow_mut().remove(&path);
+        Ok(())
+    }
+}
 
-    let (tree, error) = parse(path, &source);
+fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
+    let path = Path::new(from_file_uri(uri));
+    ctx.parsing_source().insert(path, source);
+
+    log::trace!("Performing analysis, caused by: {}", path.to_str().unwrap());
+    let (tree, error) = parse(path, ctx.parsing_source.clone());
     let error = match error {
         Some(e) => Some(e),
-        None => match codegen(tree.clone(), CodegenOptions::default()) {
-            Ok(_) => None,
-            Err(e) => Some(e),
+        None => match tree {
+            Some(ref tree) => match codegen(tree.clone(), CodegenOptions::default()) {
+                Ok(_) => None,
+                Err(e) => Some(e),
+            },
+            _ => panic!(),
         },
     };
 
-    ctx.analysis = Some(Analysis::new(tree, error));
+    if let Some(tree) = tree {
+        ctx.analysis = Some(Analysis::new(tree, error));
+    }
 }
 
 fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
@@ -68,19 +85,9 @@ fn publish_diagnostics(ctx: &LspContext, uri: &Url) -> MosResult<()> {
 
 fn to_diagnostics(error: &MosError) -> Vec<Diagnostic> {
     match &error {
-        MosError::Parser {
-            tree,
-            span,
-            message,
-        }
-        | MosError::Codegen {
-            tree,
-            span,
-            message,
-        } => {
-            let l = tree.code_map().look_up_span(*span);
-            let start = Position::new(l.begin.line as u32, l.begin.column as u32);
-            let end = Position::new(l.end.line as u32, l.end.column as u32);
+        MosError::Parser { location, message } | MosError::Codegen { location, message } => {
+            let start = Position::new(location.begin.line as u32, location.begin.column as u32);
+            let end = Position::new(location.end.line as u32, location.end.column as u32);
             let range = Range::new(start, end);
             let mut d = Diagnostic::new_simple(range, message.clone());
             d.source = Some("mos".into());

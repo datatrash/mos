@@ -1,5 +1,164 @@
 # Advanced features
 
+## Imports
+The way MOS deals with importing other source files is a bit different from other assemblers. When creating a source file you need to explicitly tell MOS which symbols you want to export, and which name you want to give them.
+
+### The basics
+For example, let's look at a file called `border.asm`:
+```asm6502
+set_black:
+    lda #0
+    sta $d020
+    rts
+
+set_white:
+    lda #1
+    sta $d020
+    rts   
+```
+
+You can import it into your `main.asm` like so:
+```asm6502
+.import * from "border.asm"
+```
+
+However, no symbols would be visible because no symbols were *exported* from `border.asm`. We can fix that by changing `border.asm` to look like this:
+
+```asm6502
+set_black:
+    lda #0
+    sta $d020
+    rts
+
+set_white:
+    lda #1
+    sta $d020
+    rts
+    
+.export set_black
+.export set_white       
+```
+
+Now, `main.asm` can use these symbols:
+```asm6502
+jsr set_white
+rts
+
+.import * from "border.asm"
+```
+
+::: tip
+The machine code will be emitted at the location you put the `.import` directive.
+:::
+
+### More control
+It's also possible to choose which symbols to import, like so:
+
+```asm6502
+jsr set_white
+rts
+
+.import set_white from "border.asm"
+```
+
+The imported symbols may also be renamed by adding an `as` directive:
+
+```asm6502
+jsr sw
+rts
+
+.import set_white as sw from "border.asm"
+```
+
+Conversely, it is possible to change the names of symbols during export with an `as` directive, like so:
+
+```asm6502
+.export set_black as foo
+```
+
+This can be handy if you want to export deeply nested symbols, for instance:
+
+```asm6502
+a: {
+    b: {
+        c: {
+            inc $d020
+            rts
+        }
+    }
+}
+
+.export a.b.c as inc_border
+```
+
+### Importing with scope
+When importing, you can also choose to add a scope to your `.import` directive, allowing you to pass some data to the imported file.
+
+For example, let's change `main.asm` to:
+```asm6502
+jsr set_border_white
+jsr set_screen_white
+rts
+
+.import set_white as set_border_white from "border.asm" {
+    .const ADDRESS = $d020
+}
+.import set_white as set_screen_white from "border.asm" {
+    .const ADDRESS = $d021
+}
+```
+
+Then `border.asm` can look like this:
+```asm6502
+set_white:
+    lda #1
+    sta ADDRESS
+    rts
+    
+.export set_white
+```
+
+### Conditional inclusion
+The parameter passing mechanism can also be used to determine which blocks of code to import, by wrapping them in an `.if defined` directive.
+
+For instance, `border.asm` can do something like:
+```asm6502
+.if defined(include_set_black) {
+    set_black:
+        lda #0
+        sta ADDRESS
+        rts
+    
+    .export set_black
+}
+
+.if defined(include_set_white) {
+    set_white:
+        lda #1
+        sta ADDRESS
+        rts
+
+    
+    .export set_white
+}
+```
+
+And then `main.asm` can be:
+```asm6502
+jsr set_border_white
+jsr set_screen_white
+rts
+
+.import set_white as set_border_white from "border.asm" {
+    .const ADDRESS = $d020
+    .const INCLUDE_SET_WHITE = 1
+}
+.import set_white as set_screen_white from "border.asm" {
+    .const ADDRESS = $d021
+    .const INCLUDE_SET_WHITE = 1
+}
+```
+
 ## Macros
 Macros may be defined by specifying a name and an argument list.
 

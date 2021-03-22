@@ -1,11 +1,9 @@
-use crate::core::parser::ParseTree;
 use crossbeam_channel::SendError;
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
 use pathdiff::diff_paths;
 use std::path::PathBuf;
 use std::str::ParseBoolError;
-use std::sync::Arc;
 
 pub type MosResult<T> = Result<T, MosError>;
 
@@ -16,14 +14,12 @@ pub enum MosError {
     Clap(#[from] clap::Error),
     Cli(String),
     Codegen {
-        tree: Arc<ParseTree>,
-        span: codemap::Span,
+        location: codemap::SpanLoc,
         message: String,
     },
     Io(#[from] std::io::Error),
     Parser {
-        tree: Arc<ParseTree>,
-        span: codemap::Span,
+        location: codemap::SpanLoc,
         message: String,
     },
     Multiple(Vec<MosError>),
@@ -39,24 +35,24 @@ impl PartialEq for MosError {
         match (self, other) {
             (
                 MosError::Parser {
-                    span: lloc,
+                    location: lloc,
                     message: lmsg,
                     ..
                 },
                 MosError::Parser {
-                    span: rloc,
+                    location: rloc,
                     message: rmsg,
                     ..
                 },
             ) => lloc == rloc && lmsg == rmsg,
             (
                 MosError::Codegen {
-                    span: lloc,
+                    location: lloc,
                     message: lmsg,
                     ..
                 },
                 MosError::Codegen {
-                    span: rloc,
+                    location: rloc,
                     message: rmsg,
                     ..
                 },
@@ -101,17 +97,7 @@ impl MosError {
         }
 
         match self {
-            MosError::Codegen {
-                tree,
-                span,
-                message,
-            }
-            | MosError::Parser {
-                tree,
-                span,
-                message,
-            } => {
-                let location = tree.code_map().look_up_span(*span);
+            MosError::Codegen { location, message } | MosError::Parser { location, message } => {
                 let mut filename: PathBuf = location.file.name().into();
                 if let Some(relative_from) = &options.paths_relative_from {
                     filename = diff_paths(filename, relative_from).unwrap();

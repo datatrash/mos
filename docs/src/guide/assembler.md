@@ -147,10 +147,10 @@ Supported data types are `.byte`, `.word` and `.dword`.
 It is also possible to include data from files, like so:
 
 ```asm6502
-.include "foo.bin"
+.file "foo.bin"
 ```
 
-The file is located relative to the source file that contains the `.include` directive.
+The file is located relative to the source file that contains the `.file` directive.
 
 ## Comments
 Lines may end with a C++-style `//` comment, like so:

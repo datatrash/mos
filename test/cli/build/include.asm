@@ -9,5 +9,5 @@ end:
     rts
 
 data:
-    .include "include.bin"
+    .file "include.bin"
     .byte 0

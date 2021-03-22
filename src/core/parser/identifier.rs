@@ -111,6 +111,12 @@ impl IdentifierPath {
         self.0.pop();
     }
 
+    pub fn parent(&self) -> IdentifierPath {
+        let mut path = self.clone();
+        path.pop();
+        path
+    }
+
     pub fn join<I: Into<IdentifierPath>>(&self, other: I) -> IdentifierPath {
         let other = other.into();
         let mut p = self.0.clone();
@@ -120,6 +126,15 @@ impl IdentifierPath {
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn has_parent<I: Into<IdentifierPath>>(&self, parent: I) -> bool {
+        let parent = parent.into();
+        parent
+            .0
+            .iter()
+            .enumerate()
+            .all(|(idx, part)| self.0.get(idx) == Some(part))
     }
 
     pub fn single(&self) -> &Identifier {
