@@ -296,6 +296,7 @@ impl CodegenContext {
 
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.borrow_mut().clear();
+        self.exports.clear();
     }
 
     fn try_current_target_pc(&self) -> Option<ProgramCounter> {
@@ -595,21 +596,73 @@ impl CodegenContext {
                 block,
                 ..
             } => {
+                let prev_exports = self.exports.clone();
+                self.exports.clear();
                 self.with_scope(import_scope, |s| {
                     if let Some(block) = block {
                         s.emit_tokens(&block.inner)?;
                     }
-                    match args {
-                        ImportArgs::All(_) => s.emit_tokens(tokens),
-                        ImportArgs::Specific(args) => {
-                            let ids = args.iter().map(|(arg, _)| arg.data.clone()).collect_vec();
-                            s.export_filter = Some(ids);
-                            s.emit_tokens(tokens)
+
+                    s.emit_tokens(tokens)
+                })?;
+                let mut new_exports = self.exports.clone();
+                self.exports = prev_exports;
+
+                for i in new_exports.keys() {
+                    log::trace!("New export: {}", i);
+                }
+
+                let args: Vec<SpecificImportArg> = match args {
+                    ImportArgs::All(star) => {
+                        // Just take whatever new exports we have and pretend we have manually
+                        // selected them to import
+                        new_exports
+                            .keys()
+                            .map(|path| SpecificImportArg {
+                                path: star.map(|_| path.clone()),
+                                as_: None,
+                            })
+                            .collect()
+                    }
+                    ImportArgs::Specific(specific) => {
+                        specific.iter().map(|(arg, _)| arg.data.clone()).collect()
+                    }
+                };
+
+                for arg in &args {
+                    let target = match &arg.as_ {
+                        Some((_, path)) => path,
+                        None => &arg.path,
+                    };
+                    log::trace!(
+                        "Checking: {}: {}",
+                        target,
+                        self.symbols.contains_key(&target.data)
+                            || self.exports.contains_key(&target.data)
+                    );
+                    if self.symbols.contains_key(&target.data)
+                        || self.exports.contains_key(&target.data)
+                    {
+                        return self.error(
+                            target.span,
+                            format!("cannot import an already defined symbol: {}", target.data),
+                        );
+                    }
+
+                    // This export is valid, so move it from the 'new_exports' to the actual exports
+                    log::trace!("Trying to remove: {}", &arg.path.data);
+                    match new_exports.remove_entry(&arg.path.data) {
+                        Some((_original_symbol_name, export)) => {
+                            self.exports.insert(target.data.clone(), export);
+                        }
+                        None => {
+                            return self.error(
+                                target.span,
+                                format!("undefined export: {}", arg.path.data),
+                            );
                         }
                     }
-                })?;
-
-                self.export_filter = None;
+                }
             }
             Token::File { filename, .. } => {
                 let span = filename.span;
@@ -1580,12 +1633,57 @@ mod tests {
     fn can_have_imports_with_block() -> MosResult<()> {
         let src = InMemoryParsingSource::new()
             .add("test.asm", ".import foo from \"bar\" { .const CONST = 1 }")
-            .add("bar", "lda #CONST")
+            .add("bar", "foo: lda #CONST\n.export foo")
             .into();
 
         let ctx = test_codegen_parsing_source(src)?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 1]);
         Ok(())
+    }
+
+    #[test]
+    fn cannot_import_unknown_export() {
+        let src = InMemoryParsingSource::new()
+            .add("test.asm", ".import foo from \"bar\"")
+            .add("bar", "nop")
+            .into();
+
+        let err = test_codegen_parsing_source(src).err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:1:9: error: undefined export: foo"
+        );
+    }
+
+    #[test]
+    fn cannot_have_duplicate_imports() {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                ".import foo from \"bar\"\n.import foo as foo2 from \"bar\"\n.import foo from \"bar\"",
+            )
+            .add("bar", "foo: nop\n.export foo")
+            .into();
+
+        let err = test_codegen_parsing_source(src).err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:3:9: error: cannot import an already defined symbol: foo"
+        );
+    }
+
+    #[test]
+    fn cannot_have_duplicate_imports_via_wildcard_import() {
+        let src = InMemoryParsingSource::new()
+            .add("test.asm", ".import * from \"bar\"\n.import * from \"bar\"")
+            .add("bar", "foo: nop\n.export foo")
+            .into();
+
+        let err = test_codegen_parsing_source(src).err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:2:9: error: cannot import an already defined symbol: foo"
+        );
     }
 
     pub(super) fn test_codegen(code: &str) -> MosResult<CodegenContext> {
