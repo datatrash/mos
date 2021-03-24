@@ -28,3 +28,6 @@ start=$2000 + 4 -%00100}
  nop
 
  .macro MyMacro(arg1,arg2){brk}
+
+ .import   foo    as    bar    from    "other.asm" {nop}
+ .export    data   as    boop

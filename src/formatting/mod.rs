@@ -521,10 +521,17 @@ impl CodeFormatter {
     fn format_specific_import_args(&mut self, args: &[ArgItem<SpecificImportArg>]) -> Fmt {
         let mut fmt = Fmt::new();
         for (path, comma) in args {
-            fmt = fmt
-                .fmt(self, path.map(|p| p.to_string()))
-                .fmt(self, comma)
-                .spc_if_next();
+            fmt = fmt.fmt(self, &path.data.path.map(|p| p.to_string()));
+
+            if let Some((tag_as, id_as)) = &path.data.as_ {
+                fmt = fmt
+                    .spc()
+                    .fmt(self, tag_as)
+                    .spc()
+                    .fmt(self, &id_as.map(|p| p.to_string()));
+            }
+
+            fmt = fmt.fmt(self, comma).spc_if_next();
         }
         fmt
     }
@@ -1052,7 +1059,10 @@ mod tests {
     }
 
     fn get_source(src: &str) -> Arc<RefCell<dyn ParsingSource>> {
-        InMemoryParsingSource::new().add("test.asm", src).into()
+        InMemoryParsingSource::new()
+            .add("test.asm", src)
+            .add("other.asm", "nop")
+            .into()
     }
 
     // Cross-platform eq
