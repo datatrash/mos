@@ -1,11 +1,11 @@
+use crate::core::parser::code_map::{CodeMap, Span};
 use crate::core::parser::{
-    ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, SpecificImportArg, Token,
-    VariableType,
+    ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, ParseTree,
+    SpecificImportArg, Token, VariableType,
 };
 use crate::errors::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{LspContext, RequestHandler};
-use codemap::{CodeMap, Span};
+use crate::lsp::{path_from_uri, LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::SemanticTokensFullRequest;
 use lsp_types::{
@@ -15,6 +15,7 @@ use lsp_types::{
 };
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
+use std::path::Path;
 use strum::IntoEnumIterator;
 
 #[derive(Clone, Copy, Debug, strum::EnumIter, Hash, PartialEq, Eq)]
@@ -114,11 +115,12 @@ impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHand
     fn handle(
         &self,
         ctx: &mut LspContext,
-        _params: SemanticTokensParams,
+        params: SemanticTokensParams,
     ) -> MosResult<Option<SemanticTokensResult>> {
-        if let Some(analysis) = &ctx.analysis {
-            let semtoks = emit_semantic_ast(analysis.tree.tokens());
-            let data = to_deltas(analysis.tree.code_map(), semtoks);
+        if let Some(tree) = &ctx.tree {
+            let semtoks = emit_semantic_ast(tree.tokens());
+            let semtoks = filter_by_file(&tree, &path_from_uri(&params.text_document.uri), semtoks);
+            let data = to_deltas(tree.code_map(), semtoks);
             let tokens = SemanticTokens {
                 result_id: None,
                 data,
@@ -128,6 +130,21 @@ impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHand
             Ok(None)
         }
     }
+}
+
+fn filter_by_file(tree: &ParseTree, path: &Path, semtoks: Vec<SemTok>) -> Vec<SemTok> {
+    semtoks
+        .into_iter()
+        .filter(|tok| {
+            let loc = tree.code_map().look_up_span(tok.span);
+            log::trace!(
+                "Comparing '{}' to '{}'",
+                loc.file.name(),
+                path.to_str().unwrap()
+            );
+            loc.file.name() == path.to_str().unwrap()
+        })
+        .collect()
 }
 
 fn to_deltas(code_map: &CodeMap, semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
@@ -210,6 +227,11 @@ impl SemTokBuilder {
 
     fn block(mut self, val: &Block) -> Self {
         self.tokens.extend(emit_semantic_ast(&val.inner));
+        self
+    }
+
+    fn tokens(mut self, tokens: &[Token]) -> Self {
+        self.tokens.extend(emit_semantic_ast(tokens));
         self
     }
 
@@ -296,7 +318,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             filename,
             block,
             import_scope: _,
-            imported_tokens: _,
+            imported_file,
         } => {
             let b = b.keyword(tag);
 
@@ -305,10 +327,12 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 ImportArgs::Specific(args) => b.specific_import_args(args),
             };
             let b = b.keyword(from).push(filename, TokenType::Constant);
-            match block {
+            let b = match block {
                 Some(block) => b.block(block),
                 None => b,
-            }
+            };
+
+            b.tokens(&imported_file.tokens)
         }
         Token::If {
             tag_if,

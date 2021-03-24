@@ -21,15 +21,16 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
         ctx: &mut LspContext,
         params: GotoDefinitionParams,
     ) -> MosResult<Option<GotoDefinitionResponse>> {
-        Ok(ctx
-            .find_definition(&params.text_document_position_params)
-            .map(|def| {
-                ctx.analysis.as_ref().map(|a| {
-                    let l = a.look_up_span(def.location.unwrap());
-                    Location::from(l).into()
-                })
-            })
-            .flatten())
+        let def = ctx.find_definition(&params.text_document_position_params);
+        if let Some(def) = def {
+            if let Some(location) = &def.location {
+                let l = ctx.analysis().unwrap().look_up(*location);
+                let loc: lsp_types::Location = l.into();
+                return Ok(Some(loc.into()));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -42,14 +43,11 @@ impl RequestHandler<References> for FindReferencesHandler {
         Ok(ctx
             .find_definition(&params.text_document_position)
             .map(|def| {
-                ctx.analysis.as_ref().map(|a| {
-                    def.definition_and_usages()
-                        .into_iter()
-                        .map(|span| a.look_up_span(span).into())
-                        .collect()
-                })
-            })
-            .flatten())
+                def.definition_and_usages()
+                    .into_iter()
+                    .map(|i| ctx.analysis().unwrap().look_up(*i).into())
+                    .collect()
+            }))
     }
 }
 
@@ -62,13 +60,39 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
         Ok(ctx
             .find_definition(&params.text_document_position_params)
             .map(|def| {
-                ctx.analysis.as_ref().map(|a| {
-                    def.definition_and_usages()
-                        .into_iter()
-                        .map(|span| a.look_up_span(span).into())
-                        .collect()
-                })
-            })
-            .flatten())
+                def.definition_and_usages()
+                    .into_iter()
+                    .map(|i| {
+                        let loc: lsp_types::Location = ctx.analysis().unwrap().look_up(*i).into();
+                        DocumentHighlight {
+                            range: loc.range,
+                            kind: None,
+                        }
+                    })
+                    .collect()
+            }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::errors::MosResult;
+    use crate::lsp::testing::range;
+    use crate::lsp::{path_from_uri, LspServer};
+    use lsp_types::{GotoDefinitionResponse, Position};
+
+    #[test]
+    fn can_go_to_reference_in_other_file() -> MosResult<()> {
+        let mut server = LspServer::new();
+        server.did_open_text_document("/bar.asm", "foo: nop\n.export foo")?;
+        server.did_open_text_document("/main.asm", "lda foo\n.import foo from \"bar.asm\"")?;
+        let response = server.go_to_definition("/main.asm", Position::new(0, 4))?;
+        let location = match response {
+            GotoDefinitionResponse::Scalar(location) => location,
+            _ => panic!(),
+        };
+        assert_eq!(path_from_uri(&location.uri).to_string_lossy(), "/bar.asm");
+        assert_eq!(location.range, range(0, 0, 0, 3));
+        Ok(())
     }
 }

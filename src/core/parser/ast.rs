@@ -1,8 +1,8 @@
+use crate::core::parser::code_map::{CodeMap, File, Span};
 use crate::core::parser::mnemonic::Mnemonic;
 use crate::core::parser::source::ParsingSource;
 use crate::core::parser::{Identifier, IdentifierPath};
 use crate::errors::{MosError, MosResult};
-use codemap::{CodeMap, File, Span};
 use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,7 +23,6 @@ pub type ArgItem<T> = (Located<T>, Option<Located<char>>);
 /// The result of parsing
 pub struct ParseTree {
     code_map: CodeMap,
-    files: Vec<Arc<File>>,
     tokens: Vec<Token>,
 }
 
@@ -34,25 +33,24 @@ impl Debug for ParseTree {
 }
 
 impl ParseTree {
-    pub fn new(code_map: CodeMap, files: Vec<Arc<File>>, tokens: Vec<Token>) -> Self {
-        Self {
-            code_map,
-            files,
-            tokens,
-        }
+    pub fn new(code_map: CodeMap, tokens: Vec<Token>) -> Self {
+        Self { code_map, tokens }
     }
 
     pub fn code_map(&self) -> &CodeMap {
         &self.code_map
     }
 
-    pub fn files(&self) -> &Vec<Arc<File>> {
-        &self.files
-    }
-
     pub fn tokens(&self) -> &[Token] {
         &self.tokens
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportedFile {
+    pub tokens: Arc<Vec<Token>>,
+    pub path: PathBuf,
+    pub full_span: Option<Span>,
 }
 
 /// The state of the parser
@@ -63,14 +61,11 @@ pub struct State {
     /// Codemap
     pub code_map: CodeMap,
 
-    /// All files that were parsed
-    pub files: Vec<Arc<codemap::File>>,
-
     /// Tokens of parsed files (used to cache imports),
-    pub cached_tokens: HashMap<PathBuf, Arc<Vec<Token>>>,
+    pub cached_imports: HashMap<PathBuf, ImportedFile>,
 
     /// Which file are we parsing?
-    pub current_file: Arc<codemap::File>,
+    pub current_file: Arc<File>,
 
     /// Which errors did we encounter?
     pub errors: Vec<MosError>,
@@ -97,8 +92,7 @@ impl State {
         Ok(Self {
             source,
             code_map,
-            files: vec![file.clone()],
-            cached_tokens: HashMap::new(),
+            cached_imports: HashMap::new(),
             current_file: file,
             errors: vec![],
             ignore_next_error: false,
@@ -108,10 +102,8 @@ impl State {
 
     pub fn add_file<P: Into<PathBuf>>(&mut self, path: P) -> MosResult<()> {
         let path = path.into();
-        let file = self.code_map.add_file(
-            path.to_str().unwrap().into(),
-            self.source.borrow().get_contents(&path)?,
-        );
+        let src = self.source.borrow().get_contents(&path)?;
+        let file = self.code_map.add_file(path.to_str().unwrap().into(), src);
         self.current_file = file;
         Ok(())
     }
@@ -549,7 +541,7 @@ pub enum Token {
         filename: Located<String>,
         block: Option<Block>,
         import_scope: Identifier,
-        imported_tokens: Arc<Vec<Token>>,
+        imported_file: ImportedFile,
     },
     File {
         tag: Located<String>,
@@ -896,7 +888,7 @@ impl Display for Token {
                 filename,
                 block,
                 import_scope: _,
-                imported_tokens: _,
+                imported_file: _,
             } => {
                 let block = match block {
                     Some(block) => format!("{}", block),

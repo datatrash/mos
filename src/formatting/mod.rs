@@ -312,7 +312,7 @@ impl CodeFormatter {
                 filename,
                 block,
                 import_scope: _,
-                imported_tokens: _,
+                imported_file: _,
             } => {
                 let f = Fmt::new().push(&tag.data).spc();
 

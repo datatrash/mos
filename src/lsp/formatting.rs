@@ -32,9 +32,10 @@ impl RequestHandler<lsp_types::request::OnTypeFormatting> for OnTypeFormattingRe
 }
 
 fn do_formatting(ctx: &mut LspContext) -> Option<Vec<TextEdit>> {
-    ctx.analysis.as_ref().map(|analysis| {
-        let old_text = analysis.tree.files().first().unwrap().source();
-        let new_text = format(analysis.tree.clone(), FormattingOptions::default());
+    ctx.analysis().map(|analysis| {
+        let tree = analysis.tree();
+        let old_text = tree.code_map().files().first().unwrap().source();
+        let new_text = format(tree.clone(), FormattingOptions::default());
         get_text_edits(old_text, &new_text)
     })
 }

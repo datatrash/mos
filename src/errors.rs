@@ -1,3 +1,4 @@
+use crate::core::parser::code_map::SpanLoc;
 use crossbeam_channel::SendError;
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
@@ -13,15 +14,9 @@ pub enum MosError {
     BuildError(String),
     Clap(#[from] clap::Error),
     Cli(String),
-    Codegen {
-        location: codemap::SpanLoc,
-        message: String,
-    },
+    Codegen { location: SpanLoc, message: String },
     Io(#[from] std::io::Error),
-    Parser {
-        location: codemap::SpanLoc,
-        message: String,
-    },
+    Parser { location: SpanLoc, message: String },
     Multiple(Vec<MosError>),
     Toml(#[from] toml::de::Error),
     Protocol(#[from] ProtocolError),

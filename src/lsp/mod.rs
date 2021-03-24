@@ -1,5 +1,18 @@
-use crate::errors::MosResult;
-use crate::lsp::analysis::{from_file_uri, Analysis, Definition};
+mod documents;
+mod formatting;
+mod references;
+mod rename;
+mod semantic_highlighting;
+#[cfg(test)]
+mod testing;
+mod traits;
+
+use crate::config::Config;
+use crate::core::codegen::{Analysis, CodegenContext, Definition};
+use crate::core::parser::code_map::{LineCol, SpanLoc};
+use crate::core::parser::source::ParsingSource;
+use crate::core::parser::ParseTree;
+use crate::errors::{MosError, MosResult};
 use crate::lsp::documents::{
     DidChangeTextDocumentHandler, DidCloseTextDocumentHandler, DidOpenTextDocumentHandler,
 };
@@ -12,33 +25,63 @@ use crate::lsp::semantic_highlighting::SemanticTokensFullRequestHandler;
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    DocumentOnTypeFormattingOptions, InitializeParams, OneOf, ServerCapabilities,
-    TextDocumentPositionParams, TextDocumentSyncKind,
+    DocumentOnTypeFormattingOptions, InitializeParams, OneOf, Position, ServerCapabilities,
+    TextDocumentPositionParams, TextDocumentSyncKind, Url,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
-
-mod analysis;
-mod documents;
-mod formatting;
-mod references;
-mod rename;
-mod semantic_highlighting;
-#[cfg(test)]
-mod testing;
-mod traits;
-
-use crate::core::parser::source::ParsingSource;
 use std::cell::RefMut;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 pub use traits::*;
+
+fn path_from_uri(uri: &Url) -> PathBuf {
+    assert_eq!(uri.path().is_empty(), false);
+    PathBuf::from(&uri.path())
+}
+
+fn path_to_uri<P: Into<PathBuf>>(path: P) -> Url {
+    let path = path.into();
+    Url::parse(&format!("file://{}", path.to_string_lossy())).unwrap()
+}
+
+impl From<lsp_types::Position> for LineCol {
+    fn from(pos: Position) -> Self {
+        Self {
+            line: pos.line as usize,
+            column: pos.character as usize,
+        }
+    }
+}
+
+impl From<LineCol> for lsp_types::Position {
+    fn from(lc: LineCol) -> Self {
+        Self {
+            line: lc.line as u32,
+            character: lc.column as u32,
+        }
+    }
+}
+
+impl From<SpanLoc> for lsp_types::Location {
+    fn from(sl: SpanLoc) -> Self {
+        Self {
+            uri: path_to_uri(sl.file.name()),
+            range: lsp_types::Range {
+                start: sl.begin.into(),
+                end: sl.end.into(),
+            },
+        }
+    }
+}
 
 pub struct LspContext {
     connection: Option<(Arc<Connection>, IoThreads)>,
-    analysis: Option<Analysis>,
+    tree: Option<Arc<ParseTree>>,
+    error: Option<MosError>,
+    codegen: Option<CodegenContext>,
     parsing_source: Arc<RefCell<LspParsingSource>>,
     #[cfg(test)]
     responses: Arc<RefCell<Vec<lsp_server::Response>>>,
@@ -82,7 +125,9 @@ impl LspContext {
     fn new() -> Self {
         Self {
             connection: None,
-            analysis: None,
+            tree: None,
+            error: None,
+            codegen: None,
             parsing_source: Arc::new(RefCell::new(LspParsingSource::new())),
             #[cfg(test)]
             responses: Arc::new(RefCell::new(vec![])),
@@ -92,6 +137,28 @@ impl LspContext {
     fn start(&mut self) {
         let (connection, io_threads) = Connection::stdio();
         self.connection = Some((Arc::new(connection), io_threads));
+    }
+
+    fn config(&self) -> Option<Config> {
+        self.parsing_source
+            .borrow()
+            .try_get_contents(&Path::new("mos.toml"))
+            .map(|toml| Config::from_toml(&toml).ok())
+            .flatten()
+    }
+
+    #[cfg(test)]
+    fn working_directory(&self) -> PathBuf {
+        PathBuf::from("/")
+    }
+
+    #[cfg(not(test))]
+    fn working_directory(&self) -> PathBuf {
+        PathBuf::from(".").canonicalize().unwrap()
+    }
+
+    fn analysis(&self) -> Option<&Analysis> {
+        self.codegen.as_ref().map(|c| c.analysis())
     }
 
     fn connection(&self) -> Option<Arc<Connection>> {
@@ -150,8 +217,8 @@ impl LspContext {
         &'a self,
         pos: &'a TextDocumentPositionParams,
     ) -> Option<&'a Definition> {
-        if let Some(analysis) = &self.analysis {
-            if let Some(def) = analysis.find(from_file_uri(&pos.text_document.uri), pos.position) {
+        if let Some(analysis) = self.analysis() {
+            if let Some(def) = analysis.find(path_from_uri(&pos.text_document.uri), pos.position) {
                 return Some(def);
             }
         }
@@ -278,5 +345,32 @@ impl LspServer {
     ) {
         self.notification_handlers
             .insert(handler.method(), Box::new(handler));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lsp::{path_from_uri, path_to_uri};
+    use lsp_types::Url;
+    use std::path::PathBuf;
+
+    #[test]
+    fn path_handling() {
+        assert_eq!(
+            path_from_uri(&Url::parse("file:///test/foo.asm").unwrap()),
+            PathBuf::from("/test/foo.asm")
+        );
+        assert_eq!(
+            path_from_uri(&Url::parse("file:///beep/boop/foo.asm").unwrap()),
+            PathBuf::from("/beep/boop/foo.asm")
+        );
+        assert_eq!(
+            path_to_uri(&PathBuf::from("/test/foo.asm")),
+            Url::parse("file:///test/foo.asm").unwrap()
+        );
+        assert_eq!(
+            path_to_uri(&PathBuf::from("/beep/boop/foo.asm")),
+            Url::parse("file:///beep/boop/foo.asm").unwrap()
+        );
     }
 }

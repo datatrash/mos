@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use codemap::{CodeMap, Span};
+use crate::core::parser::code_map::{CodeMap, Span};
 
 pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::SimpleLogger>(
     customizer: F,

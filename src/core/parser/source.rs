@@ -8,6 +8,14 @@ use std::sync::Arc;
 /// A source of data for the parser. Maps paths to their contents.
 pub trait ParsingSource {
     fn get_contents(&self, path: &Path) -> MosResult<String>;
+
+    fn try_get_contents(&self, path: &Path) -> Option<String> {
+        self.get_contents(path).ok()
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        self.try_get_contents(path).is_some()
+    }
 }
 
 pub struct FileSystemParsingSource {}

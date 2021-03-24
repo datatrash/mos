@@ -1,19 +1,21 @@
+mod analysis;
 mod config_extractor;
 mod config_validator;
 mod opcodes;
 mod program_counter;
 
+pub use analysis::*;
 pub use program_counter::*;
 
 use crate::core::codegen::config_validator::ConfigValidator;
 use crate::core::codegen::opcodes::get_opcode_bytes;
+use crate::core::parser::code_map::Span;
 use crate::core::parser::{
     AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
     Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, SpecificImportArg, Token,
     VariableType,
 };
 use crate::errors::{MosError, MosResult};
-use codemap::Span;
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -132,7 +134,7 @@ impl Segment {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SymbolData {
     MacroDefinition(MacroDefinition),
     Number(i64),
@@ -166,14 +168,14 @@ impl SymbolData {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SymbolType {
     Label,
     MacroArgument,
     Variable,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Symbol {
     pub data: SymbolData,
     pub ty: SymbolType,
@@ -226,6 +228,8 @@ pub struct MacroDefinition {
 pub struct CodegenContext {
     tree: Arc<ParseTree>,
 
+    analysis: Analysis,
+
     segments: HashMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
 
@@ -247,8 +251,11 @@ pub struct UndefinedSymbol {
 
 impl CodegenContext {
     fn new(tree: Arc<ParseTree>) -> Self {
+        let analysis = Analysis::new(tree.clone());
+
         Self {
             tree,
+            analysis,
             segments: HashMap::new(),
             current_segment: None,
             symbols: HashMap::new(),
@@ -258,6 +265,10 @@ impl CodegenContext {
             exports: HashMap::new(),
             export_filter: None,
         }
+    }
+
+    pub fn analysis(&self) -> &Analysis {
+        &self.analysis
     }
 
     pub fn segments(&self) -> &HashMap<Identifier, Segment> {
@@ -356,12 +367,12 @@ impl CodegenContext {
                     };
                 }
 
-                *e.into_mut() = value;
+                let e = e.into_mut();
+                *e = value;
+                e
             }
-            Entry::Vacant(e) => {
-                e.insert(value);
-            }
-        }
+            Entry::Vacant(e) => e.insert(value),
+        };
 
         if should_mark_as_undefined {
             self.mark_undefined(span.expect("expected a span"), id);
@@ -377,7 +388,11 @@ impl CodegenContext {
         self.symbols.remove(&path);
     }
 
-    fn get_symbol(&self, current_scope: &IdentifierPath, id: &IdentifierPath) -> Option<&Symbol> {
+    fn get_symbol(
+        &self,
+        current_scope: &IdentifierPath,
+        id: &IdentifierPath,
+    ) -> Option<(IdentifierPath, &Symbol)> {
         log::trace!("Trying to get symbol value: {}", id);
         let mut cur_scope = current_scope.clone();
         loop {
@@ -385,7 +400,7 @@ impl CodegenContext {
             log::trace!("`--> Querying: {}", path);
             if let Some(symbol) = self.symbols.get(&path) {
                 log::trace!("`--> Found");
-                return Some(symbol);
+                return Some((path, symbol));
             }
 
             log::trace!("`--> Querying exports: {}", path);
@@ -407,7 +422,7 @@ impl CodegenContext {
     fn get_symbol_data<I: Into<IdentifierPath>>(&self, span: Span, id: I) -> Option<&SymbolData> {
         let id = id.into();
         match self.get_symbol(&self.current_scope, &id) {
-            Some(s) => Some(&s.data),
+            Some((_, s)) => Some(&s.data),
             None => {
                 // Undefined symbol!
                 if !self.suppress_undefined_symbol_registration {
@@ -591,10 +606,20 @@ impl CodegenContext {
             Token::Import {
                 args,
                 import_scope,
-                imported_tokens: tokens,
+                filename,
+                imported_file,
                 block,
                 ..
             } => {
+                // Make the filename a definition by itself, allowing the user to follow the definition
+                let def = self
+                    .analysis
+                    .get_or_create_definition_mut(DefinitionType::Filename(
+                        imported_file.path.clone(),
+                    ));
+                def.set_location(imported_file.full_span.unwrap());
+                def.add_usage(filename.span);
+
                 let prev_exports = self.exports.clone();
                 self.exports.clear();
                 self.with_scope(import_scope, |s| {
@@ -602,7 +627,7 @@ impl CodegenContext {
                         s.emit_tokens(&block.inner)?;
                     }
 
-                    s.emit_tokens(tokens)
+                    s.emit_tokens(&imported_file.tokens)
                 })?;
                 let mut new_exports = self.exports.clone();
                 self.exports = prev_exports;
@@ -736,6 +761,7 @@ impl CodegenContext {
             Token::Label { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
                     self.add_symbol(id.span, id.data.clone(), Symbol::label(pc.as_i64()))?;
+                    self.update_definition(&id.data, |def| def.set_location(id));
                 }
 
                 if let Some(b) = block {
@@ -895,6 +921,8 @@ impl CodegenContext {
                 _ => self.error(name.span, format!("unknown function: {}", &name.data)),
             },
             ExpressionFactor::IdentifierValue { path, modifier } => {
+                self.update_definition(&path.data, |def| def.add_usage(path));
+
                 let val = self
                     .get_symbol_data(path.span, &path.data)
                     .map(|d| d.as_i64())
@@ -906,6 +934,19 @@ impl CodegenContext {
                 }
             }
             ExpressionFactor::Number { value: number, .. } => Ok(number.data.value()),
+        }
+    }
+
+    fn update_definition<IP: Into<IdentifierPath>, F: FnOnce(&mut Definition)>(
+        &mut self,
+        id: IP,
+        f: F,
+    ) {
+        if let Some((symbol_path, _)) = self.get_symbol(&self.current_scope, &id.into()) {
+            let def = self
+                .analysis
+                .get_or_create_definition_mut(DefinitionType::Symbol(symbol_path));
+            f(def);
         }
     }
 

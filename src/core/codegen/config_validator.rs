@@ -1,7 +1,7 @@
 use crate::core::codegen::config_extractor::ConfigExtractor;
+use crate::core::parser::code_map::Span;
 use crate::core::parser::{Located, ParseTree, Token};
 use crate::errors::{MosError, MosResult};
-use codemap::Span;
 use itertools::Itertools;
 use std::collections::HashSet;
 use std::sync::Arc;

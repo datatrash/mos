@@ -18,17 +18,18 @@ impl RequestHandler<Rename> for RenameHandler {
         Ok(ctx
             .find_definition(&params.text_document_position)
             .map(|def| {
-                ctx.analysis.as_ref().map(|a| {
+                ctx.analysis().as_ref().map(|a| {
                     let changes = def
                         .definition_and_usages()
                         .into_iter()
-                        .map(|span| {
-                            let span = a.look_up_span(span);
+                        .map(|i| {
+                            let span = a.look_up(*i);
+                            let loc: lsp_types::Location = span.into();
                             let edit = TextEdit {
-                                range: span.clone().into(),
+                                range: loc.range,
                                 new_text: params.new_name.clone(),
                             };
-                            (span.uri(), edit)
+                            (loc.uri, edit)
                         })
                         .into_group_map();
                     WorkspaceEdit {
@@ -45,9 +46,8 @@ impl RequestHandler<Rename> for RenameHandler {
 #[cfg(test)]
 mod tests {
     use crate::errors::MosResult;
-    use crate::lsp::analysis::to_file_uri;
     use crate::lsp::testing::response;
-    use crate::lsp::LspServer;
+    use crate::lsp::{path_to_uri, LspServer};
     use lsp_types::request::Rename;
     use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
     use std::collections::HashMap;
@@ -55,12 +55,12 @@ mod tests {
     #[test]
     fn rename() -> MosResult<()> {
         let mut server = LspServer::new();
-        server.did_open_text_document("test.asm", "foo: nop\nlda foo")?;
-        server.rename("test.asm", Position::new(1, 4), "bar")?;
+        server.did_open_text_document("/main.asm", "foo: nop\nlda foo")?;
+        server.rename("/main.asm", Position::new(1, 4), "bar")?;
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            to_file_uri("test.asm"),
+            path_to_uri("/main.asm"),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 0), Position::new(0, 3)),

@@ -1,19 +1,31 @@
 use crate::errors::MosResult;
-use crate::lsp::analysis::to_file_uri;
-use crate::lsp::LspServer;
+use crate::lsp::{path_to_uri, LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
-use lsp_types::request::{Rename, Request};
+use lsp_types::request::{GotoDefinition, Rename, Request};
 use lsp_types::{
-    DidOpenTextDocumentParams, Position, RenameParams, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Position,
+    RenameParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
 };
+use serde::de::DeserializeOwned;
+use std::path::PathBuf;
+
+impl LspContext {
+    fn pop_response<T: DeserializeOwned>(&self) -> T {
+        let response = self.responses.borrow_mut().pop().unwrap().result.unwrap();
+        serde_json::from_value(response).unwrap()
+    }
+}
 
 impl LspServer {
-    pub fn did_open_text_document(&mut self, file: &str, source: &str) -> MosResult<()> {
+    pub fn did_open_text_document<P: Into<PathBuf>>(
+        &mut self,
+        path: P,
+        source: &str,
+    ) -> MosResult<()> {
         self.handle_message(notification::<DidOpenTextDocument>(
             DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
-                    uri: to_file_uri(file),
+                    uri: path_to_uri(path),
                     language_id: "".to_string(),
                     version: 0,
                     text: source.to_string(),
@@ -22,17 +34,40 @@ impl LspServer {
         ))
     }
 
-    pub fn rename(&mut self, file: &str, position: Position, new_name: &str) -> MosResult<()> {
+    pub fn rename<P: Into<PathBuf>>(
+        &mut self,
+        path: P,
+        position: Position,
+        new_name: &str,
+    ) -> MosResult<()> {
         self.handle_message(request::<Rename>(RenameParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: to_file_uri(file),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
             new_name: new_name.to_string(),
             work_done_progress_params: Default::default(),
         }))
+    }
+
+    pub fn go_to_definition<P: Into<PathBuf>>(
+        &mut self,
+        path: P,
+        position: Position,
+    ) -> MosResult<GotoDefinitionResponse> {
+        self.handle_message(request::<GotoDefinition>(GotoDefinitionParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: path_to_uri(path),
+                },
+                position,
+            },
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        }))?;
+        Ok(self.context.pop_response())
     }
 }
 
@@ -62,4 +97,22 @@ fn notification<T: Notification>(params: T::Params) -> lsp_server::Message {
         params,
     }
     .into()
+}
+
+pub fn range(
+    start_line: usize,
+    start_col: usize,
+    end_line: usize,
+    end_col: usize,
+) -> lsp_types::Range {
+    lsp_types::Range {
+        start: Position {
+            line: start_line as u32,
+            character: start_col as u32,
+        },
+        end: Position {
+            line: end_line as u32,
+            character: end_col as u32,
+        },
+    }
 }
