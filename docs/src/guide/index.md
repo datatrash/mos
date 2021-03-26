@@ -21,10 +21,6 @@ Installing the extension consists of these steps:
 * The extension will ask if you want to install the `mos` executable automatically. Allow it to do so.
 * Done! If you'd like to know more, you can find more detailed documentation [here](./ide/vscode).
 
-::: warning
-Not all of the functionality of MOS is currently exposed in the extension. Most notably, performing an application build (e.g. to run in an emulator) still needs to happen via the command line.
-:::
-
 ### Command line
 You can download the latest release of MOS [here](https://github.com/datatrash/mos/releases).
 
