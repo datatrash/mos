@@ -1,9 +1,9 @@
 use crate::errors::MosResult;
 use crate::formatting::{format, FormattingOptions};
 use crate::impl_request_handler;
-use crate::lsp::{LspContext, RequestHandler};
+use crate::lsp::{path_from_uri, LspContext, RequestHandler};
 use dissimilar::{diff, Chunk};
-use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit};
+use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit, Url};
 
 pub struct FormattingRequestHandler {}
 pub struct OnTypeFormattingRequestHandler {}
@@ -15,9 +15,9 @@ impl RequestHandler<lsp_types::request::Formatting> for FormattingRequestHandler
     fn handle(
         &self,
         ctx: &mut LspContext,
-        _params: DocumentFormattingParams,
+        params: DocumentFormattingParams,
     ) -> MosResult<Option<Vec<TextEdit>>> {
-        Ok(do_formatting(ctx))
+        Ok(do_formatting(ctx, &params.text_document.uri))
     }
 }
 
@@ -25,17 +25,21 @@ impl RequestHandler<lsp_types::request::OnTypeFormatting> for OnTypeFormattingRe
     fn handle(
         &self,
         ctx: &mut LspContext,
-        _params: DocumentOnTypeFormattingParams,
+        params: DocumentOnTypeFormattingParams,
     ) -> MosResult<Option<Vec<TextEdit>>> {
-        Ok(do_formatting(ctx))
+        Ok(do_formatting(
+            ctx,
+            &params.text_document_position.text_document.uri,
+        ))
     }
 }
 
-fn do_formatting(ctx: &mut LspContext) -> Option<Vec<TextEdit>> {
+fn do_formatting(ctx: &mut LspContext, uri: &Url) -> Option<Vec<TextEdit>> {
+    let path = path_from_uri(uri);
     ctx.analysis().map(|analysis| {
         let tree = analysis.tree();
-        let old_text = tree.code_map().files().first().unwrap().source();
-        let new_text = format(tree.clone(), FormattingOptions::default());
+        let old_text = tree.get_file(&path).file.source();
+        let new_text = format(path, tree.clone(), FormattingOptions::default());
         get_text_edits(old_text, &new_text)
     })
 }

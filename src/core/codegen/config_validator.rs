@@ -54,7 +54,7 @@ impl ConfigValidator {
         let errors = errors
             .into_iter()
             .map(|(span, message)| MosError::Codegen {
-                location: tree.code_map().look_up_span(span.unwrap_or(config_span)),
+                location: tree.code_map.look_up_span(span.unwrap_or(config_span)),
                 message,
             })
             .collect_vec();

@@ -5,14 +5,13 @@ use crate::core::parser::{Identifier, IdentifierPath};
 use crate::errors::{MosError, MosResult};
 use itertools::Itertools;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// A span containing a fragment of the source text and the location of this fragment within the source
-pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, Rc<RefCell<State>>>;
+pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, ParserInstance>;
 
 /// A convenience wrapper around nom's own [nom::IResult] to make use of our own [LocatedSpan] type
 pub type IResult<'a, T> = nom::IResult<LocatedSpan<'a>, T>;
@@ -22,8 +21,15 @@ pub type ArgItem<T> = (Located<T>, Option<Located<char>>);
 
 /// The result of parsing
 pub struct ParseTree {
-    code_map: CodeMap,
-    tokens: Vec<Token>,
+    pub code_map: CodeMap,
+    pub main_file: PathBuf,
+    pub files: HashMap<PathBuf, ParsedFile>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedFile {
+    pub tokens: Arc<Vec<Token>>,
+    pub file: Arc<File>,
 }
 
 impl Debug for ParseTree {
@@ -33,39 +39,48 @@ impl Debug for ParseTree {
 }
 
 impl ParseTree {
-    pub fn new(code_map: CodeMap, tokens: Vec<Token>) -> Self {
-        Self { code_map, tokens }
+    pub fn new(code_map: CodeMap, main_file: PathBuf, files: HashMap<PathBuf, ParsedFile>) -> Self {
+        Self {
+            code_map,
+            main_file,
+            files,
+        }
     }
 
-    pub fn code_map(&self) -> &CodeMap {
-        &self.code_map
+    pub fn main_file(&self) -> &ParsedFile {
+        self.get_file(&self.main_file)
     }
 
-    pub fn tokens(&self) -> &[Token] {
-        &self.tokens
+    pub fn get_file<P: Into<PathBuf>>(&self, path: P) -> &ParsedFile {
+        self.files.get(&path.into()).unwrap()
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ImportedFile {
-    pub tokens: Arc<Vec<Token>>,
-    pub path: PathBuf,
-    pub full_span: Option<Span>,
+/// The state of a single parser
+#[derive(Clone)]
+pub struct ParserInstance {
+    pub shared_state: Arc<RefCell<State>>,
+    pub current_file: Arc<File>,
+    pub to_import: Arc<RefCell<HashSet<PathBuf>>>,
 }
 
-/// The state of the parser
+impl ParserInstance {
+    pub fn new(state: Arc<RefCell<State>>, current_file: Arc<File>) -> Self {
+        Self {
+            shared_state: state,
+            current_file,
+            to_import: Arc::new(RefCell::new(HashSet::new())),
+        }
+    }
+}
+
+/// The shared state of all parsers
 pub struct State {
     /// The parsing source
     pub source: Arc<RefCell<dyn ParsingSource>>,
 
     /// Codemap
     pub code_map: CodeMap,
-
-    /// Tokens of parsed files (used to cache imports),
-    pub cached_imports: HashMap<PathBuf, ImportedFile>,
-
-    /// Which file are we parsing?
-    pub current_file: Arc<File>,
 
     /// Which errors did we encounter?
     pub errors: Vec<MosError>,
@@ -78,34 +93,20 @@ pub struct State {
 }
 
 impl State {
-    pub fn new<P: Into<PathBuf>>(
-        path: P,
-        source: Arc<RefCell<dyn ParsingSource>>,
-    ) -> MosResult<Self> {
-        let mut code_map = CodeMap::new();
-        let path = path.into();
-        let file = code_map.add_file(
-            path.to_str().unwrap().into(),
-            source.borrow().get_contents(&path)?,
-        );
-
-        Ok(Self {
+    pub fn new(source: Arc<RefCell<dyn ParsingSource>>) -> Self {
+        Self {
             source,
-            code_map,
-            cached_imports: HashMap::new(),
-            current_file: file,
+            code_map: CodeMap::new(),
             errors: vec![],
             ignore_next_error: false,
             anonymous_scope_index: 0,
-        })
+        }
     }
 
-    pub fn add_file<P: Into<PathBuf>>(&mut self, path: P) -> MosResult<()> {
+    pub fn add_file<P: Into<PathBuf>>(&mut self, path: P) -> MosResult<Arc<File>> {
         let path = path.into();
         let src = self.source.borrow().get_contents(&path)?;
-        let file = self.code_map.add_file(path.to_str().unwrap().into(), src);
-        self.current_file = file;
-        Ok(())
+        Ok(self.code_map.add_file(path.to_str().unwrap().into(), src))
     }
 
     /// Mark the next reported error to be ignored (since it may be redundant or something)
@@ -541,7 +542,7 @@ pub enum Token {
         filename: Located<String>,
         block: Option<Block>,
         import_scope: Identifier,
-        imported_file: ImportedFile,
+        resolved_path: PathBuf,
     },
     File {
         tag: Located<String>,
@@ -887,8 +888,7 @@ impl Display for Token {
                 lquote,
                 filename,
                 block,
-                import_scope: _,
-                imported_file: _,
+                ..
             } => {
                 let block = match block {
                     Some(block) => format!("{}", block),

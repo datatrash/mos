@@ -5,6 +5,7 @@ use crate::core::parser::{
 use itertools::Itertools;
 use serde::Deserialize;
 use std::fmt::{Debug, Display};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -105,9 +106,12 @@ impl CodeFormatter {
         }
     }
 
-    fn format(&mut self) -> String {
+    fn format<P: Into<PathBuf>>(&mut self, path: P) -> String {
+        let path = path.into();
         let tree = self.tree.clone();
-        self.format_tokens(tree.tokens()).trim_end().to_string()
+        self.format_tokens(&tree.get_file(path).tokens)
+            .trim_end()
+            .to_string()
     }
 
     fn format_tokens(&mut self, tokens: &[Token]) -> String {
@@ -311,8 +315,7 @@ impl CodeFormatter {
                 lquote,
                 filename,
                 block,
-                import_scope: _,
-                imported_file: _,
+                ..
             } => {
                 let f = Fmt::new().push(&tag.data).spc();
 
@@ -905,9 +908,13 @@ impl Fmt {
     }
 }
 
-pub fn format(ast: Arc<ParseTree>, options: FormattingOptions) -> String {
+pub fn format<P: Into<PathBuf>>(
+    path: P,
+    ast: Arc<ParseTree>,
+    options: FormattingOptions,
+) -> String {
     let mut fmt = CodeFormatter::new(ast, options);
-    fmt.format()
+    fmt.format(path)
 }
 
 fn indent_prefix(indent: usize) -> String {
@@ -936,7 +943,7 @@ mod tests {
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let mut opts = FormattingOptions::default();
         opts.braces.position = BracePosition::NewLine;
-        let actual = format(ast, opts);
+        let actual = format("test.asm", ast, opts);
         eq(actual, expected);
         Ok(())
     }
@@ -946,7 +953,7 @@ mod tests {
         let source = "nop\nnop\n// hello\nnop\n\n// foo\n.align 8\n.align 16";
         let expected = "nop\nnop\n// hello\nnop\n\n// foo\n.align 8\n.align 16";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -956,7 +963,7 @@ mod tests {
         let source = "nop\n\n// standalone\nnop";
         let expected = "nop\n\n// standalone\nnop";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -966,7 +973,7 @@ mod tests {
         let source = "// a\n// b";
         let expected = "// a\n// b";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -976,7 +983,7 @@ mod tests {
         let source = "{stx data\n           .if test { nop  }      }";
         let expected = "{\n    stx data\n\n    .if test {\n        nop\n    }\n}";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -986,7 +993,7 @@ mod tests {
         let source = "{\n/* nice*/\nnop}";
         let expected = "{\n    /* nice*/\n    nop\n}";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -996,7 +1003,7 @@ mod tests {
         let source = "{nop/* nice*/}";
         let expected = "{\n    nop /* nice*/\n}";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -1015,7 +1022,7 @@ mod tests {
     nop
 }";
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -1025,7 +1032,7 @@ mod tests {
         let source = include_str!("../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -1035,7 +1042,7 @@ mod tests {
         let source = include_str!("../../test/cli/format/valid-formatted.asm");
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format(ast, FormattingOptions::default());
+        let actual = format("test.asm", ast, FormattingOptions::default());
         eq(actual, expected);
         Ok(())
     }
@@ -1054,14 +1061,24 @@ mod tests {
         let source = ".segment foo {boop}\n{nop}";
         let expected = ".segment foo {boop}\n\n{\n    nop\n}";
         let (ast, _) = parse("test.asm".as_ref(), get_source(source));
-        let actual = format(ast.unwrap(), FormattingOptions::default());
+        let actual = format("test.asm", ast.unwrap(), FormattingOptions::default());
         eq(actual, expected);
+    }
+
+    #[test]
+    fn multiple_files() {
+        let (ast, _) = parse(
+            "test.asm".as_ref(),
+            get_source(".import * from \"other.asm\""),
+        );
+        let actual = format("other.asm", ast.unwrap(), FormattingOptions::default());
+        eq(actual, "{\n    nop\n}");
     }
 
     fn get_source(src: &str) -> Arc<RefCell<dyn ParsingSource>> {
         InMemoryParsingSource::new()
             .add("test.asm", src)
-            .add("other.asm", "nop")
+            .add("other.asm", "{nop}")
             .into()
     }
 

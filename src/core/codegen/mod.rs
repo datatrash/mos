@@ -451,7 +451,7 @@ impl CodegenContext {
     }
 
     fn error<T, M: Into<String>>(&self, span: Span, message: M) -> MosResult<T> {
-        let location = self.tree.code_map().look_up_span(span);
+        let location = self.tree.code_map.look_up_span(span);
         Err(MosError::Codegen {
             location,
             message: message.into(),
@@ -607,17 +607,18 @@ impl CodegenContext {
                 args,
                 import_scope,
                 filename,
-                imported_file,
                 block,
+                resolved_path,
                 ..
             } => {
+                let imported_file = self.tree.get_file(resolved_path);
+                let imported_file_tokens = imported_file.tokens.clone();
+
                 // Make the filename a definition by itself, allowing the user to follow the definition
                 let def = self
                     .analysis
-                    .get_or_create_definition_mut(DefinitionType::Filename(
-                        imported_file.path.clone(),
-                    ));
-                def.set_location(imported_file.full_span.unwrap());
+                    .get_or_create_definition_mut(DefinitionType::Filename(resolved_path.clone()));
+                def.set_location(imported_file.file.span);
                 def.add_usage(filename.span);
 
                 let prev_exports = self.exports.clone();
@@ -627,7 +628,7 @@ impl CodegenContext {
                         s.emit_tokens(&block.inner)?;
                     }
 
-                    s.emit_tokens(&imported_file.tokens)
+                    s.emit_tokens(&imported_file_tokens)
                 })?;
                 let mut new_exports = self.exports.clone();
                 self.exports = prev_exports;
@@ -691,8 +692,7 @@ impl CodegenContext {
             }
             Token::File { filename, .. } => {
                 let span = filename.span;
-                let source_file: PathBuf =
-                    self.tree.code_map().look_up_span(span).file.name().into();
+                let source_file: PathBuf = self.tree.code_map.look_up_span(span).file.name().into();
                 let filename = match source_file.parent() {
                     Some(parent) => parent.join(&filename.data),
                     None => PathBuf::from(&filename.data),
@@ -989,7 +989,7 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
 
     let mut iterations = MAX_ITERATIONS;
     while iterations != 0 {
-        ctx.emit_tokens(ast.tokens())?;
+        ctx.emit_tokens(&ast.main_file().tokens)?;
         ctx.after_pass();
 
         // Are there no segments yet? Then create a default one.
@@ -1021,7 +1021,7 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
                 .filter_map(|item| {
                     if ctx.get_symbol(&item.scope, &item.id).is_none() {
                         Some(MosError::Codegen {
-                            location: ctx.tree.code_map().look_up_span(item.span),
+                            location: ctx.tree.code_map.look_up_span(item.span),
                             message: format!("unknown identifier: {}", item.id),
                         })
                     } else {

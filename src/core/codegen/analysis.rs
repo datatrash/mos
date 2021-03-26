@@ -53,7 +53,7 @@ impl Definition {
 }
 
 fn span_contains(span: Span, tree: &ParseTree, path: &Path, pos: LineCol) -> bool {
-    let loc = tree.code_map().look_up_span(span);
+    let loc = tree.code_map.look_up_span(span);
     loc.file.name() == path.to_str().unwrap()
         && pos.line >= loc.begin.line
         && pos.line <= loc.end.line
@@ -111,7 +111,7 @@ impl Analysis {
     }
 
     pub fn look_up(&self, span: Span) -> SpanLoc {
-        self.tree.code_map().look_up_span(span)
+        self.tree.code_map.look_up_span(span)
     }
 }
 

@@ -26,7 +26,7 @@ impl<'a> ConfigExtractor<'a> {
             _ => Err(MosError::Codegen {
                 location: ctx
                     .tree
-                    .code_map()
+                    .code_map
                     .look_up_span(self.get_located_token(key).span),
                 message: "expected single identifier".into(),
             }),
@@ -56,7 +56,7 @@ impl<'a> ConfigExtractor<'a> {
             None => Err(MosError::Codegen {
                 location: ctx
                     .tree
-                    .code_map()
+                    .code_map
                     .look_up_span(self.get_located_token(key).span),
                 message: "expected identifier".into(),
             }),
@@ -81,7 +81,7 @@ impl<'a> ConfigExtractor<'a> {
             None => Err(MosError::Codegen {
                 location: ctx
                     .tree
-                    .code_map()
+                    .code_map
                     .look_up_span(self.get_located_token(key).span),
                 message: "expected expression".into(),
             }),

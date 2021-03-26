@@ -94,7 +94,7 @@ fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
     // Grab all the files in the project
     if let Some(tree) = ctx.tree.as_ref() {
         let filenames = tree
-            .code_map()
+            .code_map
             .files()
             .iter()
             .map(|file| file.name().to_string())

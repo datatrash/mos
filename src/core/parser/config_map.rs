@@ -37,8 +37,9 @@ mod tests {
     use super::config_map::config_map;
     use super::{LocatedSpan, State};
     use crate::core::parser::source::InMemoryParsingSource;
+    use crate::core::parser::ParserInstance;
     use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn parse_config_object() {
@@ -64,14 +65,14 @@ mod tests {
 
     fn check(source: &str, expected: &str) {
         let state = State::new(
-            "test.asm",
             InMemoryParsingSource::new()
                 .add("test.asm", &source.clone())
                 .into(),
-        )
-        .ok()
-        .unwrap();
-        let input = LocatedSpan::new_extra(&source, Rc::new(RefCell::new(state)));
+        );
+        let state = Arc::new(RefCell::new(state));
+        let current_file = state.borrow_mut().add_file("test.asm").unwrap();
+        let instance = ParserInstance::new(state, current_file);
+        let input = LocatedSpan::new_extra(&source, instance);
         let (_, expr) = config_map(input).ok().unwrap();
         assert_eq!(format!("{}", expr), expected.to_string());
     }
