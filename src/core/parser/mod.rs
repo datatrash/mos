@@ -331,7 +331,7 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
             expr,
             lchar: None,
             rchar: None,
-            addressing_mode: AddressingMode::AbsoluteOrZP,
+            addressing_mode: AddressingMode::AbsoluteOrZp,
             suffix,
         },
     );
@@ -1025,8 +1025,7 @@ pub fn parse(
     let state = Arc::new(RefCell::new(state));
 
     let mut files: HashMap<PathBuf, ParsedFile> = HashMap::new();
-    let mut files_to_import = Vec::new();
-    files_to_import.push(filename.to_path_buf());
+    let mut files_to_import = vec![filename.to_path_buf()];
 
     while !files_to_import.is_empty() {
         let to_import = files_to_import.pop().unwrap();
@@ -1393,7 +1392,7 @@ mod test {
     ) -> Arc<ParseTree> {
         let (tree, error) = parse(&Path::new("test.asm"), src);
         if let Some(e) = error {
-            panic!(e.to_string());
+            panic!("{}", e);
         }
         let tree = tree.unwrap();
         let actual = tree

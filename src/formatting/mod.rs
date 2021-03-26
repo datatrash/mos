@@ -611,33 +611,33 @@ impl FmtLine {
     }
 }
 
-impl Into<FmtLine> for Fmt {
-    fn into(self) -> FmtLine {
-        FmtLine(self.lines)
+impl From<Fmt> for FmtLine {
+    fn from(f: Fmt) -> Self {
+        Self(f.lines)
     }
 }
 
-impl Into<FmtLine> for String {
-    fn into(self) -> FmtLine {
-        FmtLine(vec![self])
+impl From<String> for FmtLine {
+    fn from(f: String) -> Self {
+        FmtLine(vec![f])
     }
 }
 
-impl Into<FmtLine> for &String {
-    fn into(self) -> FmtLine {
-        FmtLine(vec![self.clone()])
+impl From<&String> for FmtLine {
+    fn from(f: &String) -> Self {
+        FmtLine(vec![f.clone()])
     }
 }
 
-impl Into<FmtLine> for &str {
-    fn into(self) -> FmtLine {
-        FmtLine(vec![self.to_string()])
+impl From<&str> for FmtLine {
+    fn from(f: &str) -> Self {
+        FmtLine(vec![f.to_string()])
     }
 }
 
-impl Into<FmtLine> for Vec<String> {
-    fn into(self) -> FmtLine {
-        FmtLine(self)
+impl From<Vec<String>> for FmtLine {
+    fn from(f: Vec<String>) -> Self {
+        FmtLine(f)
     }
 }
 
@@ -830,8 +830,7 @@ impl Fmt {
 
         let should_add_space = !data.starts_with("\n");
         let data = if was_spc_if_next && should_add_space {
-            let mut r = vec![];
-            r.push(" ".to_string());
+            let mut r = vec![" ".to_string()];
             r.extend(data.0);
             FmtLine(r)
         } else {

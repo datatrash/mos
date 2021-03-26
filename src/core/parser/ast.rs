@@ -174,7 +174,7 @@ pub struct Instruction {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AddressingMode {
     /// Absolute or Zero-Page addressing (e.g. `LDA $34`)
-    AbsoluteOrZP,
+    AbsoluteOrZp,
     /// Immediate addressing (e.g. `LDA #123`)
     Immediate,
     /// Implied (e.g. `NOP`)
@@ -636,15 +636,15 @@ pub struct Located<T> {
     pub trivia: Option<Box<Located<Vec<Trivia>>>>,
 }
 
-impl<T> Into<Span> for Located<T> {
-    fn into(self) -> Span {
-        self.span
+impl<T> From<Located<T>> for Span {
+    fn from(l: Located<T>) -> Self {
+        l.span
     }
 }
 
-impl<T> Into<Span> for &Located<T> {
-    fn into(self) -> Span {
-        self.span
+impl<T> From<&Located<T>> for Span {
+    fn from(l: &Located<T>) -> Self {
+        l.span
     }
 }
 
@@ -930,7 +930,7 @@ impl Display for Token {
                     };
 
                     let operand = match &o.addressing_mode {
-                        AddressingMode::AbsoluteOrZP => {
+                        AddressingMode::AbsoluteOrZp => {
                             format!("{}{}", o.expr, suffix)
                         }
                         AddressingMode::Immediate => {

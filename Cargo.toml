@@ -35,3 +35,6 @@ toml = "0.5"
 [dev-dependencies]
 simple_logger = "1"
 tempfile = "3"
+
+[profile.dev]
+split-debuginfo = "unpacked"
