@@ -20,6 +20,10 @@ pub enum DefinitionType {
 }
 
 impl Definition {
+    pub fn usages(&self) -> Vec<&Span> {
+        self.usages.iter().collect_vec()
+    }
+
     pub fn definition_and_usages(&self) -> Vec<&Span> {
         let mut result = vec![];
         if let Some(l) = &self.location {
@@ -97,17 +101,29 @@ impl Analysis {
         }
     }
 
-    pub fn find<P: Into<PathBuf>, LC: Into<LineCol>>(
+    pub fn find<P: Into<PathBuf>, LC: Into<LineCol>>(&self, path: P, pos: LC) -> Vec<&Definition> {
+        self.find_filter(path, pos, |_| true)
+    }
+
+    pub fn find_filter<P: Into<PathBuf>, LC: Into<LineCol>, F: Fn(&DefinitionType) -> bool>(
         &self,
         path: P,
         pos: LC,
-    ) -> Option<&Definition> {
+        filter: F,
+    ) -> Vec<&Definition> {
         let path = path.into();
         let pos = pos.into();
         self.definitions
             .iter()
-            .find(|(_, definition)| definition.contains(&self.tree, &path, pos))
-            .map(|(_, def)| def)
+            .filter(|(ty, _)| filter(ty))
+            .filter_map(|(_, definition)| {
+                if definition.contains(&self.tree, &path, pos) {
+                    Some(definition)
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn look_up(&self, span: Span) -> SpanLoc {
@@ -124,9 +140,11 @@ mod tests {
     #[test]
     fn can_find_basic_token() -> MosResult<()> {
         let ctx = test_codegen("lda foo\nfoo: nop")?;
-        let def = ctx.analysis().find("test.asm", (0, 4)).unwrap();
+        let defs = ctx.analysis().find("test.asm", (0, 4));
         assert_eq!(
-            ctx.analysis().look_up(def.location.unwrap()).to_string(),
+            ctx.analysis()
+                .look_up(defs.first().unwrap().location.unwrap())
+                .to_string(),
             "test.asm:2:1: 2:4"
         );
         Ok(())
@@ -135,9 +153,11 @@ mod tests {
     #[test]
     fn can_find_complex_token() -> MosResult<()> {
         let ctx = test_codegen("lda a.super.b.foo\na: {foo: nop}\nb: {foo: nop}")?;
-        let def = ctx.analysis().find("test.asm", (0, 4)).unwrap();
+        let defs = ctx.analysis().find("test.asm", (0, 4));
         assert_eq!(
-            ctx.analysis().look_up(def.location.unwrap()).to_string(),
+            ctx.analysis()
+                .look_up(defs.first().unwrap().location.unwrap())
+                .to_string(),
             "test.asm:3:5: 3:8"
         );
         Ok(())
@@ -151,9 +171,11 @@ mod tests {
                 .add("bar", "foo: nop\n.export foo")
                 .into(),
         )?;
-        let def = ctx.analysis().find("test.asm", (0, 4)).unwrap();
+        let defs = ctx.analysis().find("test.asm", (0, 4));
         assert_eq!(
-            ctx.analysis().look_up(def.location.unwrap()).to_string(),
+            ctx.analysis()
+                .look_up(defs.first().unwrap().location.unwrap())
+                .to_string(),
             "bar:1:1: 1:4"
         );
         Ok(())
@@ -170,9 +192,11 @@ mod tests {
                 .add("bar", ".if defined(ENABLE) {\nfoo: nop\n.export foo\n}")
                 .into(),
         )?;
-        let def = ctx.analysis().find("test.asm", (0, 4)).unwrap();
+        let defs = ctx.analysis().find("test.asm", (0, 4));
         assert_eq!(
-            ctx.analysis().look_up(def.location.unwrap()).to_string(),
+            ctx.analysis()
+                .look_up(defs.first().unwrap().location.unwrap())
+                .to_string(),
             "bar:2:1: 2:4"
         );
         Ok(())
@@ -187,9 +211,11 @@ mod tests {
                 .into(),
         )?;
         // Click on the 'bar' filename in the import
-        let def = ctx.analysis().find("test.asm", (0, 20)).unwrap();
+        let defs = ctx.analysis().find("test.asm", (0, 20));
         assert_eq!(
-            ctx.analysis().look_up(def.location.unwrap()).to_string(),
+            ctx.analysis()
+                .look_up(defs.first().unwrap().location.unwrap())
+                .to_string(),
             "bar:1:1: 2:12"
         );
         Ok(())

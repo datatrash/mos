@@ -1,10 +1,11 @@
 use crate::errors::MosResult;
 use crate::lsp::{path_to_uri, LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
-use lsp_types::request::{GotoDefinition, Rename, Request};
+use lsp_types::request::{GotoDefinition, References, Rename, Request};
 use lsp_types::{
     DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Position,
-    RenameParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    ReferenceContext, ReferenceParams, RenameParams, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams,
 };
 use serde::de::DeserializeOwned;
 use std::path::PathBuf;
@@ -66,6 +67,28 @@ impl LspServer {
             },
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
+        }))?;
+        Ok(self.context.pop_response())
+    }
+
+    pub fn find_references<P: Into<PathBuf>>(
+        &mut self,
+        path: P,
+        position: Position,
+        include_declaration: bool,
+    ) -> MosResult<Option<Vec<lsp_types::Location>>> {
+        self.handle_message(request::<References>(ReferenceParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: path_to_uri(path),
+                },
+                position,
+            },
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+            context: ReferenceContext {
+                include_declaration,
+            },
         }))?;
         Ok(self.context.pop_response())
     }

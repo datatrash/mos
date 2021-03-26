@@ -213,17 +213,12 @@ impl LspContext {
         Ok(())
     }
 
-    fn find_definition<'a>(
-        &'a self,
-        pos: &'a TextDocumentPositionParams,
-    ) -> Option<&'a Definition> {
+    fn find_definitions<'a>(&'a self, pos: &'a TextDocumentPositionParams) -> Vec<&'a Definition> {
         if let Some(analysis) = self.analysis() {
-            if let Some(def) = analysis.find(path_from_uri(&pos.text_document.uri), pos.position) {
-                return Some(def);
-            }
+            return analysis.find(path_from_uri(&pos.text_document.uri), pos.position);
         }
 
-        None
+        vec![]
     }
 }
 

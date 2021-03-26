@@ -15,8 +15,9 @@ impl RequestHandler<Rename> for RenameHandler {
         ctx: &mut LspContext,
         params: RenameParams,
     ) -> MosResult<Option<WorkspaceEdit>> {
-        Ok(ctx
-            .find_definition(&params.text_document_position)
+        let edit = ctx
+            .find_definitions(&params.text_document_position)
+            .first()
             .map(|def| {
                 ctx.analysis().as_ref().map(|a| {
                     let changes = def
@@ -39,7 +40,8 @@ impl RequestHandler<Rename> for RenameHandler {
                     }
                 })
             })
-            .flatten())
+            .flatten();
+        Ok(edit)
     }
 }
 

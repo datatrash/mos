@@ -921,6 +921,11 @@ impl CodegenContext {
                 _ => self.error(name.span, format!("unknown function: {}", &name.data)),
             },
             ExpressionFactor::IdentifierValue { path, modifier } => {
+                log::trace!(
+                    "Adding usage for definition '{}' --> {:?}",
+                    &path.data,
+                    path.span
+                );
                 self.update_definition(&path.data, |def| def.add_usage(path));
 
                 let val = self
