@@ -65,14 +65,20 @@ impl From<LineCol> for lsp_types::Position {
     }
 }
 
+impl From<SpanLoc> for lsp_types::Range {
+    fn from(s: SpanLoc) -> Self {
+        Self {
+            start: s.begin.into(),
+            end: s.end.into(),
+        }
+    }
+}
+
 impl From<SpanLoc> for lsp_types::Location {
     fn from(sl: SpanLoc) -> Self {
         Self {
             uri: path_to_uri(sl.file.name()),
-            range: lsp_types::Range {
-                start: sl.begin.into(),
-                end: sl.end.into(),
-            },
+            range: sl.into(),
         }
     }
 }

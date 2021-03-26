@@ -54,6 +54,17 @@ impl Definition {
             .iter()
             .any(|u| span_contains(*u, tree, path, pos))
     }
+
+    pub fn try_get_usage_containing(
+        &self,
+        tree: &ParseTree,
+        path: &Path,
+        pos: LineCol,
+    ) -> Option<&Span> {
+        self.usages
+            .iter()
+            .find(|u| span_contains(**u, tree, path, pos))
+    }
 }
 
 fn span_contains(span: Span, tree: &ParseTree, path: &Path, pos: LineCol) -> bool {

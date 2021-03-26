@@ -1,12 +1,12 @@
 use crate::core::codegen::DefinitionType;
 use crate::errors::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{path_from_uri, LspContext, RequestHandler};
+use crate::lsp::{path_from_uri, path_to_uri, LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::{DocumentHighlightRequest, GotoDefinition, References};
 use lsp_types::{
     DocumentHighlight, DocumentHighlightParams, GotoDefinitionParams, GotoDefinitionResponse,
-    Location, ReferenceParams,
+    Location, LocationLink, ReferenceParams,
 };
 
 pub struct GoToDefinitionHandler {}
@@ -26,9 +26,22 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
         let def = ctx.find_definitions(&params.text_document_position_params);
         if let Some(def) = def.first() {
             if let Some(location) = &def.location {
+                let tree = ctx.tree.as_ref().unwrap();
+                let origin = def.try_get_usage_containing(
+                    &tree,
+                    &path_from_uri(&params.text_document_position_params.text_document.uri),
+                    params.text_document_position_params.position.into(),
+                );
+                let origin = origin.map(|span| tree.code_map.look_up_span(*span));
+
                 let l = ctx.analysis().unwrap().look_up(*location);
-                let loc: lsp_types::Location = l.into();
-                return Ok(Some(loc.into()));
+                let link = LocationLink {
+                    origin_selection_range: origin.map(|o| o.into()),
+                    target_uri: path_to_uri(l.file.name()),
+                    target_range: tree.code_map.look_up_span(*location).into(),
+                    target_selection_range: tree.code_map.look_up_span(*location).into(),
+                };
+                return Ok(Some(vec![link].into()));
             }
         }
 
@@ -99,7 +112,6 @@ mod tests {
     use crate::errors::MosResult;
     use crate::lsp::testing::range;
     use crate::lsp::{path_from_uri, path_to_uri, LspServer};
-    use crate::testing::enable_default_tracing;
     use itertools::Itertools;
     use lsp_types::{GotoDefinitionResponse, Location, Position};
 
@@ -109,18 +121,22 @@ mod tests {
         server.did_open_text_document("/bar.asm", "foo: nop\n.export foo")?;
         server.did_open_text_document("/main.asm", "lda foo\n.import foo from \"bar.asm\"")?;
         let response = server.go_to_definition("/main.asm", Position::new(0, 4))?;
-        let location = match response {
-            GotoDefinitionResponse::Scalar(location) => location,
+        let location = match &response {
+            GotoDefinitionResponse::Link(links) => links.first().unwrap(),
             _ => panic!(),
         };
-        assert_eq!(path_from_uri(&location.uri).to_string_lossy(), "/bar.asm");
-        assert_eq!(location.range, range(0, 0, 0, 3));
+        assert_eq!(
+            path_from_uri(&location.target_uri).to_string_lossy(),
+            "/bar.asm"
+        );
+        assert_eq!(location.target_range, range(0, 0, 0, 3));
+        assert_eq!(location.target_selection_range, range(0, 0, 0, 3));
+        assert_eq!(location.origin_selection_range, Some(range(0, 4, 0, 7)));
         Ok(())
     }
 
     #[test]
     fn find_all_references() -> MosResult<()> {
-        enable_default_tracing();
         let mut server = LspServer::new();
         server.did_open_text_document("/bar.asm", "foo: nop\n.export foo")?;
         server.did_open_text_document("/main.asm", "lda f1\nlda f2\n.import foo as f1 from \"bar.asm\"\n.import foo as f2 from \"bar.asm\"")?;
