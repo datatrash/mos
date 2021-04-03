@@ -48,8 +48,8 @@ impl RequestHandler<Rename> for RenameHandler {
 #[cfg(test)]
 mod tests {
     use crate::errors::MosResult;
-    use crate::lsp::testing::response;
-    use crate::lsp::{path_to_uri, LspServer};
+    use crate::lsp::testing::{response, test_root};
+    use crate::lsp::LspServer;
     use lsp_types::request::Rename;
     use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
     use std::collections::HashMap;
@@ -57,12 +57,12 @@ mod tests {
     #[test]
     fn rename() -> MosResult<()> {
         let mut server = LspServer::new();
-        server.did_open_text_document("/main.asm", "foo: nop\nlda foo")?;
-        server.rename("/main.asm", Position::new(1, 4), "bar")?;
+        server.did_open_text_document(test_root().join("main.asm"), "foo: nop\nlda foo")?;
+        server.rename(test_root().join("main.asm"), Position::new(1, 4), "bar")?;
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            path_to_uri("/main.asm"),
+            Url::from_file_path(test_root().join("main.asm"))?,
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 0), Position::new(0, 3)),

@@ -37,16 +37,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 pub use traits::*;
 
-fn path_from_uri(uri: &Url) -> PathBuf {
-    assert_eq!(uri.path().is_empty(), false);
-    PathBuf::from(&uri.path())
-}
-
-fn path_to_uri<P: Into<PathBuf>>(path: P) -> Url {
-    let path = path.into();
-    Url::parse(&format!("file://{}", path.to_string_lossy())).unwrap()
-}
-
 impl From<lsp_types::Position> for LineCol {
     fn from(pos: Position) -> Self {
         Self {
@@ -77,7 +67,7 @@ impl From<SpanLoc> for lsp_types::Range {
 impl From<SpanLoc> for lsp_types::Location {
     fn from(sl: SpanLoc) -> Self {
         Self {
-            uri: path_to_uri(sl.file.name()),
+            uri: Url::from_file_path(sl.file.name()).unwrap(),
             range: sl.into(),
         }
     }
@@ -155,12 +145,14 @@ impl LspContext {
 
     #[cfg(test)]
     fn working_directory(&self) -> PathBuf {
-        PathBuf::from("/")
+        use crate::lsp::testing::test_root;
+        test_root()
     }
 
     #[cfg(not(test))]
     fn working_directory(&self) -> PathBuf {
-        PathBuf::from(".").canonicalize().unwrap()
+        use path_absolutize::Absolutize;
+        PathBuf::from(".").absolutize().unwrap().into()
     }
 
     fn analysis(&self) -> Option<&Analysis> {
@@ -221,7 +213,7 @@ impl LspContext {
 
     fn find_definitions<'a>(&'a self, pos: &'a TextDocumentPositionParams) -> Vec<&'a Definition> {
         if let Some(analysis) = self.analysis() {
-            return analysis.find(path_from_uri(&pos.text_document.uri), pos.position);
+            return analysis.find(pos.text_document.uri.to_file_path().unwrap(), pos.position);
         }
 
         vec![]
@@ -346,32 +338,5 @@ impl LspServer {
     ) {
         self.notification_handlers
             .insert(handler.method(), Box::new(handler));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::lsp::{path_from_uri, path_to_uri};
-    use lsp_types::Url;
-    use std::path::PathBuf;
-
-    #[test]
-    fn path_handling() {
-        assert_eq!(
-            path_from_uri(&Url::parse("file:///test/foo.asm").unwrap()),
-            PathBuf::from("/test/foo.asm")
-        );
-        assert_eq!(
-            path_from_uri(&Url::parse("file:///beep/boop/foo.asm").unwrap()),
-            PathBuf::from("/beep/boop/foo.asm")
-        );
-        assert_eq!(
-            path_to_uri(&PathBuf::from("/test/foo.asm")),
-            Url::parse("file:///test/foo.asm").unwrap()
-        );
-        assert_eq!(
-            path_to_uri(&PathBuf::from("/beep/boop/foo.asm")),
-            Url::parse("file:///beep/boop/foo.asm").unwrap()
-        );
     }
 }

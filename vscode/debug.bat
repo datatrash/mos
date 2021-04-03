@@ -1,0 +1,1 @@
+code --disable-extensions --extensionDevelopmentPath=%cd% %cd%/test-workspace

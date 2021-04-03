@@ -3,7 +3,7 @@ use crate::core::parser::parse;
 use crate::core::parser::source::ParsingSource;
 use crate::errors::{MosError, MosResult};
 use crate::impl_notification_handler;
-use crate::lsp::{path_from_uri, path_to_uri, LspContext, NotificationHandler};
+use crate::lsp::{LspContext, NotificationHandler};
 use itertools::Itertools;
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, PublishDiagnostics,
@@ -43,13 +43,13 @@ impl NotificationHandler<DidCloseTextDocument> for DidCloseTextDocumentHandler {
     fn handle(&self, ctx: &mut LspContext, params: DidCloseTextDocumentParams) -> MosResult<()> {
         ctx.parsing_source
             .borrow_mut()
-            .remove(&path_from_uri(&params.text_document.uri));
+            .remove(&params.text_document.uri.to_file_path().unwrap());
         Ok(())
     }
 }
 
 fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
-    let path = path_from_uri(uri);
+    let path = uri.to_file_path().unwrap();
     ctx.parsing_source().insert(&path, source);
 
     ctx.tree = None;
@@ -104,7 +104,7 @@ fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
         for filename in filenames {
             let diags = result.remove(filename.as_str()).unwrap_or_default();
             let params = PublishDiagnosticsParams::new(
-                path_to_uri(filename),
+                Url::from_file_path(filename)?,
                 diags,
                 None, // todo: handle document version
             );
@@ -129,5 +129,17 @@ fn to_diagnostics(error: &MosError) -> Vec<(&str, Diagnostic)> {
             log::error!("Unknown parsing error: {:?}", error);
             vec![]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lsp_types::Url;
+
+    #[cfg(windows)]
+    #[test]
+    fn can_parse_windows_uris() {
+        let url = Url::parse("file:///g%3A/code/mos/vscode/test-workspace/main.asm").unwrap();
+        let _ = url.to_file_path().unwrap();
     }
 }

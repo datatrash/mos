@@ -1,14 +1,14 @@
 use crate::errors::MosResult;
-use crate::lsp::{path_to_uri, LspContext, LspServer};
+use crate::lsp::{LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
 use lsp_types::request::{GotoDefinition, References, Rename, Request};
 use lsp_types::{
     DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Position,
     ReferenceContext, ReferenceParams, RenameParams, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams,
+    TextDocumentPositionParams, Url,
 };
 use serde::de::DeserializeOwned;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 impl LspContext {
     fn pop_response<T: DeserializeOwned>(&self) -> T {
@@ -18,7 +18,7 @@ impl LspContext {
 }
 
 impl LspServer {
-    pub fn did_open_text_document<P: Into<PathBuf>>(
+    pub fn did_open_text_document<P: AsRef<Path>>(
         &mut self,
         path: P,
         source: &str,
@@ -26,7 +26,7 @@ impl LspServer {
         self.handle_message(notification::<DidOpenTextDocument>(
             DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
-                    uri: path_to_uri(path),
+                    uri: Url::from_file_path(path)?,
                     language_id: "".to_string(),
                     version: 0,
                     text: source.to_string(),
@@ -35,7 +35,7 @@ impl LspServer {
         ))
     }
 
-    pub fn rename<P: Into<PathBuf>>(
+    pub fn rename<P: AsRef<Path>>(
         &mut self,
         path: P,
         position: Position,
@@ -44,7 +44,7 @@ impl LspServer {
         self.handle_message(request::<Rename>(RenameParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: path_to_uri(path),
+                    uri: Url::from_file_path(path)?,
                 },
                 position,
             },
@@ -53,7 +53,7 @@ impl LspServer {
         }))
     }
 
-    pub fn go_to_definition<P: Into<PathBuf>>(
+    pub fn go_to_definition<P: AsRef<Path>>(
         &mut self,
         path: P,
         position: Position,
@@ -61,7 +61,7 @@ impl LspServer {
         self.handle_message(request::<GotoDefinition>(GotoDefinitionParams {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: path_to_uri(path),
+                    uri: Url::from_file_path(path)?,
                 },
                 position,
             },
@@ -71,7 +71,7 @@ impl LspServer {
         Ok(self.context.pop_response())
     }
 
-    pub fn find_references<P: Into<PathBuf>>(
+    pub fn find_references<P: AsRef<Path>>(
         &mut self,
         path: P,
         position: Position,
@@ -80,7 +80,7 @@ impl LspServer {
         self.handle_message(request::<References>(ReferenceParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: path_to_uri(path),
+                    uri: Url::from_file_path(path)?,
                 },
                 position,
             },
@@ -138,4 +138,14 @@ pub fn range(
             character: end_col as u32,
         },
     }
+}
+
+#[cfg(not(windows))]
+pub fn test_root() -> PathBuf {
+    PathBuf::from("/")
+}
+
+#[cfg(windows)]
+pub fn test_root() -> PathBuf {
+    PathBuf::from("C:\\")
 }

@@ -1,12 +1,12 @@
 use crate::core::codegen::DefinitionType;
 use crate::errors::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{path_from_uri, path_to_uri, LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::{DocumentHighlightRequest, GotoDefinition, References};
 use lsp_types::{
     DocumentHighlight, DocumentHighlightParams, GotoDefinitionParams, GotoDefinitionResponse,
-    Location, LocationLink, ReferenceParams,
+    Location, LocationLink, ReferenceParams, Url,
 };
 
 pub struct GoToDefinitionHandler {}
@@ -29,7 +29,11 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                 let tree = ctx.tree.as_ref().unwrap();
                 let origin = def.try_get_usage_containing(
                     &tree,
-                    &path_from_uri(&params.text_document_position_params.text_document.uri),
+                    &params
+                        .text_document_position_params
+                        .text_document
+                        .uri
+                        .to_file_path()?,
                     params.text_document_position_params.position.into(),
                 );
                 let origin = origin.map(|span| tree.code_map.look_up_span(*span));
@@ -37,7 +41,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                 let l = ctx.analysis().unwrap().look_up(*location);
                 let link = LocationLink {
                     origin_selection_range: origin.map(|o| o.into()),
-                    target_uri: path_to_uri(l.file.name()),
+                    target_uri: Url::from_file_path(l.file.name())?,
                     target_range: tree.code_map.look_up_span(*location).into(),
                     target_selection_range: tree.code_map.look_up_span(*location).into(),
                 };
@@ -57,7 +61,11 @@ impl RequestHandler<References> for FindReferencesHandler {
     ) -> MosResult<Option<Vec<Location>>> {
         if let Some(analysis) = ctx.analysis() {
             let defs = analysis.find_filter(
-                path_from_uri(&params.text_document_position.text_document.uri),
+                params
+                    .text_document_position
+                    .text_document
+                    .uri
+                    .to_file_path()?,
                 params.text_document_position.position,
                 |ty| matches!(ty, DefinitionType::Symbol(_)),
             );
@@ -110,24 +118,28 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
 #[cfg(test)]
 mod tests {
     use crate::errors::MosResult;
-    use crate::lsp::testing::range;
-    use crate::lsp::{path_from_uri, path_to_uri, LspServer};
+    use crate::lsp::testing::{range, test_root};
+    use crate::lsp::LspServer;
     use itertools::Itertools;
-    use lsp_types::{GotoDefinitionResponse, Location, Position};
+    use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
     #[test]
     fn can_go_to_reference_in_other_file() -> MosResult<()> {
         let mut server = LspServer::new();
-        server.did_open_text_document("/bar.asm", "foo: nop\n.export foo")?;
-        server.did_open_text_document("/main.asm", "lda foo\n.import foo from \"bar.asm\"")?;
-        let response = server.go_to_definition("/main.asm", Position::new(0, 4))?;
+        server.did_open_text_document(test_root().join("bar.asm"), "foo: nop\n.export foo")?;
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "lda foo\n.import foo from \"bar.asm\"",
+        )?;
+        let response =
+            server.go_to_definition(test_root().join("main.asm"), Position::new(0, 4))?;
         let location = match &response {
             GotoDefinitionResponse::Link(links) => links.first().unwrap(),
             _ => panic!(),
         };
         assert_eq!(
-            path_from_uri(&location.target_uri).to_string_lossy(),
-            "/bar.asm"
+            location.target_uri.to_file_path()?.to_string_lossy(),
+            test_root().join("bar.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 0, 0, 3));
         assert_eq!(location.target_selection_range, range(0, 0, 0, 3));
@@ -138,9 +150,10 @@ mod tests {
     #[test]
     fn find_all_references() -> MosResult<()> {
         let mut server = LspServer::new();
-        server.did_open_text_document("/bar.asm", "foo: nop\n.export foo")?;
-        server.did_open_text_document("/main.asm", "lda f1\nlda f2\n.import foo as f1 from \"bar.asm\"\n.import foo as f2 from \"bar.asm\"")?;
-        let response = server.find_references("/bar.asm", Position::new(0, 0), false)?;
+        server.did_open_text_document(test_root().join("bar.asm"), "foo: nop\n.export foo")?;
+        server.did_open_text_document(test_root().join("main.asm"), "lda f1\nlda f2\n.import foo as f1 from \"bar.asm\"\n.import foo as f2 from \"bar.asm\"")?;
+        let response =
+            server.find_references(test_root().join("bar.asm"), Position::new(0, 0), false)?;
         let response = response
             .unwrap()
             .into_iter()
@@ -150,11 +163,11 @@ mod tests {
             response,
             vec![
                 Location {
-                    uri: path_to_uri("/main.asm"),
+                    uri: Url::from_file_path(test_root().join("main.asm"))?,
                     range: range(0, 4, 0, 6)
                 },
                 Location {
-                    uri: path_to_uri("/main.asm"),
+                    uri: Url::from_file_path(test_root().join("main.asm"))?,
                     range: range(1, 4, 1, 6)
                 },
             ]

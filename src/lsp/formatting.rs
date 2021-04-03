@@ -1,7 +1,7 @@
 use crate::errors::MosResult;
 use crate::formatting::{format, FormattingOptions};
 use crate::impl_request_handler;
-use crate::lsp::{path_from_uri, LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler};
 use dissimilar::{diff, Chunk};
 use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit, Url};
 
@@ -35,7 +35,7 @@ impl RequestHandler<lsp_types::request::OnTypeFormatting> for OnTypeFormattingRe
 }
 
 fn do_formatting(ctx: &mut LspContext, uri: &Url) -> Option<Vec<TextEdit>> {
-    let path = path_from_uri(uri);
+    let path = uri.to_file_path().unwrap();
     ctx.analysis().map(|analysis| {
         let tree = analysis.tree();
         let old_text = tree.get_file(&path).file.source();

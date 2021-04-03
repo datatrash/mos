@@ -25,6 +25,12 @@ pub enum MosError {
     Unknown,
 }
 
+impl From<()> for MosError {
+    fn from(_: ()) -> Self {
+        MosError::Unknown
+    }
+}
+
 impl PartialEq for MosError {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

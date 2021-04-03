@@ -5,7 +5,7 @@ use crate::core::parser::{
 };
 use crate::errors::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{path_from_uri, LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::SemanticTokensFullRequest;
 use lsp_types::{
@@ -117,7 +117,7 @@ impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHand
         params: SemanticTokensParams,
     ) -> MosResult<Option<SemanticTokensResult>> {
         if let Some(tree) = &ctx.tree {
-            let path = &path_from_uri(&params.text_document.uri);
+            let path = params.text_document.uri.to_file_path()?;
             let file = tree.get_file(&path);
             let semtoks = emit_semantic_ast(&file.tokens);
             let data = to_deltas(&tree.code_map, semtoks);
