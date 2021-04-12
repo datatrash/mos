@@ -19,7 +19,7 @@ fs-err = "2"
 itertools = "0.10"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 loggerv = "0.7"
-lsp-types = "0.88"
+lsp-types = "0.89"
 lsp-server = "0.5"
 nom = "6"
 nom_locate = "3"
