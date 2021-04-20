@@ -3,12 +3,14 @@ mod config_extractor;
 mod config_validator;
 mod opcodes;
 mod program_counter;
+mod source_map;
 
 pub use analysis::*;
 pub use program_counter::*;
 
 use crate::core::codegen::config_validator::ConfigValidator;
 use crate::core::codegen::opcodes::get_opcode_bytes;
+use crate::core::codegen::source_map::SourceMap;
 use crate::core::parser::code_map::Span;
 use crate::core::parser::{
     AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
@@ -19,13 +21,11 @@ use crate::errors::{MosError, MosResult};
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct CodegenOptions {
     pub pc: ProgramCounter,
@@ -234,12 +234,14 @@ pub struct CodegenContext {
     current_segment: Option<Identifier>,
 
     symbols: SymbolTable,
-    undefined: Rc<RefCell<HashSet<UndefinedSymbol>>>,
+    undefined: Arc<Mutex<HashSet<UndefinedSymbol>>>,
     suppress_undefined_symbol_registration: bool,
     current_scope: IdentifierPath,
 
     exports: HashMap<IdentifierPath, IdentifierPath>,
     export_filter: Option<Vec<SpecificImportArg>>,
+
+    source_map: SourceMap,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -259,11 +261,12 @@ impl CodegenContext {
             segments: HashMap::new(),
             current_segment: None,
             symbols: HashMap::new(),
-            undefined: Rc::new(RefCell::new(HashSet::new())),
+            undefined: Arc::new(Mutex::new(HashSet::new())),
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
             exports: HashMap::new(),
             export_filter: None,
+            source_map: SourceMap::default(),
         }
     }
 
@@ -277,6 +280,10 @@ impl CodegenContext {
 
     pub fn symbols(&self) -> &SymbolTable {
         &self.symbols
+    }
+
+    pub fn source_map(&self) -> &SourceMap {
+        &self.source_map
     }
 
     fn after_pass(&mut self) {
@@ -306,7 +313,8 @@ impl CodegenContext {
         }
 
         self.segments.values_mut().for_each(|s| s.reset());
-        self.undefined.borrow_mut().clear();
+        self.undefined.lock().unwrap().clear();
+        self.source_map.clear();
     }
 
     fn try_current_target_pc(&self) -> Option<ProgramCounter> {
@@ -442,7 +450,7 @@ impl CodegenContext {
                 &id,
                 self.current_scope
             );
-            self.undefined.borrow_mut().insert(UndefinedSymbol {
+            self.undefined.lock().unwrap().insert(UndefinedSymbol {
                 scope: self.current_scope.clone(),
                 id,
                 span,
@@ -468,6 +476,8 @@ impl CodegenContext {
                     segment.pc,
                     &bytes
                 );
+                self.source_map
+                    .add(&self.tree.code_map, span, segment.pc, bytes.len());
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
@@ -1012,7 +1022,7 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
             // There were segments, so we have emitted something.
 
             // Nothing undefined anymore? Then we're done!
-            if ctx.undefined.borrow().is_empty() {
+            if ctx.undefined.lock().unwrap().is_empty() {
                 break;
             }
 
@@ -1020,7 +1030,8 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
             // If not, it is truly undefined.
             let errors = ctx
                 .undefined
-                .borrow()
+                .lock()
+                .unwrap()
                 .iter()
                 .sorted_by_key(|k| k.id.to_string())
                 .filter_map(|item| {
@@ -1053,9 +1064,8 @@ mod tests {
     use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::core::parser::{parse_or_err, Identifier};
     use crate::errors::MosResult;
-    use std::cell::RefCell;
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     impl CodegenContext {
         pub fn get_segment<S: Into<Identifier>>(&self, key: S) -> &Segment {
@@ -1737,7 +1747,7 @@ mod tests {
     }
 
     pub(super) fn test_codegen_parsing_source(
-        src: Arc<RefCell<dyn ParsingSource>>,
+        src: Arc<Mutex<dyn ParsingSource>>,
     ) -> MosResult<CodegenContext> {
         let ast = parse_or_err(&Path::new("test.asm"), src)?;
         codegen(ast, CodegenOptions::default())

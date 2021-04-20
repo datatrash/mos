@@ -49,14 +49,14 @@ impl RequestHandler<Rename> for RenameHandler {
 mod tests {
     use crate::errors::MosResult;
     use crate::lsp::testing::{response, test_root};
-    use crate::lsp::LspServer;
+    use crate::lsp::{LspContext, LspServer};
     use lsp_types::request::Rename;
     use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
     use std::collections::HashMap;
 
     #[test]
     fn rename() -> MosResult<()> {
-        let mut server = LspServer::new();
+        let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(test_root().join("main.asm"), "foo: nop\nlda foo")?;
         server.rename(test_root().join("main.asm"), Position::new(1, 4), "bar")?;
 
@@ -74,8 +74,9 @@ mod tests {
                 },
             ],
         );
+
         assert_eq!(
-            server.context.responses().pop().unwrap().result,
+            server.lock_context().responses().pop().unwrap().result,
             response::<Rename>(Some(WorkspaceEdit {
                 changes: Some(expected_changes),
                 document_changes: None,

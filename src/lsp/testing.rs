@@ -12,7 +12,14 @@ use std::path::{Path, PathBuf};
 
 impl LspContext {
     fn pop_response<T: DeserializeOwned>(&self) -> T {
-        let response = self.responses.borrow_mut().pop().unwrap().result.unwrap();
+        let response = self
+            .responses
+            .lock()
+            .unwrap()
+            .pop()
+            .unwrap()
+            .result
+            .unwrap();
         serde_json::from_value(response).unwrap()
     }
 }
@@ -68,7 +75,7 @@ impl LspServer {
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         }))?;
-        Ok(self.context.pop_response())
+        Ok(self.lock_context().pop_response())
     }
 
     pub fn find_references<P: AsRef<Path>>(
@@ -90,7 +97,7 @@ impl LspServer {
                 include_declaration,
             },
         }))?;
-        Ok(self.context.pop_response())
+        Ok(self.lock_context().pop_response())
     }
 }
 

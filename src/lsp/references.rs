@@ -119,13 +119,13 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
 mod tests {
     use crate::errors::MosResult;
     use crate::lsp::testing::{range, test_root};
-    use crate::lsp::LspServer;
+    use crate::lsp::{LspContext, LspServer};
     use itertools::Itertools;
     use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
     #[test]
     fn can_go_to_reference_in_other_file() -> MosResult<()> {
-        let mut server = LspServer::new();
+        let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(test_root().join("bar.asm"), "foo: nop\n.export foo")?;
         server.did_open_text_document(
             test_root().join("main.asm"),
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn find_all_references() -> MosResult<()> {
-        let mut server = LspServer::new();
+        let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(test_root().join("bar.asm"), "foo: nop\n.export foo")?;
         server.did_open_text_document(test_root().join("main.asm"), "lda f1\nlda f2\n.import foo as f1 from \"bar.asm\"\n.import foo as f2 from \"bar.asm\"")?;
         let response =

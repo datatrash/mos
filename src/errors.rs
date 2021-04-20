@@ -1,8 +1,11 @@
 use crate::core::parser::code_map::SpanLoc;
-use crossbeam_channel::SendError;
+use crate::debugger::protocol::ProtocolMessage;
+use crate::debugger::vice_adapter::ViceRequest;
+use crossbeam_channel::{RecvError, SendError};
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
 use pathdiff::diff_paths;
+use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::ParseBoolError;
 
@@ -18,10 +21,16 @@ pub enum MosError {
     Io(#[from] std::io::Error),
     Parser { location: SpanLoc, message: String },
     Multiple(Vec<MosError>),
+    Json(#[from] serde_json::Error),
     Toml(#[from] toml::de::Error),
     Protocol(#[from] ProtocolError),
-    Crossbeam(#[from] SendError<Message>),
+    CrossbeamLsp(#[from] SendError<Message>),
+    CrossbeamDap(#[from] SendError<ProtocolMessage>),
+    CrossbeamViceRequest(#[from] SendError<ViceRequest>),
+    CrossbeamRecv(#[from] RecvError),
+    CrossbeamSend(#[from] SendError<()>),
     ParseBoolError(#[from] ParseBoolError),
+    ParseIntError(#[from] ParseIntError),
     Unknown,
 }
 
@@ -114,11 +123,17 @@ impl MosError {
             MosError::Io(err) => format_error(use_color, err),
             MosError::Clap(err) => format_error(use_color, err),
             MosError::Cli(err) => format_error(use_color, err),
+            MosError::Json(err) => format_error(use_color, err),
             MosError::Toml(err) => format_error(use_color, err),
             MosError::Protocol(err) => format_error(use_color, err),
-            MosError::Crossbeam(err) => format_error(use_color, err),
+            MosError::CrossbeamLsp(err) => format_error(use_color, err),
+            MosError::CrossbeamDap(err) => format_error(use_color, err),
+            MosError::CrossbeamViceRequest(err) => format_error(use_color, err),
+            MosError::CrossbeamRecv(err) => format_error(use_color, err),
+            MosError::CrossbeamSend(err) => format_error(use_color, err),
             MosError::BuildError(message) => format_error(use_color, message),
             MosError::ParseBoolError(err) => format_error(use_color, err),
+            MosError::ParseIntError(err) => format_error(use_color, err),
             MosError::Unknown => format_error(use_color, "unknown error"),
             MosError::Multiple(errors) => errors
                 .iter()

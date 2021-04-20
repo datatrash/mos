@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A span containing a fragment of the source text and the location of this fragment within the source
 pub type LocatedSpan<'a> = nom_locate::LocatedSpan<&'a str, ParserInstance>;
@@ -59,25 +59,29 @@ impl ParseTree {
 /// The state of a single parser
 #[derive(Clone)]
 pub struct ParserInstance {
-    pub shared_state: Arc<RefCell<State>>,
+    shared_state: Arc<Mutex<State>>,
     pub current_file: Arc<File>,
     pub to_import: Arc<RefCell<HashSet<PathBuf>>>,
 }
 
 impl ParserInstance {
-    pub fn new(state: Arc<RefCell<State>>, current_file: Arc<File>) -> Self {
+    pub fn new(state: Arc<Mutex<State>>, current_file: Arc<File>) -> Self {
         Self {
             shared_state: state,
             current_file,
             to_import: Arc::new(RefCell::new(HashSet::new())),
         }
     }
+
+    pub fn shared_state(&self) -> MutexGuard<State> {
+        self.shared_state.lock().unwrap()
+    }
 }
 
 /// The shared state of all parsers
 pub struct State {
     /// The parsing source
-    pub source: Arc<RefCell<dyn ParsingSource>>,
+    pub source: Arc<Mutex<dyn ParsingSource>>,
 
     /// Codemap
     pub code_map: CodeMap,
@@ -93,7 +97,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(source: Arc<RefCell<dyn ParsingSource>>) -> Self {
+    pub fn new(source: Arc<Mutex<dyn ParsingSource>>) -> Self {
         Self {
             source,
             code_map: CodeMap::new(),
@@ -105,7 +109,7 @@ impl State {
 
     pub fn add_file<P: Into<PathBuf>>(&mut self, path: P) -> MosResult<Arc<File>> {
         let path = path.into();
-        let src = self.source.borrow().get_contents(&path)?;
+        let src = self.source.lock().unwrap().get_contents(&path)?;
         Ok(self.code_map.add_file(path.to_str().unwrap().into(), src))
     }
 

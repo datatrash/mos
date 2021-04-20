@@ -1,1 +1,0 @@
-code --disable-extensions --extensionDevelopmentPath=$(pwd) $(pwd)/test-workspace

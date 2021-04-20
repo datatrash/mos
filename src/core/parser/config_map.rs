@@ -38,8 +38,7 @@ mod tests {
     use super::{LocatedSpan, State};
     use crate::core::parser::source::InMemoryParsingSource;
     use crate::core::parser::ParserInstance;
-    use std::cell::RefCell;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn parse_config_object() {
@@ -69,8 +68,8 @@ mod tests {
                 .add("test.asm", &source.clone())
                 .into(),
         );
-        let state = Arc::new(RefCell::new(state));
-        let current_file = state.borrow_mut().add_file("test.asm").unwrap();
+        let state = Arc::new(Mutex::new(state));
+        let current_file = state.lock().unwrap().add_file("test.asm").unwrap();
         let instance = ParserInstance::new(state, current_file);
         let input = LocatedSpan::new_extra(&source, instance);
         let (_, expr) = config_map(input).ok().unwrap();

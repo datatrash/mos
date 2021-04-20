@@ -25,6 +25,7 @@
 //! ```
 
 #![allow(dead_code)]
+use serde::Serialize;
 use std::cmp::{self, Ordering};
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -343,7 +344,7 @@ impl Hash for File {
 }
 
 /// A line and column.
-#[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Debug, Serialize)]
 pub struct LineCol {
     /// The line number within the file (0-indexed).
     pub line: usize,

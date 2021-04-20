@@ -932,8 +932,7 @@ mod tests {
     use crate::errors::{MosError, MosResult};
     use crate::formatting::BracePosition;
     use itertools::Itertools;
-    use std::cell::RefCell;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn newline_braces() -> MosResult<()> {
@@ -1074,7 +1073,7 @@ mod tests {
         eq(actual, "{\n    nop\n}");
     }
 
-    fn get_source(src: &str) -> Arc<RefCell<dyn ParsingSource>> {
+    fn get_source(src: &str) -> Arc<Mutex<dyn ParsingSource>> {
         InMemoryParsingSource::new()
             .add("test.asm", src)
             .add("other.asm", "{nop}")

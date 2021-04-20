@@ -5,7 +5,7 @@ require('esbuild').build({
     external: ['vscode'],
     minify: true,
     treeShaking: true,
-    outfile: 'out/extension.js',
+    outdir: 'out',
 }).catch(e => {
     console.log(e);
     process.exit(1);

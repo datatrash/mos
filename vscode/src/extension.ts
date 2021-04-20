@@ -1,9 +1,18 @@
 import * as vscode from 'vscode';
 import {existsSync, promises as fs} from "fs";
-import {getMosBinary} from "./download-binary";
+import {getMosBinary} from "./auto-update/download-binary";
 import {log} from "./log";
 import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
 import {BuildTaskProvider} from "./build-task-provider";
+import getPort from "get-port";
+import {
+    debug,
+    DebugAdapterDescriptor,
+    DebugAdapterDescriptorFactory,
+    DebugAdapterExecutable, DebugAdapterServer,
+    DebugSession,
+    ProviderResult
+} from "vscode";
 
 let client: LanguageClient;
 
@@ -20,10 +29,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
         return;
     }
 
+    let debugAdapterPort = await getPort({port: getPort.makeRange(6503, 6603)});
+
     buildTaskProvider = vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state));
 
     let serverOptions: ServerOptions = {
-        command: state.mosPath, args: ["-v", "lsp"], options: {}
+        command: state.mosPath, args: ["-vvv", "lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
     };
 
     let clientOptions: LanguageClientOptions = {
@@ -40,6 +51,17 @@ export async function activate(ctx: vscode.ExtensionContext) {
     );
 
     client.start();
+
+    log.info(`Trying to start debug adapter on port ${debugAdapterPort}`);
+    ctx.subscriptions.push(debug.registerDebugAdapterDescriptorFactory("mos", new DebuggerAdapter(debugAdapterPort)));
+}
+
+class DebuggerAdapter implements DebugAdapterDescriptorFactory {
+    constructor(private port: number) {}
+
+    createDebugAdapterDescriptor(session: DebugSession, executable: DebugAdapterExecutable | undefined): ProviderResult<DebugAdapterDescriptor> {
+        return new DebugAdapterServer(this.port);
+    }
 }
 
 async function getState(ctx: vscode.ExtensionContext): Promise<State | undefined> {
@@ -73,13 +95,15 @@ async function getState(ctx: vscode.ExtensionContext): Promise<State | undefined
     return state;
 }
 
-export function deactivate(): Thenable<void> | undefined {
-    if (buildTaskProvider) {
-        buildTaskProvider.dispose();
-        buildTaskProvider = undefined;
-    }
-    if (!client) {
-        return undefined;
-    }
-    return client.stop();
+export function deactivate(): void {
+    (async () => {
+        if (buildTaskProvider) {
+            buildTaskProvider.dispose();
+            buildTaskProvider = undefined;
+        }
+        if (!client) {
+            return;
+        }
+        await client.stop();
+    })();
 }

@@ -17,6 +17,8 @@ mod commands;
 mod config;
 /// Contains all main business logic
 mod core;
+/// Debug Adapter Protocol implementation
+mod debugger;
 /// Error handling
 mod errors;
 /// Source code formatting

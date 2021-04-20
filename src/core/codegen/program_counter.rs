@@ -19,6 +19,10 @@ impl ProgramCounter {
         self.0
     }
 
+    pub fn as_u16(&self) -> u16 {
+        self.0 as u16
+    }
+
     pub fn as_i64(&self) -> i64 {
         self.0 as i64
     }

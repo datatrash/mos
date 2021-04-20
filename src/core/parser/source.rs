@@ -1,9 +1,8 @@
 use crate::errors::MosResult;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// A source of data for the parser. Maps paths to their contents.
 pub trait ParsingSource {
@@ -32,9 +31,9 @@ impl Default for FileSystemParsingSource {
     }
 }
 
-impl From<FileSystemParsingSource> for Arc<RefCell<dyn ParsingSource>> {
+impl From<FileSystemParsingSource> for Arc<Mutex<dyn ParsingSource>> {
     fn from(t: FileSystemParsingSource) -> Self {
-        Arc::new(RefCell::new(t))
+        Arc::new(Mutex::new(t))
     }
 }
 
@@ -57,9 +56,9 @@ impl Default for InMemoryParsingSource {
     }
 }
 
-impl From<InMemoryParsingSource> for Arc<RefCell<dyn ParsingSource>> {
+impl From<InMemoryParsingSource> for Arc<Mutex<dyn ParsingSource>> {
     fn from(t: InMemoryParsingSource) -> Self {
-        Arc::new(RefCell::new(t))
+        Arc::new(Mutex::new(t))
     }
 }
 

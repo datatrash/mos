@@ -22,6 +22,7 @@ use crate::lsp::references::{
 };
 use crate::lsp::rename::RenameHandler;
 use crate::lsp::semantic_highlighting::SemanticTokensFullRequestHandler;
+use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
@@ -30,11 +31,9 @@ use lsp_types::{
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::cell::RefCell;
-use std::cell::RefMut;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 pub use traits::*;
 
 impl From<lsp_types::Position> for LineCol {
@@ -74,13 +73,14 @@ impl From<SpanLoc> for lsp_types::Location {
 }
 
 pub struct LspContext {
-    connection: Option<(Arc<Connection>, IoThreads)>,
+    connection: Option<(Arc<Connection>, Option<IoThreads>)>,
     tree: Option<Arc<ParseTree>>,
     error: Option<MosError>,
     codegen: Option<CodegenContext>,
-    parsing_source: Arc<RefCell<LspParsingSource>>,
+    parsing_source: Arc<Mutex<LspParsingSource>>,
+    shutdown_senders: Vec<Sender<()>>,
     #[cfg(test)]
-    responses: Arc<RefCell<Vec<lsp_server::Response>>>,
+    responses: Arc<Mutex<Vec<lsp_server::Response>>>,
 }
 
 pub struct LspParsingSource {
@@ -118,26 +118,41 @@ impl ParsingSource for LspParsingSource {
 }
 
 impl LspContext {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             connection: None,
             tree: None,
             error: None,
             codegen: None,
-            parsing_source: Arc::new(RefCell::new(LspParsingSource::new())),
+            parsing_source: Arc::new(Mutex::new(LspParsingSource::new())),
+            shutdown_senders: vec![],
             #[cfg(test)]
-            responses: Arc::new(RefCell::new(vec![])),
+            responses: Arc::new(Mutex::new(vec![])),
         }
     }
 
-    fn start(&mut self) {
+    pub(crate) fn listen_stdio(&mut self) {
         let (connection, io_threads) = Connection::stdio();
-        self.connection = Some((Arc::new(connection), io_threads));
+        self.connection = Some((Arc::new(connection), Some(io_threads)));
     }
 
-    fn config(&self) -> Option<Config> {
+    #[cfg(test)]
+    pub(crate) fn listen_memory(&mut self) -> Connection {
+        let (connection, test_connection) = Connection::memory();
+        self.connection = Some((Arc::new(connection), None));
+        test_connection
+    }
+
+    pub fn add_shutdown_handler(&mut self) -> Receiver<()> {
+        let (s, r) = crossbeam_channel::bounded(0);
+        self.shutdown_senders.push(s);
+        r
+    }
+
+    pub fn config(&self) -> Option<Config> {
         self.parsing_source
-            .borrow()
+            .lock()
+            .unwrap()
             .try_get_contents(&Path::new("mos.toml"))
             .map(|toml| Config::from_toml(&toml).ok())
             .flatten()
@@ -155,7 +170,11 @@ impl LspContext {
         PathBuf::from(".").absolutize().unwrap().into()
     }
 
-    fn analysis(&self) -> Option<&Analysis> {
+    pub fn codegen(&self) -> Option<&CodegenContext> {
+        self.codegen.as_ref()
+    }
+
+    pub fn analysis(&self) -> Option<&Analysis> {
         self.codegen.as_ref().map(|c| c.analysis())
     }
 
@@ -163,13 +182,13 @@ impl LspContext {
         self.connection.as_ref().map(|c| c.0.clone())
     }
 
-    fn parsing_source(&self) -> RefMut<LspParsingSource> {
-        self.parsing_source.borrow_mut()
+    fn parsing_source(&self) -> MutexGuard<LspParsingSource> {
+        self.parsing_source.lock().unwrap()
     }
 
     #[cfg(test)]
-    fn responses(self) -> Vec<lsp_server::Response> {
-        Arc::try_unwrap(self.responses).unwrap().into_inner()
+    fn responses(&self) -> Vec<lsp_server::Response> {
+        self.responses.lock().unwrap().clone()
     }
 
     fn publish_notification<N: Notification>(&self, params: N::Params) -> MosResult<()> {
@@ -198,7 +217,7 @@ impl LspContext {
 
         #[cfg(test)]
         {
-            self.responses.borrow_mut().push(response.clone());
+            self.responses.lock().unwrap().push(response.clone());
         }
         if let Some(conn) = self.connection() {
             conn.sender.send(Message::Response(response))?;
@@ -207,7 +226,9 @@ impl LspContext {
     }
 
     fn join(self) -> MosResult<()> {
-        self.connection.unwrap().1.join()?;
+        if let Some(io) = self.connection.unwrap().1 {
+            io.join()?;
+        }
         Ok(())
     }
 
@@ -221,40 +242,46 @@ impl LspContext {
 }
 
 pub struct LspServer {
-    context: LspContext,
+    context: Arc<Mutex<LspContext>>,
     request_handlers: HashMap<&'static str, Box<dyn UntypedRequestHandler>>,
     notification_handlers: HashMap<&'static str, Box<dyn UntypedNotificationHandler>>,
 }
 
 impl LspServer {
-    pub fn new() -> Self {
+    pub fn new(context: LspContext) -> Self {
         let request_handlers = HashMap::new();
         let notification_handlers = HashMap::new();
 
-        let mut ctx = Self {
-            context: LspContext::new(),
+        let mut lsp = Self {
+            context: Arc::new(Mutex::new(context)),
             request_handlers,
             notification_handlers,
         };
 
-        ctx.register_request_handler(SemanticTokensFullRequestHandler {});
-        ctx.register_request_handler(FormattingRequestHandler {});
-        ctx.register_request_handler(OnTypeFormattingRequestHandler {});
-        ctx.register_request_handler(GoToDefinitionHandler {});
-        ctx.register_request_handler(FindReferencesHandler {});
-        ctx.register_request_handler(DocumentHighlightRequestHandler {});
-        ctx.register_request_handler(RenameHandler {});
-        ctx.register_notification_handler(DidOpenTextDocumentHandler {});
-        ctx.register_notification_handler(DidChangeTextDocumentHandler {});
-        ctx.register_notification_handler(DidCloseTextDocumentHandler {});
+        lsp.register_request_handler(SemanticTokensFullRequestHandler {});
+        lsp.register_request_handler(FormattingRequestHandler {});
+        lsp.register_request_handler(OnTypeFormattingRequestHandler {});
+        lsp.register_request_handler(GoToDefinitionHandler {});
+        lsp.register_request_handler(FindReferencesHandler {});
+        lsp.register_request_handler(DocumentHighlightRequestHandler {});
+        lsp.register_request_handler(RenameHandler {});
+        lsp.register_notification_handler(DidOpenTextDocumentHandler {});
+        lsp.register_notification_handler(DidChangeTextDocumentHandler {});
+        lsp.register_notification_handler(DidCloseTextDocumentHandler {});
 
-        ctx
+        lsp
+    }
+
+    pub fn context(&self) -> Arc<Mutex<LspContext>> {
+        self.context.clone()
+    }
+
+    pub fn lock_context(&self) -> MutexGuard<LspContext> {
+        self.context.lock().unwrap()
     }
 
     pub fn start(mut self) -> MosResult<()> {
         log::info!("Starting MOS language server");
-
-        self.context.start();
 
         let caps = ServerCapabilities {
             semantic_tokens_provider: Some(semantic_highlighting::caps().into()),
@@ -272,12 +299,17 @@ impl LspServer {
         };
         let server_capabilities = serde_json::to_value(&caps).unwrap();
         let initialization_params = self
-            .context
+            .lock_context()
             .connection()
             .unwrap()
             .initialize(server_capabilities)?;
         self.main_loop(initialization_params)?;
-        self.context.join()?;
+        Arc::try_unwrap(self.context)
+            .ok()
+            .unwrap()
+            .into_inner()
+            .unwrap()
+            .join()?;
 
         log::info!("Shutting down MOS language server");
         Ok(())
@@ -285,14 +317,21 @@ impl LspServer {
 
     pub fn handle_message(&mut self, msg: Message) -> MosResult<()> {
         log::trace!("Handling message: {:?}", msg);
+
+        let cloned_ctx = self.context.clone();
+        let mut ctx = cloned_ctx.lock().unwrap();
+
         match msg {
             Message::Request(req) => match self.request_handlers.get(req.method.as_str()) {
                 Some(handler) => {
-                    handler.handle(&mut self.context, req)?;
+                    handler.handle(&mut ctx, req)?;
                 }
                 None => {
                     if req.method == "shutdown" {
-                        if self.context.connection().unwrap().handle_shutdown(&req)? {
+                        for sender in &ctx.shutdown_senders {
+                            sender.send(())?;
+                        }
+                        if ctx.connection().unwrap().handle_shutdown(&req)? {
                             return Ok(());
                         }
                     } else {
@@ -304,7 +343,7 @@ impl LspServer {
             Message::Notification(not) => {
                 match self.notification_handlers.get(not.method.as_str()) {
                     Some(handler) => {
-                        handler.handle(&mut self.context, not)?;
+                        handler.handle(&mut ctx, not)?;
                     }
                     None => {
                         log::trace!("unknown notification: {:?}", not);
@@ -317,7 +356,7 @@ impl LspServer {
     }
 
     fn main_loop(&mut self, params: serde_json::Value) -> MosResult<()> {
-        let connection = self.context.connection().unwrap();
+        let connection = self.lock_context().connection().unwrap();
 
         let _params: InitializeParams = serde_json::from_value(params).unwrap();
         for msg in &connection.receiver {

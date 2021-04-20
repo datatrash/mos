@@ -41,8 +41,7 @@ impl NotificationHandler<DidChangeTextDocument> for DidChangeTextDocumentHandler
 
 impl NotificationHandler<DidCloseTextDocument> for DidCloseTextDocumentHandler {
     fn handle(&self, ctx: &mut LspContext, params: DidCloseTextDocumentParams) -> MosResult<()> {
-        ctx.parsing_source
-            .borrow_mut()
+        ctx.parsing_source()
             .remove(&params.text_document.uri.to_file_path().unwrap());
         Ok(())
     }
@@ -58,7 +57,7 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
 
     let entry = ctx.config().unwrap_or_default().build.entry;
     let entry = ctx.working_directory().join(&entry);
-    if !ctx.parsing_source.borrow().exists(entry.as_ref()) {
+    if !ctx.parsing_source().exists(entry.as_ref()) {
         log::trace!(
             "`--> Entrypoint does not (yet) exist in memory or disk. Not doing any parsing."
         );
@@ -134,11 +133,10 @@ fn to_diagnostics(error: &MosError) -> Vec<(&str, Diagnostic)> {
 
 #[cfg(test)]
 mod tests {
-    use lsp_types::Url;
-
     #[cfg(windows)]
     #[test]
     fn can_parse_windows_uris() {
+        use lsp_types::Url;
         let url = Url::parse("file:///g%3A/code/mos/vscode/test-workspace/main.asm").unwrap();
         let _ = url.to_file_path().unwrap();
     }

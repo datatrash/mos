@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as zlib from "zlib";
 import * as util from "util";
 import * as path from "path";
-import {log} from "./log";
+import {log} from "../log";
 
 var HttpsProxyAgent = require('https-proxy-agent');
 
