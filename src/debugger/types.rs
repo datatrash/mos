@@ -98,6 +98,8 @@ pub struct Capabilities {
     pub supports_configuration_done_request: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supports_value_formatting_options: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_set_variable: Option<bool>,
 }
 
 pub struct LaunchRequest {}
@@ -419,11 +421,11 @@ impl Variable {
 #[serde(rename_all = "camelCase")]
 pub struct VariablePresentationHint {
     #[serde(skip_serializing_if = "Option::is_none")]
-    kind: Option<VariableKind>,
+    pub kind: Option<VariableKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    attributes: Option<Vec<VariableAttribute>>,
+    pub attributes: Option<Vec<VariableAttribute>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    visibility: Option<VariableVisibility>,
+    pub visibility: Option<VariableVisibility>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -619,4 +621,108 @@ impl Request for StepOutRequest {
 #[serde(rename_all = "camelCase")]
 pub struct StepOutArguments {
     pub thread_id: usize,
+}
+
+pub struct ReadMemoryRequest {}
+
+impl Request for ReadMemoryRequest {
+    type Arguments = ReadMemoryArguments;
+    type Response = ReadMemoryResponse;
+    const COMMAND: &'static str = "readMemory";
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadMemoryArguments {
+    pub memory_reference: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<i32>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadMemoryResponse {
+    pub address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreadable_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+}
+
+pub struct EvaluateRequest {}
+
+impl Request for EvaluateRequest {
+    type Arguments = EvaluateArguments;
+    type Response = EvaluateResponse;
+    const COMMAND: &'static str = "evaluate";
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluateArguments {
+    pub expression: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_id: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<EvaluationContext>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<ValueFormat>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum EvaluationContext {
+    Watch,
+    Repl,
+    Hover,
+    Clipboard,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EvaluateResponse {
+    pub result: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub ty: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation_hint: Option<VariablePresentationHint>,
+    pub variables_reference: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named_variables: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indexed_variables: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_reference: Option<String>,
+}
+
+pub struct SetVariableRequest {}
+
+impl Request for SetVariableRequest {
+    type Arguments = SetVariableArguments;
+    type Response = SetVariableResponse;
+    const COMMAND: &'static str = "setVariable";
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SetVariableArguments {
+    pub variables_reference: usize,
+    pub name: String,
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<ValueFormat>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SetVariableResponse {
+    pub value: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub ty: Option<usize>,
+    pub variables_reference: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub named_variables: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indexed_variables: Option<usize>,
 }

@@ -3,7 +3,9 @@ use std::fmt::{Display, Formatter};
 use std::ops::{Add, Deref, Range};
 
 /// A simple newtype that wraps a program counter
-#[derive(Debug, Default, PartialEq, Clone, Copy, From, Add, Sub, Into, UpperHex)]
+#[derive(
+    Debug, Default, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, From, Add, Sub, Into, UpperHex,
+)]
 pub struct ProgramCounter(usize);
 
 impl ProgramCounter {

@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+use crate::debugger::utils::parse_number;
 use crate::errors::{MosError, MosResult};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crossbeam_channel::{bounded, Receiver, Sender};
@@ -79,15 +79,18 @@ impl ViceAdapter {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ViceResponse {
     AdvanceInstructions,
+    BanksAvailable(HashMap<u16, String>),
     CheckpointDelete,
     CheckpointResponse(CheckpointResponse),
     CheckpointList(u32),
     CheckpointToggle,
     Exit,
     ExecuteUntilReturn,
+    MemoryGet(Vec<u8>),
+    MemorySet,
     Ping,
     Quit,
     Stopped(u16),
@@ -96,7 +99,7 @@ pub enum ViceResponse {
     Resumed(u16),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CheckpointResponse {
     pub number: u32,
     pub currently_hit: bool,
@@ -114,12 +117,15 @@ pub struct CheckpointResponse {
 #[derive(Debug)]
 pub enum ViceRequest {
     AdvanceInstructions(bool, u16),
+    BanksAvailable,
     CheckpointList,
     CheckpointDelete(u32),
     CheckpointSet(CheckpointSet),
     CheckpointToggle(u32, bool),
     ExecuteUntilReturn,
     Exit,
+    MemoryGet(MemoryDescriptor),
+    MemorySet(MemoryDescriptor, Vec<u8>),
     Ping,
     RegistersGet,
     RegistersAvailable,
@@ -136,21 +142,54 @@ pub struct CheckpointSet {
     pub temporary: bool,
 }
 
-struct ViceRequestHeader {
-    stx: u8,
-    api_version: u8,
-    length: u32,
-    request_id: u32,
-    command_type: u8,
+#[derive(Clone, Debug)]
+pub struct MemoryDescriptor {
+    pub cause_side_effects: bool,
+    pub start: u16,
+    pub end: u16,
+    pub memory_space: u8,
+    pub bank_id: u16,
+}
+
+impl MemoryDescriptor {
+    pub fn parse(input: &str) -> Option<Self> {
+        parse_number(input).map(|(_, number)| {
+            let start = number as u16;
+            let end = start;
+
+            Self {
+                cause_side_effects: false,
+                start,
+                end,
+                memory_space: 0,
+                bank_id: 0,
+            }
+        })
+    }
+
+    fn get_buffer(&self) -> io::Result<Vec<u8>> {
+        let mut body = vec![];
+        body.write_u8(bool_to_u8(self.cause_side_effects))?;
+        body.write_u16::<LittleEndian>(self.start)?;
+        body.write_u16::<LittleEndian>(self.end)?;
+        body.write_u8(self.memory_space)?;
+        body.write_u16::<LittleEndian>(self.bank_id)?;
+        Ok(body)
+    }
+
+    pub fn format(&self, data: &[u8]) -> String {
+        let d = data.first().unwrap();
+        d.to_string()
+    }
 }
 
 struct ViceResponseHeader {
     stx: u8,
     api_version: u8,
-    length: u32,
+    _length: u32,
     response_type: u8,
-    error_code: u8,
-    request_id: u32,
+    _error_code: u8,
+    _request_id: u32,
 }
 
 impl ViceResponse {
@@ -158,15 +197,22 @@ impl ViceResponse {
         let header = ViceResponseHeader {
             stx: input.read_u8()?,
             api_version: input.read_u8()?,
-            length: input.read_u32::<LittleEndian>()?,
+            _length: input.read_u32::<LittleEndian>()?,
             response_type: input.read_u8()?,
-            error_code: input.read_u8()?,
-            request_id: input.read_u32::<LittleEndian>()?,
+            _error_code: input.read_u8()?,
+            _request_id: input.read_u32::<LittleEndian>()?,
         };
         assert_eq!(header.stx, 2);
         assert_eq!(header.api_version, 1);
 
         let response = match header.response_type {
+            0x01 => {
+                let len = input.read_u16::<LittleEndian>()?;
+                let mut buf = vec![0u8; len as usize];
+                input.read_exact(&mut buf)?;
+                ViceResponse::MemoryGet(buf)
+            }
+            0x02 => ViceResponse::MemorySet,
             0x11 => ViceResponse::CheckpointResponse(CheckpointResponse {
                 number: input.read_u32::<LittleEndian>()?,
                 currently_hit: input.read_u8()? != 0,
@@ -199,6 +245,20 @@ impl ViceResponse {
             0x71 => ViceResponse::AdvanceInstructions,
             0x73 => ViceResponse::ExecuteUntilReturn,
             0x81 => ViceResponse::Ping,
+            0x82 => {
+                let mut banks = HashMap::new();
+                let len = input.read_u16::<LittleEndian>()?;
+                for _ in 0..len {
+                    let _size = input.read_u8()?;
+                    let id = input.read_u16::<LittleEndian>()?;
+                    let name_length = input.read_u8()?;
+                    let mut name_buf = vec![0u8; name_length as usize];
+                    input.read_exact(&mut name_buf)?;
+                    let name = String::from_utf8(name_buf).expect("Not a valid bank name");
+                    banks.insert(id, name);
+                }
+                ViceResponse::BanksAvailable(banks)
+            }
             0x83 => {
                 let mut regs = HashMap::new();
                 let len = input.read_u16::<LittleEndian>()?;
@@ -233,11 +293,14 @@ fn bool_to_u8(val: bool) -> u8 {
 impl ViceRequest {
     fn write(self, w: &mut impl Write) -> io::Result<()> {
         let (command_type, body): (u8, Vec<u8>) = match &self {
-            ViceRequest::AdvanceInstructions(step_over_subroutines, instructions_to_skip) => {
-                let mut body = vec![];
-                body.write_u8(bool_to_u8(*step_over_subroutines))?;
-                body.write_u16::<LittleEndian>(*instructions_to_skip)?;
-                (0x71, body)
+            ViceRequest::MemoryGet(desc) => {
+                let buf = desc.get_buffer()?;
+                (0x01, buf)
+            }
+            ViceRequest::MemorySet(desc, data) => {
+                let mut buf = desc.get_buffer()?;
+                buf.append(&mut data.clone());
+                (0x02, buf)
             }
             ViceRequest::CheckpointSet(c) => {
                 let mut body = vec![];
@@ -262,8 +325,15 @@ impl ViceRequest {
                 (0x15, body)
             }
             ViceRequest::RegistersGet => (0x31, vec![0]),
+            ViceRequest::AdvanceInstructions(step_over_subroutines, instructions_to_skip) => {
+                let mut body = vec![];
+                body.write_u8(bool_to_u8(*step_over_subroutines))?;
+                body.write_u16::<LittleEndian>(*instructions_to_skip)?;
+                (0x71, body)
+            }
             ViceRequest::ExecuteUntilReturn => (0x73, vec![]),
             ViceRequest::Ping => (0x81, vec![]),
+            ViceRequest::BanksAvailable => (0x82, vec![]),
             ViceRequest::RegistersAvailable => (0x83, vec![0]),
             ViceRequest::Exit => (0xaa, vec![]),
             ViceRequest::Quit => (0xbb, vec![]),
@@ -327,15 +397,37 @@ mod tests {
 
         let mut vice = ViceAdapter::new();
         vice.start(vice_path, vec!["-binarymonitor"])?;
+        vice.send(ViceRequest::BanksAvailable)?;
         vice.send(ViceRequest::RegistersAvailable)?;
         vice.send(ViceRequest::Ping)?;
         vice.send(ViceRequest::Quit)?;
 
-        for msg in &vice.receiver() {
+        for msg in &vice.receiver().unwrap() {
             log::info!("msg: {:?}", msg);
         }
         vice.stop()?;
 
         Ok(())
+    }
+
+    #[test]
+    fn parse_memory_descriptor() {
+        assert_eq!(MemoryDescriptor::parse("1").unwrap().start, 1);
+        assert_eq!(MemoryDescriptor::parse("$12").unwrap().start, 0x12);
+        assert_eq!(MemoryDescriptor::parse("$1234").unwrap().start, 0x1234);
+        assert_eq!(MemoryDescriptor::parse("1234").unwrap().start, 1234);
+        assert_eq!(MemoryDescriptor::parse("foo").is_none(), true);
+    }
+
+    #[test]
+    fn format_memory_descriptor_data() {
+        assert_eq!(
+            MemoryDescriptor::parse("$1234").unwrap().format(&[1, 2, 3]),
+            "1"
+        );
+        assert_eq!(
+            MemoryDescriptor::parse("0").unwrap().format(&[1, 2, 3]),
+            "1"
+        );
     }
 }
