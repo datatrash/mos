@@ -453,18 +453,18 @@ checksum = "afb2e1c3ee07430c2cf76151675e583e0f19985fa6efae47d6848a3e2c824f85"
 
 [[package]]
 name = "path-absolutize"
-version = "3.0.7"
+version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7bf455a55d762f9ad0385747ba7fda9bd3dee9b40469bfb1c64c3aa6b073ee9"
+checksum = "f0feea2f0a6009a0fefe6ee3aae1871e4a57d7f2aae4681ac4a34a201071c9b9"
 dependencies = [
  "path-dedot",
 ]
 
 [[package]]
 name = "path-dedot"
-version = "3.0.8"
+version = "3.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7794b94034e62eef81e8b9ea0690b31f522fd38394ca51e7997d499d0372fb5"
+checksum = "1a14ca47b49e6abd75cf68db85e1e161d9f2b675716894a18af0e9add0266b26"
 dependencies = [
  "once_cell",
 ]
