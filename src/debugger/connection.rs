@@ -108,12 +108,14 @@ fn make_reader(
     let (reader_sender, reader_receiver) = bounded::<ProtocolMessage>(0);
     let reader = thread::spawn(move || {
         let mut buf_read = BufReader::new(stream);
-        while let Some(msg) = ProtocolMessage::read(&mut buf_read).unwrap() {
+        while let Ok(Some(msg)) = ProtocolMessage::read(&mut buf_read) {
             let is_exit = match &msg {
                 ProtocolMessage::Request(req) => req.command == "disconnect",
                 _ => false,
             };
-            reader_sender.send(msg).unwrap();
+            if let Err(e) = reader_sender.send(msg) {
+                log::debug!("Could not send protocol message to reader: {:?}", e);
+            }
             if is_exit {
                 break;
             }
@@ -128,10 +130,12 @@ fn make_write(
 ) -> (Sender<ProtocolMessage>, thread::JoinHandle<io::Result<()>>) {
     let (writer_sender, writer_receiver) = bounded::<ProtocolMessage>(0);
     let writer = thread::spawn(move || {
-        writer_receiver
+        if let Err(e) = writer_receiver
             .into_iter()
             .try_for_each(|it| it.write(&mut stream))
-            .unwrap();
+        {
+            log::debug!("Could not receive protocol message from writer: {:?}", e);
+        }
         Ok(())
     });
     (writer_sender, writer)

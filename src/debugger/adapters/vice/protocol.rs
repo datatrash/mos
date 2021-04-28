@@ -1,85 +1,10 @@
-use crate::debugger::utils::parse_number;
-use crate::errors::{MosError, MosResult};
+use crate::errors::MosResult;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use crossbeam_channel::{bounded, Receiver, Sender};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::net::TcpStream;
-use std::process::{Child, Command};
-use std::time::Duration;
-use std::{io, thread};
+use std::io;
+use std::io::{BufRead, Write};
 
-pub struct ViceAdapter {
-    process: Option<Child>,
-    connection: Option<ViceConnection>,
-}
-
-struct ViceConnection {
-    sender: Sender<ViceRequest>,
-    receiver: Receiver<ViceResponse>,
-}
-
-impl ViceAdapter {
-    pub fn new() -> Self {
-        Self {
-            process: None,
-            connection: None,
-        }
-    }
-
-    pub fn start(&mut self, vice_path: &str, args: Vec<&str>) -> MosResult<()> {
-        self.process = Some(Command::new(&vice_path).args(&args).spawn()?);
-
-        let stream = loop {
-            let stream = TcpStream::connect_timeout(
-                &"127.0.0.1:6502".parse().unwrap(),
-                Duration::from_secs(1),
-            );
-            match stream {
-                Ok(s) => break s,
-                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                    log::debug!("VICE refused connection...");
-                    thread::sleep(Duration::from_millis(100));
-                }
-                Err(e) => {
-                    let m: MosError = e.into();
-                    return Err(m);
-                }
-            }
-        };
-        log::debug!("VICE is connected.");
-        let (reader_receiver, _reader) = make_reader(stream.try_clone().unwrap());
-        let (writer_sender, _writer) = make_writer(stream.try_clone().unwrap());
-
-        self.connection = Some(ViceConnection {
-            receiver: reader_receiver,
-            sender: writer_sender,
-        });
-
-        Ok(())
-    }
-
-    pub fn stop(&mut self) -> MosResult<()> {
-        self.send(ViceRequest::Quit)?;
-        self.process = None;
-        self.connection = None;
-
-        Ok(())
-    }
-
-    pub fn send(&self, msg: ViceRequest) -> MosResult<()> {
-        if let Some(c) = &self.connection {
-            c.sender.send(msg)?;
-        }
-        Ok(())
-    }
-
-    pub fn receiver(&self) -> Option<Receiver<ViceResponse>> {
-        self.connection.as_ref().map(|c| c.receiver.clone())
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ViceResponse {
     AdvanceInstructions,
     BanksAvailable(HashMap<u16, String>),
@@ -99,7 +24,7 @@ pub enum ViceResponse {
     Resumed(u16),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CheckpointResponse {
     pub number: u32,
     pub currently_hit: bool,
@@ -114,7 +39,7 @@ pub struct CheckpointResponse {
     pub has_condition: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ViceRequest {
     AdvanceInstructions(bool, u16),
     BanksAvailable,
@@ -132,7 +57,7 @@ pub enum ViceRequest {
     Quit,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CheckpointSet {
     pub start: u16,
     pub end: u16,
@@ -142,7 +67,7 @@ pub struct CheckpointSet {
     pub temporary: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MemoryDescriptor {
     pub cause_side_effects: bool,
     pub start: u16,
@@ -152,21 +77,6 @@ pub struct MemoryDescriptor {
 }
 
 impl MemoryDescriptor {
-    pub fn parse(input: &str) -> Option<Self> {
-        parse_number(input).map(|(_, number)| {
-            let start = number as u16;
-            let end = start;
-
-            Self {
-                cause_side_effects: false,
-                start,
-                end,
-                memory_space: 0,
-                bank_id: 0,
-            }
-        })
-    }
-
     fn get_buffer(&self) -> io::Result<Vec<u8>> {
         let mut body = vec![];
         body.write_u8(bool_to_u8(self.cause_side_effects))?;
@@ -193,7 +103,7 @@ struct ViceResponseHeader {
 }
 
 impl ViceResponse {
-    fn read(input: &mut dyn BufRead) -> MosResult<ViceResponse> {
+    pub fn read(input: &mut dyn BufRead) -> MosResult<ViceResponse> {
         let header = ViceResponseHeader {
             stx: input.read_u8()?,
             api_version: input.read_u8()?,
@@ -291,7 +201,7 @@ fn bool_to_u8(val: bool) -> u8 {
 }
 
 impl ViceRequest {
-    fn write(self, w: &mut impl Write) -> io::Result<()> {
+    pub fn write(self, w: &mut impl Write) -> io::Result<()> {
         let (command_type, body): (u8, Vec<u8>) = match &self {
             ViceRequest::MemoryGet(desc) => {
                 let buf = desc.get_buffer()?;
@@ -348,86 +258,5 @@ impl ViceRequest {
         w.write_all(&body)?;
         w.flush()?;
         Ok(())
-    }
-}
-
-fn make_reader(stream: TcpStream) -> (Receiver<ViceResponse>, thread::JoinHandle<io::Result<()>>) {
-    let (reader_sender, reader_receiver) = bounded::<ViceResponse>(0);
-    let reader = thread::spawn(move || {
-        let mut buf_read = BufReader::new(stream);
-        while let Ok(msg) = ViceResponse::read(&mut buf_read) {
-            let is_exit = reader_sender.send(msg).is_err();
-            if is_exit {
-                break;
-            }
-        }
-        Ok(())
-    });
-    (reader_receiver, reader)
-}
-
-fn make_writer(mut stream: TcpStream) -> (Sender<ViceRequest>, thread::JoinHandle<io::Result<()>>) {
-    let (writer_sender, writer_receiver) = bounded::<ViceRequest>(0);
-    let writer = thread::spawn(move || {
-        writer_receiver
-            .into_iter()
-            .try_for_each(|it| it.write(&mut stream))
-            .unwrap();
-        Ok(())
-    });
-    (writer_sender, writer)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::errors::MosResult;
-    use crate::testing::enable_default_tracing;
-
-    #[ignore]
-    #[test]
-    fn run_vice() -> MosResult<()> {
-        enable_default_tracing();
-
-        #[cfg(not(target_os = "macos"))]
-        let vice_path = "...unsupported on this OS...";
-
-        #[cfg(target_os = "macos")]
-        let vice_path = "/Applications/vice-sdl2-3.5/x64sc.app/Contents/MacOS/x64sc";
-
-        let mut vice = ViceAdapter::new();
-        vice.start(vice_path, vec!["-binarymonitor"])?;
-        vice.send(ViceRequest::BanksAvailable)?;
-        vice.send(ViceRequest::RegistersAvailable)?;
-        vice.send(ViceRequest::Ping)?;
-        vice.send(ViceRequest::Quit)?;
-
-        for msg in &vice.receiver().unwrap() {
-            log::info!("msg: {:?}", msg);
-        }
-        vice.stop()?;
-
-        Ok(())
-    }
-
-    #[test]
-    fn parse_memory_descriptor() {
-        assert_eq!(MemoryDescriptor::parse("1").unwrap().start, 1);
-        assert_eq!(MemoryDescriptor::parse("$12").unwrap().start, 0x12);
-        assert_eq!(MemoryDescriptor::parse("$1234").unwrap().start, 0x1234);
-        assert_eq!(MemoryDescriptor::parse("1234").unwrap().start, 1234);
-        assert_eq!(MemoryDescriptor::parse("foo").is_none(), true);
-    }
-
-    #[test]
-    fn format_memory_descriptor_data() {
-        assert_eq!(
-            MemoryDescriptor::parse("$1234").unwrap().format(&[1, 2, 3]),
-            "1"
-        );
-        assert_eq!(
-            MemoryDescriptor::parse("0").unwrap().format(&[1, 2, 3]),
-            "1"
-        );
     }
 }

@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 use crate::core::parser::code_map::{CodeMap, Span};
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::Hash;
 
 pub fn enable_tracing<F: Fn(simple_logger::SimpleLogger) -> simple_logger::SimpleLogger>(
     customizer: F,
@@ -22,4 +25,14 @@ pub fn empty_span() -> Span {
     let mut codemap = CodeMap::new();
     let f1 = codemap.add_file("test1.rs".to_string(), "abcd\nefghij\nqwerty".to_string());
     f1.span
+}
+
+pub fn assert_unordered_eq<T>(a: &[T], b: &[T])
+where
+    T: Debug + Eq + Hash,
+{
+    let a: HashSet<_> = a.iter().collect();
+    let b: HashSet<_> = b.iter().collect();
+
+    assert_eq!(a, b)
 }

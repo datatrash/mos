@@ -1,70 +1,25 @@
+pub mod adapters;
 pub mod connection;
 pub mod protocol;
 pub mod types;
-pub mod utils;
-pub mod vice_adapter;
 
-use crate::core::codegen::ProgramCounter;
+use crate::debugger::adapters::vice::ViceAdapter;
+use crate::debugger::adapters::{
+    Machine, MachineAdapter, MachineBreakpoint, MachineEvent, MachineRunningState,
+};
 use crate::debugger::connection::DebugConnection;
 use crate::debugger::protocol::{Event, EventMessage, ProtocolMessage, Request, ResponseMessage};
 use crate::debugger::types::*;
-use crate::debugger::utils::parse_number;
-use crate::debugger::vice_adapter::{
-    CheckpointSet, MemoryDescriptor, ViceAdapter, ViceRequest, ViceResponse,
-};
-use crate::errors::{MosError, MosResult};
+use crate::errors::MosResult;
 use crate::lsp::LspContext;
 use crossbeam_channel::{Receiver, Select};
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use std::collections::HashMap;
-use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-
-pub struct DebugContext {
-    lsp: Arc<Mutex<LspContext>>,
-    lsp_shutdown_receiver: Receiver<()>,
-    vice: ViceAdapter,
-    registers: HashMap<u8, u16>,
-    registers_available: HashMap<u8, String>,
-    banks_available: HashMap<u16, String>,
-    stopped_at: Option<ProgramCounter>,
-    breakpoints: HashMap<Range<ProgramCounter>, Breakpoint>,
-}
-
-impl DebugContext {
-    fn new(lsp: Arc<Mutex<LspContext>>) -> Self {
-        let lsp_shutdown_receiver = lsp.lock().unwrap().add_shutdown_handler();
-
-        Self {
-            lsp,
-            lsp_shutdown_receiver,
-            vice: ViceAdapter::new(),
-            registers: HashMap::new(),
-            registers_available: HashMap::new(),
-            banks_available: HashMap::new(),
-            stopped_at: None,
-            breakpoints: HashMap::new(),
-        }
-    }
-
-    fn get_bank_id(&self, name: &str) -> Option<u16> {
-        self.banks_available
-            .iter()
-            .find(|(_, bank_name)| *bank_name == name)
-            .map(|(bank, _)| *bank)
-    }
-}
-
-impl DebugContext {
-    fn lock_lsp(&self) -> MutexGuard<LspContext> {
-        self.lsp.lock().unwrap()
-    }
-}
 
 pub struct DebugServer {
     lsp: Arc<Mutex<LspContext>>,
@@ -107,7 +62,9 @@ impl DebugServer {
 
 #[allow(dead_code)]
 pub struct DebugConnectionHandler {
-    context: DebugContext,
+    lsp: Arc<Mutex<LspContext>>,
+    lsp_shutdown_receiver: Receiver<()>,
+    machine: Option<Machine>,
     port: u16,
     conn: Option<Arc<DebugConnection>>,
     pending_events: Vec<ProtocolMessage>,
@@ -146,17 +103,13 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
         conn: &mut DebugConnectionHandler,
         args: LaunchRequestArguments,
     ) -> MosResult<()> {
-        let cfg = conn.context.lock_lsp().config().unwrap();
-        let asm_path = PathBuf::from(args.workspace)
+        let cfg = conn.lock_lsp().config().unwrap();
+        let asm_path = PathBuf::from(args.workspace.clone())
             .join(PathBuf::from(cfg.build.target_directory))
             .join(PathBuf::from(cfg.build.entry));
         let prg_path = asm_path.with_extension("prg");
-        conn.context.vice.start(
-            &args.vice_path,
-            vec!["-binarymonitor", prg_path.to_str().unwrap()],
-        )?;
-        conn.context.vice.send(ViceRequest::BanksAvailable)?;
-        conn.context.vice.send(ViceRequest::RegistersAvailable)?;
+        let adapter = ViceAdapter::launch(&args, prg_path)?;
+        conn.machine = Some(Machine::new(adapter));
         Ok(())
     }
 }
@@ -165,7 +118,7 @@ struct ConfigurationDoneRequestHandler {}
 
 impl Handler<ConfigurationDoneRequest> for ConfigurationDoneRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: ()) -> MosResult<()> {
-        conn.context.vice.send(ViceRequest::Exit)?;
+        conn.machine_adapter().start()?;
         Ok(())
     }
 }
@@ -178,7 +131,11 @@ impl Handler<DisconnectRequest> for DisconnectRequestHandler {
         conn: &mut DebugConnectionHandler,
         _args: DisconnectRequestArguments,
     ) -> MosResult<()> {
-        conn.context.vice.stop()?;
+        conn.machine_adapter().stop()?;
+        log::debug!("Machine adapter is STOPPED");
+        let machine = std::mem::replace(&mut conn.machine, None);
+        machine.unwrap().join();
+        log::debug!("Machine is STOPPED");
         Ok(())
     }
 }
@@ -191,7 +148,7 @@ impl Handler<ContinueRequest> for ContinueRequestHandler {
         conn: &mut DebugConnectionHandler,
         _args: ContinueArguments,
     ) -> MosResult<ContinueResponse> {
-        conn.context.vice.send(ViceRequest::Exit)?;
+        conn.machine_adapter().resume()?;
         Ok(ContinueResponse {
             all_threads_continued: Some(true),
         })
@@ -221,10 +178,10 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
         _args: StackTraceArguments,
     ) -> MosResult<StackTraceResponse> {
         let mut stack_frames = vec![];
-        if let Some(pc) = conn.context.stopped_at {
-            if let Some(source_map) = conn.context.lock_lsp().codegen().map(|c| c.source_map()) {
+        if let MachineRunningState::Stopped(pc) = conn.machine_adapter().running_state()? {
+            if let Some(source_map) = conn.lock_lsp().codegen().map(|c| c.source_map()) {
                 if let Some((filename, offset)) = source_map.address_to_offset(pc) {
-                    let mut frame = StackFrame::new(1, "frame");
+                    let mut frame = StackFrame::new(1, "Stack frame");
                     // TODO: Deal with 0/1 offset
                     frame.line = offset.begin.line + 1;
                     frame.column = offset.begin.column + 1;
@@ -271,28 +228,9 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
         conn: &mut DebugConnectionHandler,
         args: VariablesArguments,
     ) -> MosResult<VariablesResponse> {
-        let variables = conn
-            .context
-            .registers
-            .iter()
-            .filter_map(|(id, value)| {
-                conn.context.registers_available.get(id).map(|name| {
-                    let formatted_value = match args.format {
-                        Some(ValueFormat { hex: true }) => {
-                            if *value < 256 {
-                                format!("${:02X}", value)
-                            } else {
-                                format!("${:04X}", value)
-                            }
-                        }
-                        _ => format!("{}", value),
-                    };
-                    Variable::new(name, &formatted_value)
-                })
-            })
-            .sorted_by_key(|var| var.name.clone())
-            .collect();
-        let response = VariablesResponse { variables };
+        let response = VariablesResponse {
+            variables: conn.machine_adapter().variables(args)?,
+        };
         Ok(response)
     }
 }
@@ -305,82 +243,55 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
         conn: &mut DebugConnectionHandler,
         args: SetBreakpointsArguments,
     ) -> MosResult<SetBreakpointsResponse> {
-        let was_running = conn.context.stopped_at.is_none();
-
         let source = args.source.clone();
         let source_path = args.source.path.as_ref().unwrap().clone();
 
-        // We're going to communicate with VICE so make sure there a no other messages in the queue
-        conn.drain_vice_messages(false)?;
-
-        // Clear existing breakpoints
-        let breakpoint_indices = conn
-            .context
+        let line_column_pcs = args
             .breakpoints
-            .iter()
-            .map(|(_, b)| b.id.unwrap())
-            .collect_vec();
-        for index in breakpoint_indices {
-            conn.context
-                .vice
-                .send(ViceRequest::CheckpointDelete(index as u32))?;
-            conn.drain_vice_messages_until(true, |msg| {
-                matches!(msg, ViceResponse::CheckpointDelete)
-            })?;
-        }
+            .unwrap_or_default()
+            .into_iter()
+            .map(|bp| {
+                let line = bp.line - 1; // TODO: deal with this properly
+                let column = bp.column.map(|c| c - 1);
 
-        let mut breakpoints = HashMap::new();
-
-        for bp in args.breakpoints.unwrap_or_default().into_iter() {
-            let line = bp.line - 1; // TODO: deal with this properly
-            let column = bp.column.map(|c| c - 1);
-
-            let pcs = {
-                let lsp = conn.context.lock_lsp();
+                // A single location may result in multiple breakpoints
+                let lsp = conn.lock_lsp();
                 let source_map = lsp.codegen().map(|c| c.source_map());
-                source_map
+                let pcs = source_map
                     .map(|sm| sm.line_col_to_pcs(&source_path, line, column))
-                    .unwrap_or_default()
-            };
+                    .unwrap_or_default();
+                (line, column, pcs)
+            })
+            .collect_vec();
 
-            for pc in pcs {
-                let cp = CheckpointSet {
-                    start: pc.start.as_u16(),
-                    end: pc.end.as_u16(),
-                    stop_when_hit: true,
-                    enabled: true,
-                    cpu_operation: 4,
-                    temporary: false,
-                };
-                conn.context.vice.send(ViceRequest::CheckpointSet(cp))?;
+        let bps = line_column_pcs
+            .into_iter()
+            .map(|(line, column, pcs)| {
+                pcs.into_iter().map(move |range| MachineBreakpoint {
+                    line,
+                    column,
+                    range,
+                })
+            })
+            .flatten()
+            .collect();
 
-                if let Some(ViceResponse::CheckpointResponse(r)) = conn
-                    .drain_vice_messages_until(true, |msg| {
-                        matches!(msg, ViceResponse::CheckpointResponse(_))
-                    })?
-                {
-                    let mut b = Breakpoint::new(true);
-                    b.id = Some(r.number as usize);
-                    b.verified = true;
-                    b.line = Some(line + 1);
-                    b.column = column.map(|c| c + 1);
-                    b.source = Some(source.clone());
-                    breakpoints.insert(pc, b);
-                }
-            }
-        }
+        let validated = conn.machine_adapter().set_breakpoints(&source_path, bps)?;
 
-        conn.context.breakpoints = breakpoints.clone();
-        conn.check_breakpoints_hit();
+        let breakpoints = validated
+            .into_iter()
+            .map(|mvb| {
+                let mut b = Breakpoint::new(true);
+                b.id = Some(mvb.id);
+                b.verified = true;
+                b.line = Some(mvb.requested.line + 1);
+                b.column = mvb.requested.column.map(|c| c + 1);
+                b.source = Some(source.clone());
+                b
+            })
+            .collect();
 
-        if was_running {
-            // If we were running before setting the breakpoints, we should continue now
-            conn.context.vice.send(ViceRequest::Exit)?;
-        }
-
-        let response = SetBreakpointsResponse {
-            breakpoints: breakpoints.into_iter().map(|(_, b)| b).collect(),
-        };
+        let response = SetBreakpointsResponse { breakpoints };
         Ok(response)
     }
 }
@@ -389,7 +300,7 @@ struct NextRequestHandler {}
 
 impl Handler<NextRequest> for NextRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: NextArguments) -> MosResult<()> {
-        conn.advance_instructions(false, true, 1)?;
+        conn.machine_adapter().next()?;
         Ok(())
     }
 }
@@ -398,7 +309,7 @@ struct StepInRequestHandler {}
 
 impl Handler<StepInRequest> for StepInRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: StepInArguments) -> MosResult<()> {
-        conn.advance_instructions(false, false, 1)?;
+        conn.machine_adapter().step_in()?;
         Ok(())
     }
 }
@@ -407,7 +318,7 @@ struct StepOutRequestHandler {}
 
 impl Handler<StepOutRequest> for StepOutRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: StepOutArguments) -> MosResult<()> {
-        conn.advance_instructions(true, false, 0)?;
+        conn.machine_adapter().step_out()?;
         Ok(())
     }
 }
@@ -416,100 +327,31 @@ struct PauseRequestHandler {}
 
 impl Handler<PauseRequest> for PauseRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: PauseArguments) -> MosResult<()> {
-        conn.advance_instructions(false, false, 1)?;
+        conn.machine_adapter().pause()?;
         Ok(())
-    }
-}
-
-struct EvaluateRequestHandler {}
-
-impl Handler<EvaluateRequest> for EvaluateRequestHandler {
-    fn handle(
-        &self,
-        conn: &mut DebugConnectionHandler,
-        args: EvaluateArguments,
-    ) -> MosResult<EvaluateResponse> {
-        let result = match MemoryDescriptor::parse(&args.expression) {
-            Some(mut desc) => {
-                desc.bank_id = conn.context.get_bank_id("cpu").unwrap();
-                conn.context
-                    .vice
-                    .send(ViceRequest::MemoryGet(desc.clone()))?;
-                let response = conn
-                    .drain_vice_messages_until(true, |msg| {
-                        matches!(msg, ViceResponse::MemoryGet(_))
-                    })?
-                    .unwrap();
-                let data = match response {
-                    ViceResponse::MemoryGet(data) => data,
-                    _ => panic!(),
-                };
-                desc.format(&data)
-            }
-            None => "Invalid expression".into(),
-        };
-
-        Ok(EvaluateResponse {
-            result,
-            ty: None,
-            presentation_hint: Some(VariablePresentationHint {
-                kind: Some(VariableKind::Data),
-                attributes: Some(vec![VariableAttribute::Constant]), // just constant registers for now
-                visibility: None,
-            }),
-            variables_reference: 0,
-            named_variables: None,
-            indexed_variables: None,
-            memory_reference: None,
-        })
-    }
-}
-
-struct SetVariableRequestHandler {}
-
-impl Handler<SetVariableRequest> for SetVariableRequestHandler {
-    fn handle(
-        &self,
-        conn: &mut DebugConnectionHandler,
-        args: SetVariableArguments,
-    ) -> MosResult<SetVariableResponse> {
-        if let Some((_, value)) = parse_number(&args.value) {
-            let result = match MemoryDescriptor::parse(&args.name) {
-                Some(mut desc) => {
-                    let data = vec![value as u8];
-                    desc.bank_id = conn.context.get_bank_id("cpu").unwrap();
-                    conn.context
-                        .vice
-                        .send(ViceRequest::MemorySet(desc.clone(), data.clone()))?;
-                    conn.drain_vice_messages_until(true, |msg| {
-                        matches!(msg, ViceResponse::MemorySet)
-                    })?;
-                    desc.format(&data)
-                }
-                None => "Could not set variable".into(),
-            };
-
-            Ok(SetVariableResponse {
-                value: result,
-                ty: None,
-                variables_reference: 0,
-                named_variables: None,
-                indexed_variables: None,
-            })
-        } else {
-            Err(MosError::Unknown)
-        }
     }
 }
 
 impl DebugConnectionHandler {
     pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
+        let lsp_shutdown_receiver = lsp.lock().unwrap().add_shutdown_handler();
+
         Self {
-            context: DebugContext::new(lsp),
+            lsp,
+            lsp_shutdown_receiver,
+            machine: None,
             port,
             conn: None,
             pending_events: vec![],
         }
+    }
+
+    fn lock_lsp(&self) -> MutexGuard<LspContext> {
+        self.lsp.lock().unwrap()
+    }
+
+    fn machine_adapter(&self) -> MutexGuard<Box<dyn MachineAdapter + Send>> {
+        self.machine.as_ref().unwrap().adapter()
     }
 
     fn connection(&self) -> Option<Arc<DebugConnection>> {
@@ -529,15 +371,17 @@ impl DebugConnectionHandler {
             let receiver = &self.connection().unwrap().receiver;
             sel.recv(receiver);
 
-            // ...or from VICE...
-            let vice_receiver = self.context.vice.receiver();
-            if let Some(v) = &vice_receiver {
-                sel.recv(v);
-            }
-
             // ...or from the LSP telling us we should be shutting down...
-            let shutdown_receiver = &self.context.lsp_shutdown_receiver;
-            sel.recv(shutdown_receiver);
+            sel.recv(&self.lsp_shutdown_receiver);
+
+            // ...or from the machine...
+            let machine_receiver = self
+                .machine
+                .as_ref()
+                .map(|m| m.adapter().receiver().unwrap());
+            if let Some(recv) = &machine_receiver {
+                sel.recv(recv);
+            }
 
             let oper = sel.select();
             match oper.index() {
@@ -545,18 +389,18 @@ impl DebugConnectionHandler {
                     Ok(m) => self.handle_message(m)?,
                     Err(_) => break,
                 },
-                1 if vice_receiver.is_some() => {
-                    match oper.recv(vice_receiver.as_ref().unwrap()) {
-                        Ok(m) => self.handle_vice_message(m)?,
+                1 => {
+                    log::trace!("Shutdown received from LSP.");
+                    break;
+                }
+                2 => {
+                    match oper.recv(machine_receiver.as_ref().unwrap()) {
+                        Ok(m) => self.handle_machine_event(m)?,
                         Err(_) => {
-                            // Vice got disconnected, so let's stop the debugging session
+                            // Machine has an issue, so let's stop the debugging session
                             self.enqueue_event::<TerminatedEvent>(());
                         }
                     }
-                }
-                2 => {
-                    log::trace!("Shutdown received from LSP.");
-                    break;
                 }
                 _ => panic!(),
             }
@@ -586,9 +430,9 @@ impl DebugConnectionHandler {
                     DisconnectRequest::COMMAND => {
                         self.handle(&DisconnectRequestHandler {}, req.arguments)?
                     }
-                    EvaluateRequest::COMMAND => {
+                    /*EvaluateRequest::COMMAND => {
                         self.handle(&EvaluateRequestHandler {}, req.arguments)?
-                    }
+                    }*/
                     InitializeRequest::COMMAND => {
                         self.handle(&InitializeRequestHandler {}, req.arguments)?
                     }
@@ -606,9 +450,9 @@ impl DebugConnectionHandler {
                     SetBreakpointsRequest::COMMAND => {
                         self.handle(&SetBreakpointsRequestHandler {}, req.arguments)?
                     }
-                    SetVariableRequest::COMMAND => {
+                    /*SetVariableRequest::COMMAND => {
                         self.handle(&SetVariableRequestHandler {}, req.arguments)?
-                    }
+                    }*/
                     StepInRequest::COMMAND => {
                         self.handle(&StepInRequestHandler {}, req.arguments)?
                     }
@@ -635,50 +479,38 @@ impl DebugConnectionHandler {
         Ok(())
     }
 
-    pub fn handle_vice_message(&mut self, msg: ViceResponse) -> MosResult<()> {
-        log::debug!("Handling VICE message: {:?}", msg);
+    pub fn handle_machine_event(&mut self, msg: MachineEvent) -> MosResult<()> {
+        log::debug!("Handling machine event: {:?}", msg);
 
         match msg {
-            ViceResponse::Resumed(_) => {
-                self.context.stopped_at = None;
+            MachineEvent::RunningStateChanged { old, new } => match (old, new) {
+                (MachineRunningState::Running, MachineRunningState::Stopped(_)) => {
+                    let mut args = StoppedEventArguments::new(StoppedReason::Breakpoint);
+                    args.thread_id = Some(1);
+                    self.enqueue_event::<StoppedEvent>(args);
+                }
+                (MachineRunningState::Stopped(_), MachineRunningState::Stopped(_)) => {
+                    let mut args = StoppedEventArguments::new(StoppedReason::Step);
+                    args.thread_id = Some(1);
+                    self.enqueue_event::<StoppedEvent>(args);
+                }
+                (MachineRunningState::Stopped(_), MachineRunningState::Running) => {
+                    self.enqueue_event::<ContinuedEvent>(ContinuedEventArguments {
+                        thread_id: 1,
+                        all_threads_continued: Some(true),
+                    });
+                }
+                (MachineRunningState::Running, MachineRunningState::Running) => (),
+                (MachineRunningState::Launching, _) | (_, MachineRunningState::Launching) => {
+                    panic!("Should never receive any machine events during launch.");
+                }
+            },
+            MachineEvent::Disconnected => {
+                self.enqueue_event::<TerminatedEvent>(());
             }
-            ViceResponse::Stopped(pc) => {
-                self.context.stopped_at = Some(ProgramCounter::new(pc as usize));
-                self.check_breakpoints_hit();
-            }
-            ViceResponse::Registers(map) => {
-                self.context.registers = map;
-            }
-            ViceResponse::BanksAvailable(map) => {
-                self.context.banks_available = map;
-            }
-            ViceResponse::RegistersAvailable(map) => {
-                self.context.registers_available = map;
-            }
-            _ => (),
         }
 
         Ok(())
-    }
-
-    fn check_breakpoints_hit(&mut self) {
-        if let Some(pc) = self.context.stopped_at {
-            if self
-                .context
-                .breakpoints
-                .iter()
-                .any(|(range, _)| pc >= range.start && pc <= range.end)
-            {
-                self.enqueue_stopped_event(StoppedReason::Breakpoint, pc);
-            }
-        }
-    }
-
-    fn enqueue_stopped_event(&mut self, reason: StoppedReason, at: ProgramCounter) {
-        self.context.stopped_at = Some(at);
-        let mut args = StoppedEventArguments::new(reason);
-        args.thread_id = Some(1);
-        self.enqueue_event::<StoppedEvent>(args);
     }
 
     // Converts untyped data to the right type, invokes a handler and serializes the result again
@@ -734,87 +566,6 @@ impl DebugConnectionHandler {
             }
         }
         self.pending_events.clear();
-        Ok(())
-    }
-
-    fn drain_vice_messages(&mut self, block: bool) -> MosResult<()> {
-        let _ = self.drain_vice_messages_until(block, |_| false)?;
-        Ok(())
-    }
-
-    fn drain_vice_messages_until<F: Fn(&ViceResponse) -> bool>(
-        &mut self,
-        block: bool,
-        predicate: F,
-    ) -> MosResult<Option<ViceResponse>> {
-        let vice_receiver = self.context.vice.receiver();
-        if let Some(v) = &vice_receiver {
-            loop {
-                let recv = if block {
-                    v.recv().map_err(|_| true)
-                } else {
-                    v.try_recv().map_err(|e| e.is_disconnected())
-                };
-                match recv {
-                    Ok(msg) => {
-                        self.handle_vice_message(msg.clone())?;
-                        if predicate(&msg) {
-                            return Ok(Some(msg));
-                        }
-                    }
-                    Err(is_disconnected) => {
-                        if is_disconnected {
-                            // Vice got disconnected, so let's stop the debugging session
-                            self.enqueue_event::<TerminatedEvent>(());
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    fn toggle_all_breakpoints(&mut self, enabled: bool) -> MosResult<()> {
-        for bp in self.context.breakpoints.values() {
-            let id = bp.id.unwrap();
-            self.context
-                .vice
-                .send(ViceRequest::CheckpointToggle(id as u32, enabled))?;
-        }
-        Ok(())
-    }
-
-    fn advance_instructions(
-        &mut self,
-        step_out: bool,
-        step_over: bool,
-        num_instructions: u16,
-    ) -> MosResult<()> {
-        self.drain_vice_messages(false)?;
-        self.toggle_all_breakpoints(false)?;
-        if step_out {
-            self.context.vice.send(ViceRequest::ExecuteUntilReturn)?;
-        } else {
-            self.context.vice.send(ViceRequest::AdvanceInstructions(
-                step_over,
-                num_instructions,
-            ))?;
-        };
-        let response = self
-            .drain_vice_messages_until(true, |msg| matches!(msg, ViceResponse::Stopped(_)))?
-            .unwrap();
-        self.toggle_all_breakpoints(true)?;
-
-        let pc = match response {
-            ViceResponse::Stopped(pc) => ProgramCounter::new(pc as usize),
-            _ => panic!(),
-        };
-        if !step_out && !step_over {
-            self.enqueue_stopped_event(StoppedReason::Pause, pc);
-        } else {
-            self.enqueue_stopped_event(StoppedReason::Step, pc);
-        }
         Ok(())
     }
 }

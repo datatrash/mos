@@ -764,7 +764,13 @@ impl CodegenContext {
                 };
 
                 match get_opcode_bytes(i.mnemonic.data, am, suffix, value) {
-                    Ok(bytes) => self.emit(i.mnemonic.span, &bytes)?,
+                    Ok(bytes) => {
+                        let mut span = i.mnemonic.span;
+                        if let Some(operand_span) = i.operand.as_ref().map(|o| o.expr.span) {
+                            span = operand_span.merge(span);
+                        }
+                        self.emit(span, &bytes)?
+                    }
                     Err(()) => return self.error(i.mnemonic.span, "operand size mismatch"),
                 }
             }

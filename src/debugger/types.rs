@@ -79,6 +79,21 @@ pub enum StoppedReason {
     InstructionBreakpoint,
 }
 
+pub struct ContinuedEvent {}
+
+impl Event for ContinuedEvent {
+    type Body = ContinuedEventArguments;
+    const EVENT: &'static str = "continued";
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuedEventArguments {
+    pub thread_id: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_threads_continued: Option<bool>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeRequestArguments {
@@ -262,6 +277,7 @@ pub enum StackFramePresentationHint {
 #[derive(Default, Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,

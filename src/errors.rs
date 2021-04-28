@@ -1,6 +1,7 @@
 use crate::core::parser::code_map::SpanLoc;
+use crate::debugger::adapters::vice::protocol::ViceRequest;
+use crate::debugger::adapters::MachineEvent;
 use crate::debugger::protocol::ProtocolMessage;
-use crate::debugger::vice_adapter::ViceRequest;
 use crossbeam_channel::{RecvError, SendError};
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
@@ -29,6 +30,7 @@ pub enum MosError {
     CrossbeamViceRequest(#[from] SendError<ViceRequest>),
     CrossbeamRecv(#[from] RecvError),
     CrossbeamSend(#[from] SendError<()>),
+    CrossbeamSendMachineEvent(#[from] SendError<MachineEvent>),
     ParseBoolError(#[from] ParseBoolError),
     ParseIntError(#[from] ParseIntError),
     Unknown,
@@ -131,6 +133,7 @@ impl MosError {
             MosError::CrossbeamViceRequest(err) => format_error(use_color, err),
             MosError::CrossbeamRecv(err) => format_error(use_color, err),
             MosError::CrossbeamSend(err) => format_error(use_color, err),
+            MosError::CrossbeamSendMachineEvent(err) => format_error(use_color, err),
             MosError::BuildError(message) => format_error(use_color, message),
             MosError::ParseBoolError(err) => format_error(use_color, err),
             MosError::ParseIntError(err) => format_error(use_color, err),
