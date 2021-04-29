@@ -57,33 +57,12 @@ impl MachineAdapter for ViceAdapter {
         Ok(())
     }
 
-    fn variables(&mut self, args: VariablesArguments) -> MosResult<Vec<Variable>> {
-        match args.variables_reference {
-            1 => {
-                let variables = self
-                    .current_register_values
-                    .iter()
-                    .filter_map(|(id, value)| {
-                        self.available_registers.get(id).map(|name| {
-                            let formatted_value = match args.format {
-                                Some(ValueFormat { hex: true }) => {
-                                    if *value < 256 {
-                                        format!("${:02X}", value)
-                                    } else {
-                                        format!("${:04X}", value)
-                                    }
-                                }
-                                _ => format!("{}", value),
-                            };
-                            Variable::new(name, &formatted_value)
-                        })
-                    })
-                    .sorted_by_key(|var| var.name.clone())
-                    .collect();
-                Ok(variables)
-            }
-            _ => panic!(),
-        }
+    fn is_connected(&self) -> MosResult<bool> {
+        Ok(self.is_connected)
+    }
+
+    fn running_state(&self) -> MosResult<MachineRunningState> {
+        Ok(self.running_state)
     }
 
     fn resume(&mut self) -> MosResult<()> {
@@ -192,12 +171,33 @@ impl MachineAdapter for ViceAdapter {
         Ok(validated_breakpoints)
     }
 
-    fn is_connected(&self) -> MosResult<bool> {
-        Ok(self.is_connected)
-    }
-
-    fn running_state(&self) -> MosResult<MachineRunningState> {
-        Ok(self.running_state)
+    fn variables(&mut self, args: VariablesArguments) -> MosResult<Vec<Variable>> {
+        match args.variables_reference {
+            1 => {
+                let variables = self
+                    .current_register_values
+                    .iter()
+                    .filter_map(|(id, value)| {
+                        self.available_registers.get(id).map(|name| {
+                            let formatted_value = match args.format {
+                                Some(ValueFormat { hex: true }) => {
+                                    if *value < 256 {
+                                        format!("${:02X}", value)
+                                    } else {
+                                        format!("${:04X}", value)
+                                    }
+                                }
+                                _ => format!("{}", value),
+                            };
+                            Variable::new(name, &formatted_value)
+                        })
+                    })
+                    .sorted_by_key(|var| var.name.clone())
+                    .collect();
+                Ok(variables)
+            }
+            _ => panic!(),
+        }
     }
 }
 
@@ -231,6 +231,7 @@ impl ViceAdapter {
         log::debug!("Launching VICE with arguments: {:?}", args);
         let process = Command::new(&launch_args.vice_path).args(&args).spawn()?;
 
+        let mut attempts = 20;
         let stream = loop {
             let stream = TcpStream::connect_timeout(
                 &"127.0.0.1:6502".parse().unwrap(),
@@ -246,6 +247,12 @@ impl ViceAdapter {
                     let m: MosError = e.into();
                     return Err(m);
                 }
+            }
+
+            attempts -= 1;
+            if attempts == 0 {
+                log::error!("Unable to connect to VICE.");
+                return Err(MosError::Vice("Unable to connect to VICE".into()));
             }
         };
         log::debug!("VICE is connected.");
@@ -374,6 +381,8 @@ fn make_reader(
                 }
             }
         }
+
+        log::debug!("VICE: Reader thread stopped.");
         Ok(())
     });
     (reader_receiver, reader)
@@ -390,6 +399,8 @@ fn make_writer(
         {
             log::debug!("Could not write ViceRequests to receiver: {:?}", e);
         }
+
+        log::debug!("VICE: Writer thread stopped.");
         Ok(())
     });
     (writer_sender, writer)

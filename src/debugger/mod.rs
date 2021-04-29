@@ -10,7 +10,7 @@ use crate::debugger::adapters::{
 use crate::debugger::connection::DebugConnection;
 use crate::debugger::protocol::{Event, EventMessage, ProtocolMessage, Request, ResponseMessage};
 use crate::debugger::types::*;
-use crate::errors::MosResult;
+use crate::errors::{MosError, MosErrorOptions, MosResult};
 use crate::lsp::LspContext;
 use crossbeam_channel::{Receiver, Select};
 use itertools::Itertools;
@@ -44,7 +44,12 @@ impl DebugServer {
         self.thread = Some(std::thread::spawn(move || {
             while !thread_shutdown.load(Ordering::Relaxed) {
                 let mut dbg = DebugConnectionHandler::new(lsp.clone(), port);
-                dbg.start().unwrap();
+                match dbg.start() {
+                    Ok(_) => (),
+                    Err(e) => {
+                        log::debug!("Could not start DebugConnectionHandler: {:?}", e);
+                    }
+                }
             }
         }));
         Ok(())
@@ -108,8 +113,18 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
             .join(PathBuf::from(cfg.build.target_directory))
             .join(PathBuf::from(cfg.build.entry));
         let prg_path = asm_path.with_extension("prg");
-        let adapter = ViceAdapter::launch(&args, prg_path)?;
-        conn.machine = Some(Machine::new(adapter));
+        match ViceAdapter::launch(&args, prg_path) {
+            Ok(adapter) => {
+                conn.machine = Some(Machine::new(adapter));
+            }
+            Err(e) => {
+                log::error!(
+                    "Could not launch machine. Terminating debugging session. Details: {:?}",
+                    e
+                );
+                return Err(e);
+            }
+        }
         Ok(())
     }
 }
@@ -118,7 +133,7 @@ struct ConfigurationDoneRequestHandler {}
 
 impl Handler<ConfigurationDoneRequest> for ConfigurationDoneRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: ()) -> MosResult<()> {
-        conn.machine_adapter().start()?;
+        conn.machine_adapter()?.start()?;
         Ok(())
     }
 }
@@ -131,7 +146,7 @@ impl Handler<DisconnectRequest> for DisconnectRequestHandler {
         conn: &mut DebugConnectionHandler,
         _args: DisconnectRequestArguments,
     ) -> MosResult<()> {
-        conn.machine_adapter().stop()?;
+        conn.machine_adapter()?.stop()?;
         log::debug!("Machine adapter is STOPPED");
         let machine = std::mem::replace(&mut conn.machine, None);
         machine.unwrap().join();
@@ -148,7 +163,7 @@ impl Handler<ContinueRequest> for ContinueRequestHandler {
         conn: &mut DebugConnectionHandler,
         _args: ContinueArguments,
     ) -> MosResult<ContinueResponse> {
-        conn.machine_adapter().resume()?;
+        conn.machine_adapter()?.resume()?;
         Ok(ContinueResponse {
             all_threads_continued: Some(true),
         })
@@ -178,7 +193,7 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
         _args: StackTraceArguments,
     ) -> MosResult<StackTraceResponse> {
         let mut stack_frames = vec![];
-        if let MachineRunningState::Stopped(pc) = conn.machine_adapter().running_state()? {
+        if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
             if let Some(source_map) = conn.lock_lsp().codegen().map(|c| c.source_map()) {
                 if let Some((filename, offset)) = source_map.address_to_offset(pc) {
                     let mut frame = StackFrame::new(1, "Stack frame");
@@ -229,7 +244,7 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
         args: VariablesArguments,
     ) -> MosResult<VariablesResponse> {
         let response = VariablesResponse {
-            variables: conn.machine_adapter().variables(args)?,
+            variables: conn.machine_adapter()?.variables(args)?,
         };
         Ok(response)
     }
@@ -276,7 +291,7 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
             .flatten()
             .collect();
 
-        let validated = conn.machine_adapter().set_breakpoints(&source_path, bps)?;
+        let validated = conn.machine_adapter()?.set_breakpoints(&source_path, bps)?;
 
         let breakpoints = validated
             .into_iter()
@@ -300,7 +315,7 @@ struct NextRequestHandler {}
 
 impl Handler<NextRequest> for NextRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: NextArguments) -> MosResult<()> {
-        conn.machine_adapter().next()?;
+        conn.machine_adapter()?.next()?;
         Ok(())
     }
 }
@@ -309,7 +324,7 @@ struct StepInRequestHandler {}
 
 impl Handler<StepInRequest> for StepInRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: StepInArguments) -> MosResult<()> {
-        conn.machine_adapter().step_in()?;
+        conn.machine_adapter()?.step_in()?;
         Ok(())
     }
 }
@@ -318,7 +333,7 @@ struct StepOutRequestHandler {}
 
 impl Handler<StepOutRequest> for StepOutRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: StepOutArguments) -> MosResult<()> {
-        conn.machine_adapter().step_out()?;
+        conn.machine_adapter()?.step_out()?;
         Ok(())
     }
 }
@@ -327,7 +342,7 @@ struct PauseRequestHandler {}
 
 impl Handler<PauseRequest> for PauseRequestHandler {
     fn handle(&self, conn: &mut DebugConnectionHandler, _args: PauseArguments) -> MosResult<()> {
-        conn.machine_adapter().pause()?;
+        conn.machine_adapter()?.pause()?;
         Ok(())
     }
 }
@@ -350,8 +365,11 @@ impl DebugConnectionHandler {
         self.lsp.lock().unwrap()
     }
 
-    fn machine_adapter(&self) -> MutexGuard<Box<dyn MachineAdapter + Send>> {
-        self.machine.as_ref().unwrap().adapter()
+    fn machine_adapter(&self) -> MosResult<MutexGuard<Box<dyn MachineAdapter + Send>>> {
+        match self.machine.as_ref() {
+            Some(m) => Ok(m.adapter()),
+            None => Err(MosError::Unknown),
+        }
     }
 
     fn connection(&self) -> Option<Arc<DebugConnection>> {
@@ -422,55 +440,54 @@ impl DebugConnectionHandler {
                 let command = req.command.clone();
                 let response = match command.as_str() {
                     ConfigurationDoneRequest::COMMAND => {
-                        self.handle(&ConfigurationDoneRequestHandler {}, req.arguments)?
+                        self.handle(&ConfigurationDoneRequestHandler {}, req.arguments)
                     }
                     ContinueRequest::COMMAND => {
-                        self.handle(&ContinueRequestHandler {}, req.arguments)?
+                        self.handle(&ContinueRequestHandler {}, req.arguments)
                     }
                     DisconnectRequest::COMMAND => {
-                        self.handle(&DisconnectRequestHandler {}, req.arguments)?
+                        self.handle(&DisconnectRequestHandler {}, req.arguments)
                     }
                     /*EvaluateRequest::COMMAND => {
-                        self.handle(&EvaluateRequestHandler {}, req.arguments)?
+                        self.handle(&EvaluateRequestHandler {}, req.arguments)
                     }*/
                     InitializeRequest::COMMAND => {
-                        self.handle(&InitializeRequestHandler {}, req.arguments)?
+                        self.handle(&InitializeRequestHandler {}, req.arguments)
                     }
-                    LaunchRequest::COMMAND => {
-                        self.handle(&LaunchRequestHandler {}, req.arguments)?
-                    }
-                    NextRequest::COMMAND => self.handle(&NextRequestHandler {}, req.arguments)?,
-                    PauseRequest::COMMAND => self.handle(&PauseRequestHandler {}, req.arguments)?,
+                    LaunchRequest::COMMAND => self.handle(&LaunchRequestHandler {}, req.arguments),
+                    NextRequest::COMMAND => self.handle(&NextRequestHandler {}, req.arguments),
+                    PauseRequest::COMMAND => self.handle(&PauseRequestHandler {}, req.arguments),
                     StackTraceRequest::COMMAND => {
-                        self.handle(&StackTraceRequestHandler {}, req.arguments)?
+                        self.handle(&StackTraceRequestHandler {}, req.arguments)
                     }
-                    ScopesRequest::COMMAND => {
-                        self.handle(&ScopesRequestHandler {}, req.arguments)?
-                    }
+                    ScopesRequest::COMMAND => self.handle(&ScopesRequestHandler {}, req.arguments),
                     SetBreakpointsRequest::COMMAND => {
-                        self.handle(&SetBreakpointsRequestHandler {}, req.arguments)?
+                        self.handle(&SetBreakpointsRequestHandler {}, req.arguments)
                     }
                     /*SetVariableRequest::COMMAND => {
-                        self.handle(&SetVariableRequestHandler {}, req.arguments)?
+                        self.handle(&SetVariableRequestHandler {}, req.arguments)
                     }*/
-                    StepInRequest::COMMAND => {
-                        self.handle(&StepInRequestHandler {}, req.arguments)?
-                    }
+                    StepInRequest::COMMAND => self.handle(&StepInRequestHandler {}, req.arguments),
                     StepOutRequest::COMMAND => {
-                        self.handle(&StepOutRequestHandler {}, req.arguments)?
+                        self.handle(&StepOutRequestHandler {}, req.arguments)
                     }
                     ThreadsRequest::COMMAND => {
-                        self.handle(&ThreadsRequestHandler {}, req.arguments)?
+                        self.handle(&ThreadsRequestHandler {}, req.arguments)
                     }
                     VariablesRequest::COMMAND => {
-                        self.handle(&VariablesRequestHandler {}, req.arguments)?
+                        self.handle(&VariablesRequestHandler {}, req.arguments)
                     }
                     _ => {
                         log::info!("Unknown command: {:?}", req.command);
-                        serde_json::Value::Null
+                        Err(MosError::Unknown)
                     }
                 };
-                self.send_response(seq, &command, response)?;
+                match response {
+                    Ok(body) => self.send_response(seq, &command, body)?,
+                    Err(e) => {
+                        self.send_error(seq, &command, &e.format(&MosErrorOptions::default()))?
+                    }
+                }
             }
             _ => {
                 log::debug!("Unknown message type");
@@ -539,6 +556,23 @@ impl DebugConnectionHandler {
             command: command.into(),
             message: None,
             body,
+        });
+
+        if let Some(conn) = self.connection() {
+            conn.sender.send(msg)?;
+        }
+
+        Ok(())
+    }
+
+    fn send_error(&self, request_seq: usize, command: &str, message: &str) -> MosResult<()> {
+        let msg = ProtocolMessage::Response(ResponseMessage {
+            seq: 0,
+            request_seq,
+            success: false,
+            command: command.into(),
+            message: Some(message.into()),
+            body: serde_json::Value::Null,
         });
 
         if let Some(conn) = self.connection() {

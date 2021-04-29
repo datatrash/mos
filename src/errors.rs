@@ -33,6 +33,7 @@ pub enum MosError {
     CrossbeamSendMachineEvent(#[from] SendError<MachineEvent>),
     ParseBoolError(#[from] ParseBoolError),
     ParseIntError(#[from] ParseIntError),
+    Vice(String),
     Unknown,
 }
 
@@ -137,6 +138,7 @@ impl MosError {
             MosError::BuildError(message) => format_error(use_color, message),
             MosError::ParseBoolError(err) => format_error(use_color, err),
             MosError::ParseIntError(err) => format_error(use_color, err),
+            MosError::Vice(message) => format_error(use_color, message),
             MosError::Unknown => format_error(use_color, "unknown error"),
             MosError::Multiple(errors) => errors
                 .iter()
