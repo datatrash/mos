@@ -90,11 +90,20 @@ impl std::fmt::Display for MosError {
     }
 }
 
-#[derive(Default)]
 pub struct MosErrorOptions {
     pub use_color: bool,
     pub paths_relative_from: Option<PathBuf>,
     pub use_prefix: bool,
+}
+
+impl Default for MosErrorOptions {
+    fn default() -> Self {
+        Self {
+            use_color: false,
+            paths_relative_from: None,
+            use_prefix: true,
+        }
+    }
 }
 
 impl MosError {
@@ -106,14 +115,14 @@ impl MosError {
             use ansi_term::Colour::Red;
             let err = if use_prefix {
                 if use_color {
-                    Red.paint("error:")
+                    Red.paint("error: ")
                 } else {
-                    "error:".into()
+                    "error: ".into()
                 }
             } else {
                 "".into()
             };
-            format!("{} {}", err, message.to_string())
+            format!("{}{}", err, message.to_string())
         }
 
         match self {
