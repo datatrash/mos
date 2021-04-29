@@ -130,11 +130,17 @@ impl IdentifierPath {
 
     pub fn has_parent<I: Into<IdentifierPath>>(&self, parent: I) -> bool {
         let parent = parent.into();
-        parent
-            .0
-            .iter()
-            .enumerate()
-            .all(|(idx, part)| self.0.get(idx) == Some(part))
+
+        // Parent should at the very least have one part less than the current identifier
+        if parent.len() != self.0.len() - 1 {
+            false
+        } else {
+            parent
+                .0
+                .iter()
+                .enumerate()
+                .all(|(idx, part)| self.0.get(idx) == Some(part))
+        }
     }
 
     pub fn single(&self) -> &Identifier {
@@ -163,5 +169,11 @@ mod tests {
     fn canonicalize() {
         let path = IdentifierPath::from("a.super.b.foo");
         assert_eq!(path.canonicalize().to_string(), "b.foo");
+    }
+
+    #[test]
+    fn has_parent() {
+        assert_eq!(IdentifierPath::from("s1.s2").has_parent("s1"), true);
+        assert_eq!(IdentifierPath::from("s1.s2").has_parent("s1.s2"), false);
     }
 }

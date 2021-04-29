@@ -33,6 +33,7 @@ pub enum MosError {
     CrossbeamSendMachineEvent(#[from] SendError<MachineEvent>),
     ParseBoolError(#[from] ParseBoolError),
     ParseIntError(#[from] ParseIntError),
+    DebugAdapter(String),
     Vice(String),
     Unknown,
 }
@@ -93,18 +94,24 @@ impl std::fmt::Display for MosError {
 pub struct MosErrorOptions {
     pub use_color: bool,
     pub paths_relative_from: Option<PathBuf>,
+    pub use_prefix: bool,
 }
 
 impl MosError {
     pub fn format(&self, options: &MosErrorOptions) -> String {
         let use_color = options.use_color;
+        let use_prefix = options.use_prefix;
 
-        fn format_error<M: ToString>(use_color: bool, message: M) -> String {
+        fn format_error<M: ToString>(use_color: bool, use_prefix: bool, message: M) -> String {
             use ansi_term::Colour::Red;
-            let err = if use_color {
-                Red.paint("error:")
+            let err = if use_prefix {
+                if use_color {
+                    Red.paint("error:")
+                } else {
+                    "error:".into()
+                }
             } else {
-                "error:".into()
+                "".into()
             };
             format!("{} {}", err, message.to_string())
         }
@@ -121,25 +128,30 @@ impl MosError {
                     location.begin.line + 1,
                     location.begin.column + 1
                 );
-                format!("{}{}", location, format_error(use_color, message))
+                format!(
+                    "{}{}",
+                    location,
+                    format_error(use_color, use_prefix, message)
+                )
             }
-            MosError::Io(err) => format_error(use_color, err),
-            MosError::Clap(err) => format_error(use_color, err),
-            MosError::Cli(err) => format_error(use_color, err),
-            MosError::Json(err) => format_error(use_color, err),
-            MosError::Toml(err) => format_error(use_color, err),
-            MosError::Protocol(err) => format_error(use_color, err),
-            MosError::CrossbeamLsp(err) => format_error(use_color, err),
-            MosError::CrossbeamDap(err) => format_error(use_color, err),
-            MosError::CrossbeamViceRequest(err) => format_error(use_color, err),
-            MosError::CrossbeamRecv(err) => format_error(use_color, err),
-            MosError::CrossbeamSend(err) => format_error(use_color, err),
-            MosError::CrossbeamSendMachineEvent(err) => format_error(use_color, err),
-            MosError::BuildError(message) => format_error(use_color, message),
-            MosError::ParseBoolError(err) => format_error(use_color, err),
-            MosError::ParseIntError(err) => format_error(use_color, err),
-            MosError::Vice(message) => format_error(use_color, message),
-            MosError::Unknown => format_error(use_color, "unknown error"),
+            MosError::Io(err) => format_error(use_color, use_prefix, err),
+            MosError::Clap(err) => format_error(use_color, use_prefix, err),
+            MosError::Cli(err) => format_error(use_color, use_prefix, err),
+            MosError::Json(err) => format_error(use_color, use_prefix, err),
+            MosError::Toml(err) => format_error(use_color, use_prefix, err),
+            MosError::Protocol(err) => format_error(use_color, use_prefix, err),
+            MosError::CrossbeamLsp(err) => format_error(use_color, use_prefix, err),
+            MosError::CrossbeamDap(err) => format_error(use_color, use_prefix, err),
+            MosError::CrossbeamViceRequest(err) => format_error(use_color, use_prefix, err),
+            MosError::CrossbeamRecv(err) => format_error(use_color, use_prefix, err),
+            MosError::CrossbeamSend(err) => format_error(use_color, use_prefix, err),
+            MosError::CrossbeamSendMachineEvent(err) => format_error(use_color, use_prefix, err),
+            MosError::BuildError(message) => format_error(use_color, use_prefix, message),
+            MosError::ParseBoolError(err) => format_error(use_color, use_prefix, err),
+            MosError::ParseIntError(err) => format_error(use_color, use_prefix, err),
+            MosError::DebugAdapter(message) => format_error(use_color, use_prefix, message),
+            MosError::Vice(message) => format_error(use_color, use_prefix, message),
+            MosError::Unknown => format_error(use_color, use_prefix, "unknown error"),
             MosError::Multiple(errors) => errors
                 .iter()
                 .map(|e| e.format(&options))

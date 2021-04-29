@@ -160,6 +160,13 @@ impl SymbolData {
         }
     }
 
+    pub fn try_as_i64(&self) -> Option<i64> {
+        match &self {
+            SymbolData::Number(val) => Some(*val),
+            _ => None,
+        }
+    }
+
     pub fn as_macro_definition(&self) -> &MacroDefinition {
         match &self {
             SymbolData::MacroDefinition(m) => m,
@@ -282,6 +289,14 @@ impl CodegenContext {
         &self.symbols
     }
 
+    #[allow(dead_code)]
+    pub fn find_local_symbols(&self, scope: &IdentifierPath) -> HashMap<&IdentifierPath, &Symbol> {
+        self.symbols
+            .iter()
+            .filter(|(path, _)| path.has_parent(scope))
+            .collect()
+    }
+
     pub fn tree(&self) -> &Arc<ParseTree> {
         &self.tree
     }
@@ -400,7 +415,7 @@ impl CodegenContext {
         self.symbols.remove(&path);
     }
 
-    fn get_symbol(
+    pub fn get_symbol(
         &self,
         current_scope: &IdentifierPath,
         id: &IdentifierPath,
@@ -480,7 +495,8 @@ impl CodegenContext {
                     segment.pc,
                     &bytes
                 );
-                self.source_map.add(span, segment.pc, bytes.len());
+                self.source_map
+                    .add(&self.current_scope, span, segment.pc, bytes.len());
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
@@ -1071,7 +1087,7 @@ mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
     use crate::core::codegen::{Segment, SegmentOptions};
     use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
-    use crate::core::parser::{parse_or_err, Identifier};
+    use crate::core::parser::{parse_or_err, Identifier, IdentifierPath};
     use crate::errors::MosResult;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -1774,6 +1790,53 @@ mod tests {
         assert_eq!(sl.begin.column, 0);
         assert_eq!(sl.end.line, 1);
         assert_eq!(sl.end.column, 9);
+
+        Ok(())
+    }
+
+    #[test]
+    fn can_perform_scope_queries() -> MosResult<()> {
+        let ctx = test_codegen(
+            r"nop
+              s1: {
+              rol
+              s2: {
+                asl
+                .const V = 1
+              }
+            }",
+        )?;
+
+        // Look up 'asl'
+        let offset = ctx.source_map().address_to_offset(0xc002).unwrap();
+        assert_eq!(offset.scope, "s1.s2".into());
+
+        let symbols = ctx.find_local_symbols(&offset.scope);
+        assert_eq!(symbols.len(), 3);
+        assert_eq!(
+            symbols
+                .get(&IdentifierPath::from("s1.s2.-"))
+                .unwrap()
+                .data
+                .as_i64(),
+            0xc002
+        );
+        assert_eq!(
+            symbols
+                .get(&IdentifierPath::from("s1.s2.+"))
+                .unwrap()
+                .data
+                .as_i64(),
+            0xc003
+        );
+        assert_eq!(
+            symbols
+                .get(&IdentifierPath::from("s1.s2.V"))
+                .unwrap()
+                .data
+                .as_i64(),
+            1
+        );
 
         Ok(())
     }

@@ -134,6 +134,7 @@ fn main() {
         let options = MosErrorOptions {
             use_color: !no_color,
             paths_relative_from: Some(std::env::current_dir().unwrap()),
+            use_prefix: true,
         };
         log::error!("{}", e.format(&options));
         std::process::exit(1);

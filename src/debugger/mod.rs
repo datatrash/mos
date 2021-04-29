@@ -4,6 +4,7 @@ pub mod protocol;
 pub mod types;
 
 use crate::core::codegen::ProgramCounter;
+use crate::core::parser::IdentifierPath;
 use crate::debugger::adapters::vice::ViceAdapter;
 use crate::debugger::adapters::{
     Machine, MachineAdapter, MachineBreakpoint, MachineEvent, MachineRunningState,
@@ -355,6 +356,39 @@ impl Handler<PauseRequest> for PauseRequestHandler {
     }
 }
 
+struct EvaluateRequestHandler {}
+
+impl Handler<EvaluateRequest> for EvaluateRequestHandler {
+    fn handle(
+        &self,
+        conn: &mut DebugConnectionHandler,
+        args: EvaluateArguments,
+    ) -> MosResult<EvaluateResponse> {
+        if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
+            if let Some(codegen) = conn.lock_lsp().codegen() {
+                if let Some(offset) = codegen.source_map().address_to_offset(pc) {
+                    let expr_path = IdentifierPath::from(args.expression.as_str()).canonicalize();
+                    if let Some((_, symbol)) = codegen.get_symbol(&offset.scope, &expr_path) {
+                        if let Some(val) = symbol.data.try_as_i64() {
+                            return Ok(EvaluateResponse {
+                                result: val.to_string(),
+                                ty: None,
+                                presentation_hint: None,
+                                variables_reference: 0,
+                                named_variables: None,
+                                indexed_variables: None,
+                                memory_reference: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(MosError::DebugAdapter("not available".into()))
+    }
+}
+
 impl DebugConnectionHandler {
     pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
         let lsp_shutdown_receiver = lsp.lock().unwrap().add_shutdown_handler();
@@ -456,9 +490,9 @@ impl DebugConnectionHandler {
                     DisconnectRequest::COMMAND => {
                         self.handle(&DisconnectRequestHandler {}, req.arguments)
                     }
-                    /*EvaluateRequest::COMMAND => {
+                    EvaluateRequest::COMMAND => {
                         self.handle(&EvaluateRequestHandler {}, req.arguments)
-                    }*/
+                    }
                     InitializeRequest::COMMAND => {
                         self.handle(&InitializeRequestHandler {}, req.arguments)
                     }
@@ -492,9 +526,14 @@ impl DebugConnectionHandler {
                 };
                 match response {
                     Ok(body) => self.send_response(seq, &command, body)?,
-                    Err(e) => {
-                        self.send_error(seq, &command, &e.format(&MosErrorOptions::default()))?
-                    }
+                    Err(e) => self.send_error(
+                        seq,
+                        &command,
+                        &e.format(&MosErrorOptions {
+                            use_prefix: false,
+                            ..Default::default()
+                        }),
+                    )?,
                 }
             }
             _ => {

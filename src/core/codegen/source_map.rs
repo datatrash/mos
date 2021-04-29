@@ -1,5 +1,6 @@
 use crate::core::codegen::ProgramCounter;
 use crate::core::parser::code_map::{CodeMap, Span};
+use crate::core::parser::IdentifierPath;
 use std::ops::Range;
 
 #[derive(Debug)]
@@ -9,6 +10,7 @@ pub struct SourceMap {
 
 #[derive(Debug, PartialEq)]
 pub struct SourceMapOffset {
+    pub scope: IdentifierPath,
     pub span: Span,
     pub pc: Range<usize>,
 }
@@ -18,8 +20,9 @@ impl SourceMap {
         self.offsets.clear();
     }
 
-    pub fn add(&mut self, span: Span, pc: ProgramCounter, len: usize) {
+    pub fn add(&mut self, scope: &IdentifierPath, span: Span, pc: ProgramCounter, len: usize) {
         let offset = SourceMapOffset {
+            scope: scope.clone(),
             span,
             pc: pc.as_usize()..(pc.as_usize() + len - 1),
         };
