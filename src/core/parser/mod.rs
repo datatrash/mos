@@ -164,6 +164,11 @@ fn trivia_impl() -> impl FnMut(LocatedSpan) -> IResult<Trivia> {
     }
 }
 
+/// Tries to parse trivia, excluding newlines
+fn trivia(input: LocatedSpan) -> IResult<Box<Located<Vec<Trivia>>>> {
+    map_once(located(|input| many1(trivia_impl())(input)), Box::new)(input)
+}
+
 /// Tries to parse trivia, including newlines
 fn multiline_trivia(input: LocatedSpan) -> IResult<Box<Located<Vec<Trivia>>>> {
     map_once(
@@ -178,12 +183,24 @@ fn multiline_trivia(input: LocatedSpan) -> IResult<Box<Located<Vec<Trivia>>>> {
 }
 
 /// Tries to parse multiline trivia
-fn ws<'a, T, F>(mut inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<'a, Located<T>>
+fn mws<'a, T, F>(mut inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<'a, Located<T>>
 where
     F: FnMut(LocatedSpan<'a>) -> IResult<'a, T>,
 {
     move |input: LocatedSpan<'a>| {
         let (input, trivia) = opt(multiline_trivia)(input)?;
+        let (input, result) = located_with_trivia(input, trivia, |i| inner(i))?;
+        Ok((input, result))
+    }
+}
+
+/// Tries to parse singleline trivia
+fn ws<'a, T, F>(mut inner: F) -> impl FnMut(LocatedSpan<'a>) -> IResult<'a, Located<T>>
+where
+    F: FnMut(LocatedSpan<'a>) -> IResult<'a, T>,
+{
+    move |input: LocatedSpan<'a>| {
+        let (input, trivia) = opt(trivia)(input)?;
         let (input, result) = located_with_trivia(input, trivia, |i| inner(i))?;
         Ok((input, result))
     }
@@ -378,7 +395,7 @@ fn braces(input: LocatedSpan) -> IResult<Token> {
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     alt((
         map(
-            tuple((ws(mnemonic), operand)),
+            tuple((mws(mnemonic), operand)),
             move |(mnemonic, operand)| {
                 let instruction = Instruction {
                     mnemonic,
@@ -389,7 +406,7 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
         ),
         map(
             tuple((
-                ws(implied_mnemonic),
+                mws(implied_mnemonic),
                 expect(
                     not(operand),
                     "", // Eating the error since the unexpected operand itself will also generate an error
@@ -410,7 +427,7 @@ fn instruction(input: LocatedSpan) -> IResult<Token> {
 fn macro_definition(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
-            ws(tag_no_case(".macro")),
+            mws(tag_no_case(".macro")),
             ws(identifier_name),
             ws(char('(')),
             opt(identifier_arg_list),
@@ -476,7 +493,7 @@ fn error(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a label in the form of `foo:`
 fn label(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((ws(identifier_name), ws(char(':')), opt(block))),
+        tuple((mws(identifier_name), ws(char(':')), opt(block))),
         move |(id, colon, block)| Token::Label { id, colon, block },
     )(input)
 }
@@ -486,9 +503,9 @@ fn data(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
             alt((
-                map(ws(tag_no_case(".byte")), |t| t.map(|_| DataSize::Byte)),
-                map(ws(tag_no_case(".word")), |t| t.map(|_| DataSize::Word)),
-                map(ws(tag_no_case(".dword")), |t| t.map(|_| DataSize::Dword)),
+                map(mws(tag_no_case(".byte")), |t| t.map(|_| DataSize::Byte)),
+                map(mws(tag_no_case(".word")), |t| t.map(|_| DataSize::Word)),
+                map(mws(tag_no_case(".dword")), |t| t.map(|_| DataSize::Dword)),
             )),
             expect(expression_arg_list, "expected expression"),
         )),
@@ -507,7 +524,7 @@ fn varconst_impl<'a, 'b>(
 ) -> IResult<'a, Token> {
     map_once(
         tuple((
-            ws(tag_no_case(tag)),
+            mws(tag_no_case(tag)),
             ws(identifier_name),
             ws(char('=')),
             expression,
@@ -532,7 +549,7 @@ fn const_definition(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a program counter definition of the form `* = $2000`
 fn pc_definition(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((ws(char('*')), ws(char('=')), ws(expression))),
+        tuple((mws(char('*')), ws(char('=')), ws(expression))),
         move |(star, eq, value)| Token::ProgramCounterDefinition {
             star,
             eq,
@@ -545,7 +562,7 @@ fn pc_definition(input: LocatedSpan) -> IResult<Token> {
 fn config_definition(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
-            ws(tag_no_case(".define")),
+            mws(tag_no_case(".define")),
             ws(identifier_name),
             expect(
                 config_map::config_map,
@@ -563,7 +580,7 @@ fn config_definition(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse tokens enclosed in braces, e.g. `{ ... }`
 fn block(input: LocatedSpan) -> IResult<Block> {
     map_once(
-        tuple((ws(char('{')), many0(statement), ws(char('}')))),
+        tuple((mws(char('{')), many0(statement), mws(char('}')))),
         move |(lparen, inner, rparen)| Block {
             lparen,
             inner,
@@ -575,7 +592,11 @@ fn block(input: LocatedSpan) -> IResult<Block> {
 /// Tries to parse a segment definition
 fn segment(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((ws(tag_no_case(".segment")), ws(identifier_name), opt(block))),
+        tuple((
+            mws(tag_no_case(".segment")),
+            ws(identifier_name),
+            opt(block),
+        )),
         move |(tag, id, block)| Token::Segment {
             tag: tag.map_into(|_| ".segment".to_string()),
             id,
@@ -588,7 +609,7 @@ fn segment(input: LocatedSpan) -> IResult<Token> {
 fn loop_(input: LocatedSpan) -> IResult<Token> {
     let state = input.extra.clone();
     map_once(
-        tuple((ws(tag_no_case(".loop")), expression, block)),
+        tuple((mws(tag_no_case(".loop")), expression, block)),
         |(tag, expr, block)| {
             let loop_scope = Box::new(state.shared_state().new_anonymous_scope());
             let tag = tag.map_into(|_| ".loop".to_string());
@@ -606,10 +627,10 @@ fn loop_(input: LocatedSpan) -> IResult<Token> {
 fn if_(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
-            ws(tag_no_case(".if")),
+            mws(tag_no_case(".if")),
             expression,
             block,
-            opt(tuple((ws(tag_no_case("else")), block))),
+            opt(tuple((mws(tag_no_case("else")), block))),
         )),
         move |(tag_if, value, if_, else_)| {
             let tag_if = tag_if.map_into(|_| ".if".to_string());
@@ -633,7 +654,7 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse an align directive, of the form `.align 16`
 fn align(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((ws(tag_no_case(".align")), ws(expression))),
+        tuple((mws(tag_no_case(".align")), ws(expression))),
         move |(tag, value)| {
             let tag = tag.map_into(|_| ".align".to_string());
             let value = value.flatten();
@@ -672,12 +693,12 @@ fn import(input: LocatedSpan) -> IResult<Token> {
 
     map_once(
         tuple((
-            ws(tag_no_case(".import")),
+            mws(tag_no_case(".import")),
             alt((
                 map(ws(char('*')), ImportArgs::All),
                 map(|input| arg_list(input, specific_arg), ImportArgs::Specific),
             )),
-            ws(tag_no_case("from")),
+            mws(tag_no_case("from")),
             ws(char('"')),
             located(filename),
             char('"'),
@@ -712,7 +733,7 @@ fn import(input: LocatedSpan) -> IResult<Token> {
 fn export(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
-            ws(tag_no_case(".export")),
+            mws(tag_no_case(".export")),
             ws(identifier_path),
             opt(tuple((ws(tag_no_case("as")), ws(identifier_path)))),
         )),
@@ -731,7 +752,7 @@ fn export(input: LocatedSpan) -> IResult<Token> {
 fn file(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
-            ws(tag_no_case(".file")),
+            mws(tag_no_case(".file")),
             ws(char('"')),
             located(filename),
             char('"'),
@@ -777,7 +798,7 @@ fn statement_or_error(input: LocatedSpan) -> IResult<Token> {
 
 /// Tries to eat the remaining characters
 fn eof(input: LocatedSpan) -> IResult<Token> {
-    map(ws(rest), move |rest| Token::Eof(rest.map_into(|_| ())))(input)
+    map(mws(rest), move |rest| Token::Eof(rest.map_into(|_| ())))(input)
 }
 
 /// Parses an entire file
@@ -883,7 +904,7 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     located(|input| {
         map_once(
             tuple((
-                ws(identifier_name),
+                mws(identifier_name),
                 ws(char('(')),
                 opt(expression_arg_list),
                 ws(char(')')),
@@ -1283,6 +1304,10 @@ mod test {
     fn parse_label() {
         check("   foo:   nop", "   foo:   NOP");
         check("   foo:   {nop }", "   foo:   {NOP }");
+        check(
+            "foo: {\nrol\nbar: {\nnop\n}\n}",
+            "foo: {\nROL\nbar: {\nNOP\n}\n}",
+        );
     }
 
     #[test]

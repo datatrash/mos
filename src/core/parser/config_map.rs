@@ -9,7 +9,7 @@ fn kvp(input: LocatedSpan) -> IResult<Token> {
     }));
 
     map_once(
-        tuple((ws(identifier_name), ws(char('=')), ws(value))),
+        tuple((mws(identifier_name), mws(char('=')), mws(value))),
         move |(key, eq, value)| {
             let key = key.map(|k| k.as_str().to_string());
             let value = Box::new(value);
@@ -21,7 +21,7 @@ fn kvp(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a config map
 pub fn config_map(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((ws(char('{')), many0(kvp), ws(char('}')))),
+        tuple((mws(char('{')), many0(kvp), mws(char('}')))),
         move |(lparen, inner, rparen)| {
             Token::Config(Block {
                 lparen,
