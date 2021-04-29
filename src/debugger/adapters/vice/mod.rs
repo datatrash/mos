@@ -367,14 +367,10 @@ impl ViceAdapter {
 }
 
 fn find_available_port() -> u16 {
-    match TcpListener::bind("127.0.0.1:0") {
-        Ok(a) => match a.local_addr() {
-            Ok(a) => {
-                return a.port();
-            }
-            Err(_) => (),
-        },
-        Err(_) => (),
+    if let Ok(a) = TcpListener::bind("127.0.0.1:0") {
+        if let Ok(a) = a.local_addr() {
+            return a.port();
+        }
     }
 
     panic!("No available port")

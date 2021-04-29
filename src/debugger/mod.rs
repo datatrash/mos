@@ -230,7 +230,7 @@ impl Handler<ScopesRequest> for ScopesRequestHandler {
         _conn: &mut DebugConnectionHandler,
         _args: ScopesArguments,
     ) -> MosResult<ScopesResponse> {
-        let mut scope = Scope::new("Default", 1);
+        let mut scope = Scope::new("Registers", 1);
         scope.presentation_hint = Some(ScopePresentationHint::Registers);
         let response = ScopesResponse {
             scopes: vec![scope],
@@ -367,19 +367,23 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
         if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
             if let Some(codegen) = conn.lock_lsp().codegen() {
                 if let Some(offset) = codegen.source_map().address_to_offset(pc) {
-                    let expr_path = IdentifierPath::from(args.expression.as_str()).canonicalize();
-                    if let Some((_, symbol)) = codegen.get_symbol(&offset.scope, &expr_path) {
-                        if let Some(val) = symbol.data.try_as_i64() {
-                            return Ok(EvaluateResponse {
-                                result: val.to_string(),
-                                ty: None,
-                                presentation_hint: None,
-                                variables_reference: 0,
-                                named_variables: None,
-                                indexed_variables: None,
-                                memory_reference: None,
-                            });
+                    let expr_path = IdentifierPath::from(args.expression.as_str());
+                    let mut scope = offset.scope.clone();
+                    while !scope.is_empty() {
+                        if let Some((_, symbol)) = codegen.get_symbol(&scope, &expr_path) {
+                            if let Some(val) = symbol.data.try_as_i64() {
+                                return Ok(EvaluateResponse {
+                                    result: val.to_string(),
+                                    ty: None,
+                                    presentation_hint: None,
+                                    variables_reference: 0,
+                                    named_variables: None,
+                                    indexed_variables: None,
+                                    memory_reference: None,
+                                });
+                            }
                         }
+                        scope = scope.parent();
                     }
                 }
             }
