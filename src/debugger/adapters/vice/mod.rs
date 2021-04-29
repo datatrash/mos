@@ -6,6 +6,7 @@ use crate::debugger::types::ValueFormat;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use itertools::Itertools;
 use std::collections::HashMap;
+use std::net::TcpListener;
 use std::process::Child;
 
 struct ViceConnection {
@@ -227,14 +228,21 @@ impl ViceAdapter {
         binary_path: P,
     ) -> MosResult<Box<ViceAdapter>> {
         let binary_path = binary_path.into();
-        let args = vec!["-binarymonitor", binary_path.to_str().unwrap()];
+        let port = find_available_port();
+        let monitor_address = format!("ip4://127.0.0.1:{}", port);
+        let args = vec![
+            "-binarymonitor",
+            "-binarymonitoraddress",
+            &monitor_address,
+            binary_path.to_str().unwrap(),
+        ];
         log::debug!("Launching VICE with arguments: {:?}", args);
         let process = Command::new(&launch_args.vice_path).args(&args).spawn()?;
 
         let mut attempts = 20;
         let stream = loop {
             let stream = TcpStream::connect_timeout(
-                &"127.0.0.1:6502".parse().unwrap(),
+                &format!("127.0.0.1:{}", port).parse().unwrap(),
                 Duration::from_secs(1),
             );
             match stream {
@@ -356,6 +364,20 @@ impl ViceAdapter {
         }
         Ok(())
     }
+}
+
+fn find_available_port() -> u16 {
+    match TcpListener::bind("127.0.0.1:0") {
+        Ok(a) => match a.local_addr() {
+            Ok(a) => {
+                return a.port();
+            }
+            Err(_) => (),
+        },
+        Err(_) => (),
+    }
+
+    panic!("No available port")
 }
 
 fn make_reader(
