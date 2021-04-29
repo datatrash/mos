@@ -282,6 +282,10 @@ impl CodegenContext {
         &self.symbols
     }
 
+    pub fn tree(&self) -> &Arc<ParseTree> {
+        &self.tree
+    }
+
     pub fn source_map(&self) -> &SourceMap {
         &self.source_map
     }
@@ -476,8 +480,7 @@ impl CodegenContext {
                     segment.pc,
                     &bytes
                 );
-                self.source_map
-                    .add(&self.tree.code_map, span, segment.pc, bytes.len());
+                self.source_map.add(span, segment.pc, bytes.len());
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
@@ -1746,6 +1749,33 @@ mod tests {
             err.to_string(),
             "test.asm:2:9: error: cannot import an already defined symbol: foo"
         );
+    }
+
+    #[test]
+    fn can_perform_source_map_lookups() -> MosResult<()> {
+        let ctx = test_codegen("lda $d020\nsta $d021")?;
+        let offset = ctx.source_map().address_to_offset(0xc003).unwrap();
+        let sl = ctx.tree.code_map.look_up_span(offset.span);
+        assert_eq!(offset.pc, 0xc003..0xc005);
+        assert_eq!(sl.file.name(), "test.asm");
+        assert_eq!(sl.begin.line, 1);
+        assert_eq!(sl.begin.column, 0);
+        assert_eq!(sl.end.line, 1);
+        assert_eq!(sl.end.column, 9);
+
+        let offsets = ctx
+            .source_map
+            .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, 4);
+        let offset = offsets[0];
+        let sl = ctx.tree.code_map.look_up_span(offset.span);
+        assert_eq!(offset.pc, 0xc003..0xc005);
+        assert_eq!(sl.file.name(), "test.asm");
+        assert_eq!(sl.begin.line, 1);
+        assert_eq!(sl.begin.column, 0);
+        assert_eq!(sl.end.line, 1);
+        assert_eq!(sl.end.column, 9);
+
+        Ok(())
     }
 
     pub(super) fn test_codegen(code: &str) -> MosResult<CodegenContext> {

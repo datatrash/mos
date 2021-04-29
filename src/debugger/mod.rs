@@ -3,6 +3,7 @@ pub mod connection;
 pub mod protocol;
 pub mod types;
 
+use crate::core::codegen::ProgramCounter;
 use crate::debugger::adapters::vice::ViceAdapter;
 use crate::debugger::adapters::{
     Machine, MachineAdapter, MachineBreakpoint, MachineEvent, MachineRunningState,
@@ -194,16 +195,18 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
     ) -> MosResult<StackTraceResponse> {
         let mut stack_frames = vec![];
         if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
-            if let Some(source_map) = conn.lock_lsp().codegen().map(|c| c.source_map()) {
-                if let Some((filename, offset)) = source_map.address_to_offset(pc) {
+            if let Some(codegen) = conn.lock_lsp().codegen() {
+                if let Some(offset) = codegen.source_map().address_to_offset(pc) {
+                    let sl = codegen.tree().code_map.look_up_span(offset.span);
+
                     let mut frame = StackFrame::new(1, "Stack frame");
                     // TODO: Deal with 0/1 offset
-                    frame.line = offset.begin.line + 1;
-                    frame.column = offset.begin.column + 1;
-                    frame.end_line = Some(offset.end.line + 1);
-                    frame.end_column = Some(offset.end.column + 1);
+                    frame.line = sl.begin.line + 1;
+                    frame.column = sl.begin.column + 1;
+                    frame.end_line = Some(sl.end.line + 1);
+                    frame.end_column = Some(sl.end.column + 1);
                     frame.source = Some(Source {
-                        path: Some(filename.into()),
+                        path: Some(sl.file.name().into()),
                         ..Default::default()
                     });
                     stack_frames.push(frame);
@@ -270,11 +273,16 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
                 let column = bp.column.map(|c| c - 1);
 
                 // A single location may result in multiple breakpoints
-                let lsp = conn.lock_lsp();
-                let source_map = lsp.codegen().map(|c| c.source_map());
-                let pcs = source_map
-                    .map(|sm| sm.line_col_to_pcs(&source_path, line, column))
-                    .unwrap_or_default();
+                let pcs = match conn.lock_lsp().codegen() {
+                    Some(codegen) => codegen
+                        .source_map()
+                        .line_col_to_offsets(&codegen.tree().code_map, &source_path, line, column)
+                        .into_iter()
+                        .map(|o| ProgramCounter::new(o.pc.start)..ProgramCounter::new(o.pc.end))
+                        .collect_vec(),
+                    None => vec![],
+                };
+
                 (line, column, pcs)
             })
             .collect_vec();
