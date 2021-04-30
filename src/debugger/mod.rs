@@ -268,6 +268,12 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
                     let scopes = get_local_scopes(&conn, codegen)?;
                     for symbols in scopes.values() {
                         for (id, symbol) in symbols {
+                            // Hide + / - symbols by default
+                            if let Some(stem) = id.stem() {
+                                if stem == "-" || stem == "+" {
+                                    continue;
+                                }
+                            }
                             if let Some(val) = symbol.data.try_as_i64() {
                                 result.insert(id.to_string(), val);
                             }

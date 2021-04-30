@@ -46,6 +46,12 @@ impl Identifier {
     }
 }
 
+impl PartialEq<str> for Identifier {
+    fn eq(&self, other: &str) -> bool {
+        self.0.as_str() == other
+    }
+}
+
 impl From<&str> for Identifier {
     fn from(id: &str) -> Self {
         Identifier(id.to_string())
