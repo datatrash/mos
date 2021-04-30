@@ -1,9 +1,10 @@
 pub mod vice;
 
 use crate::core::codegen::ProgramCounter;
-use crate::debugger::types::{LaunchRequestArguments, Variable, VariablesArguments};
+use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::{MosError, MosResult};
 use crossbeam_channel::{bounded, Receiver, TryRecvError};
+use std::collections::HashMap;
 use std::io::{BufReader, ErrorKind};
 use std::net::TcpStream;
 use std::ops::Range;
@@ -95,8 +96,8 @@ pub trait MachineAdapter {
         breakpoints: Vec<MachineBreakpoint>,
     ) -> MosResult<Vec<MachineValidatedBreakpoint>>;
 
-    /// Which variables are currently available?
-    fn variables(&mut self, args: VariablesArguments) -> MosResult<Vec<Variable>>;
+    /// Gets the current register values
+    fn registers(&mut self) -> MosResult<HashMap<String, u16>>;
 }
 
 #[derive(Clone, Debug, PartialEq)]

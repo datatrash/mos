@@ -2,7 +2,6 @@ pub mod protocol;
 
 use crate::debugger::adapters::vice::protocol::*;
 use crate::debugger::adapters::*;
-use crate::debugger::types::ValueFormat;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -172,33 +171,16 @@ impl MachineAdapter for ViceAdapter {
         Ok(validated_breakpoints)
     }
 
-    fn variables(&mut self, args: VariablesArguments) -> MosResult<Vec<Variable>> {
-        match args.variables_reference {
-            1 => {
-                let variables = self
-                    .current_register_values
-                    .iter()
-                    .filter_map(|(id, value)| {
-                        self.available_registers.get(id).map(|name| {
-                            let formatted_value = match args.format {
-                                Some(ValueFormat { hex: true }) => {
-                                    if *value < 256 {
-                                        format!("${:02X}", value)
-                                    } else {
-                                        format!("${:04X}", value)
-                                    }
-                                }
-                                _ => format!("{}", value),
-                            };
-                            Variable::new(name, &formatted_value)
-                        })
-                    })
-                    .sorted_by_key(|var| var.name.clone())
-                    .collect();
-                Ok(variables)
-            }
-            _ => panic!(),
-        }
+    fn registers(&mut self) -> MosResult<HashMap<String, u16>> {
+        Ok(self
+            .current_register_values
+            .iter()
+            .filter_map(|(id, value)| {
+                self.available_registers
+                    .get(id)
+                    .map(|name| (name.clone(), *value))
+            })
+            .collect())
     }
 }
 

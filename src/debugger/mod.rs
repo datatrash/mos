@@ -3,7 +3,9 @@ pub mod connection;
 pub mod protocol;
 pub mod types;
 
-use crate::core::codegen::ProgramCounter;
+use crate::core::codegen::{
+    relativize_symbols, simplify_symbols, CodegenContext, ProgramCounter, Symbol,
+};
 use crate::core::parser::IdentifierPath;
 use crate::debugger::adapters::vice::ViceAdapter;
 use crate::debugger::adapters::{
@@ -18,6 +20,7 @@ use crossbeam_channel::{Receiver, Select};
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -230,10 +233,12 @@ impl Handler<ScopesRequest> for ScopesRequestHandler {
         _conn: &mut DebugConnectionHandler,
         _args: ScopesArguments,
     ) -> MosResult<ScopesResponse> {
-        let mut scope = Scope::new("Registers", 1);
-        scope.presentation_hint = Some(ScopePresentationHint::Registers);
+        let mut registers = Scope::new("Registers", 1);
+        registers.presentation_hint = Some(ScopePresentationHint::Registers);
+        let mut locals = Scope::new("Locals", 2);
+        locals.presentation_hint = Some(ScopePresentationHint::Locals);
         let response = ScopesResponse {
-            scopes: vec![scope],
+            scopes: vec![registers, locals],
         };
         Ok(response)
     }
@@ -247,9 +252,52 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
         conn: &mut DebugConnectionHandler,
         args: VariablesArguments,
     ) -> MosResult<VariablesResponse> {
-        let response = VariablesResponse {
-            variables: conn.machine_adapter()?.variables(args)?,
+        let variables: HashMap<String, i64> = match args.variables_reference {
+            1 => {
+                // Registers
+                conn.machine_adapter()?
+                    .registers()?
+                    .into_iter()
+                    .map(|(name, val)| (name, val as i64))
+                    .collect()
+            }
+            2 => {
+                // Locals
+                let mut result = HashMap::new();
+                if let Some(codegen) = conn.lock_lsp().codegen() {
+                    let scopes = get_local_scopes(&conn, codegen)?;
+                    for symbols in scopes.values() {
+                        for (id, symbol) in symbols {
+                            if let Some(val) = symbol.data.try_as_i64() {
+                                result.insert(id.to_string(), val);
+                            }
+                        }
+                    }
+                }
+                result
+            }
+            _ => panic!(),
         };
+
+        let variables = variables
+            .iter()
+            .map(|(name, value)| {
+                let formatted_value = match args.format {
+                    Some(ValueFormat { hex: true }) => {
+                        if *value < 256 {
+                            format!("${:02X}", value)
+                        } else {
+                            format!("${:04X}", value)
+                        }
+                    }
+                    _ => format!("{}", value),
+                };
+                Variable::new(name, &formatted_value)
+            })
+            .sorted_by_key(|var| var.name.clone())
+            .collect();
+
+        let response = VariablesResponse { variables };
         Ok(response)
     }
 }
@@ -364,27 +412,21 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
         conn: &mut DebugConnectionHandler,
         args: EvaluateArguments,
     ) -> MosResult<EvaluateResponse> {
-        if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
-            if let Some(codegen) = conn.lock_lsp().codegen() {
-                if let Some(offset) = codegen.source_map().address_to_offset(pc) {
-                    let scopes = codegen.visible_symbols(&offset.scope);
-                    let expr_path = IdentifierPath::from(args.expression.as_str());
-                    if let Some(scope) = scopes.get(&expr_path.parent()) {
-                        if let Some(stem) = expr_path.stem() {
-                            if let Some(symbol) = scope.get(stem) {
-                                if let Some(val) = symbol.data.try_as_i64() {
-                                    return Ok(EvaluateResponse {
-                                        result: val.to_string(),
-                                        ty: None,
-                                        presentation_hint: None,
-                                        variables_reference: 0,
-                                        named_variables: None,
-                                        indexed_variables: None,
-                                        memory_reference: None,
-                                    });
-                                }
-                            }
-                        }
+        if let Some(codegen) = conn.lock_lsp().codegen() {
+            let scopes = get_local_scopes(&conn, codegen)?;
+            let expr_path = IdentifierPath::from(args.expression.as_str());
+            for symbols in scopes.values() {
+                if let Some(symbol) = symbols.get(&expr_path) {
+                    if let Some(val) = symbol.data.try_as_i64() {
+                        return Ok(EvaluateResponse {
+                            result: val.to_string(),
+                            ty: None,
+                            presentation_hint: None,
+                            variables_reference: 0,
+                            named_variables: None,
+                            indexed_variables: None,
+                            memory_reference: None,
+                        });
                     }
                 }
             }
@@ -392,6 +434,23 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
 
         Err(MosError::DebugAdapter("not available".into()))
     }
+}
+
+/// Get all the symbols that are visible from the local scope
+fn get_local_scopes<'a>(
+    conn: &'a DebugConnectionHandler,
+    codegen: &'a CodegenContext,
+) -> MosResult<HashMap<IdentifierPath, HashMap<IdentifierPath, &'a Symbol>>> {
+    if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
+        if let Some(offset) = codegen.source_map().address_to_offset(pc) {
+            let scopes = codegen.visible_symbols(&offset.scope);
+            let scopes = relativize_symbols(scopes, &offset.scope);
+            let scopes = simplify_symbols(scopes, &offset.scope);
+            return Ok(scopes);
+        }
+    }
+
+    Ok(HashMap::new())
 }
 
 impl DebugConnectionHandler {
