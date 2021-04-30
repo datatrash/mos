@@ -1,3 +1,4 @@
+mod completion;
 mod documents;
 mod formatting;
 mod references;
@@ -13,6 +14,7 @@ use crate::core::parser::code_map::{LineCol, SpanLoc};
 use crate::core::parser::source::ParsingSource;
 use crate::core::parser::ParseTree;
 use crate::errors::{MosError, MosResult};
+use crate::lsp::completion::CompletionHandler;
 use crate::lsp::documents::{
     DidChangeTextDocumentHandler, DidCloseTextDocumentHandler, DidOpenTextDocumentHandler,
 };
@@ -26,8 +28,8 @@ use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    DocumentOnTypeFormattingOptions, InitializeParams, OneOf, Position, ServerCapabilities,
-    TextDocumentPositionParams, TextDocumentSyncKind, Url,
+    CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf, Position,
+    ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
 };
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -265,6 +267,7 @@ impl LspServer {
         lsp.register_request_handler(FindReferencesHandler {});
         lsp.register_request_handler(DocumentHighlightRequestHandler {});
         lsp.register_request_handler(RenameHandler {});
+        lsp.register_request_handler(CompletionHandler {});
         lsp.register_notification_handler(DidOpenTextDocumentHandler {});
         lsp.register_notification_handler(DidChangeTextDocumentHandler {});
         lsp.register_notification_handler(DidCloseTextDocumentHandler {});
@@ -295,6 +298,10 @@ impl LspServer {
             document_highlight_provider: Some(OneOf::Left(true)),
             rename_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
+            completion_provider: Some(CompletionOptions {
+                trigger_characters: Some(vec!["$".into(), "#".into()]),
+                ..Default::default()
+            }),
             ..Default::default()
         };
         let server_capabilities = serde_json::to_value(&caps).unwrap();

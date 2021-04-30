@@ -63,18 +63,23 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
         );
         return;
     }
-    let (tree, errors) = parse(entry.as_ref(), ctx.parsing_source.clone());
+    let (tree, error) = parse(entry.as_ref(), ctx.parsing_source.clone());
     ctx.tree = tree;
-    if let Some(e) = errors {
-        ctx.error = Some(e);
-        return;
-    }
+    ctx.error = error;
     if let Some(tree) = &ctx.tree {
-        match codegen(tree.clone(), CodegenOptions::default()) {
-            Ok(context) => ctx.codegen = Some(context),
-            Err(e) => {
-                ctx.error = Some(e);
+        let (context, error) = codegen(tree.clone(), CodegenOptions::default());
+        ctx.codegen = context;
+
+        // Merge already existing parse errors
+        let existing_error = std::mem::replace(&mut ctx.error, None);
+        match (existing_error, error) {
+            (Some(existing), Some(error)) => {
+                ctx.error = Some(MosError::Multiple(vec![existing, error]));
             }
+            (None, error) => {
+                ctx.error = error;
+            }
+            (Some(_), None) => {}
         }
     }
 }

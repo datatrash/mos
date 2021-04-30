@@ -128,8 +128,8 @@ pub fn get_opcode_bytes(
         (MM::Tya, AM::Implied, None) => v![(0x98, 0)],
         (MM::Txs, AM::Implied, None) => v![(0x9a, 0)],
         _ => {
-            // Invalid
-            panic!();
+            // Invalid, encode to BRK so we at least can assemble
+            v![(0x00, 0)]
         }
     };
 

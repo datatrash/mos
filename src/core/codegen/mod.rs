@@ -4,9 +4,11 @@ mod config_validator;
 mod opcodes;
 mod program_counter;
 mod source_map;
+mod symbols;
 
 pub use analysis::*;
 pub use program_counter::*;
+pub use symbols::*;
 
 use crate::core::codegen::config_validator::ConfigValidator;
 use crate::core::codegen::opcodes::get_opcode_bytes;
@@ -289,14 +291,6 @@ impl CodegenContext {
         &self.symbols
     }
 
-    #[allow(dead_code)]
-    pub fn find_local_symbols(&self, scope: &IdentifierPath) -> HashMap<&IdentifierPath, &Symbol> {
-        self.symbols
-            .iter()
-            .filter(|(path, _)| path.has_parent(scope))
-            .collect()
-    }
-
     pub fn tree(&self) -> &Arc<ParseTree> {
         &self.tree
     }
@@ -413,6 +407,27 @@ impl CodegenContext {
         let path = self.current_scope.join(&id);
         assert_eq!(self.symbols.contains_key(&path), true);
         self.symbols.remove(&path);
+    }
+
+    /// Gets the identifiers of all symbols that are in scope, grouped by the scope they are actually in
+    pub fn visible_symbols(
+        &self,
+        current_scope: &IdentifierPath,
+    ) -> HashMap<IdentifierPath, HashMap<Identifier, &Symbol>> {
+        let mut visible: HashMap<IdentifierPath, HashMap<Identifier, &Symbol>> = HashMap::new();
+
+        for (id, symbol) in &self.symbols {
+            if let Some(scope) = id.is_visible_in_scope(current_scope) {
+                if let Some(stem) = id.stem() {
+                    match visible.entry(scope) {
+                        Entry::Occupied(mut e) => e.get_mut().insert(stem.clone(), symbol),
+                        Entry::Vacant(e) => e.insert(HashMap::new()).insert(stem.clone(), symbol),
+                    };
+                }
+            }
+        }
+
+        visible
     }
 
     pub fn get_symbol(
@@ -1018,7 +1033,10 @@ impl CodegenContext {
     }
 }
 
-pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<CodegenContext> {
+pub fn codegen(
+    ast: Arc<ParseTree>,
+    options: CodegenOptions,
+) -> (Option<CodegenContext>, Option<MosError>) {
     let mut ctx = CodegenContext::new(ast.clone());
 
     #[cfg(test)]
@@ -1029,7 +1047,12 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
 
     let mut iterations = MAX_ITERATIONS;
     while iterations != 0 {
-        ctx.emit_tokens(&ast.main_file().tokens)?;
+        match ctx.emit_tokens(&ast.main_file().tokens) {
+            Ok(()) => (),
+            Err(e) => {
+                return (Some(ctx), Some(e));
+            }
+        }
         ctx.after_pass();
 
         // Are there no segments yet? Then create a default one.
@@ -1071,7 +1094,7 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
                 })
                 .collect_vec();
             if !errors.is_empty() {
-                return Err(MosError::Multiple(errors));
+                return (Some(ctx), Some(MosError::Multiple(errors)));
             }
         }
 
@@ -1079,7 +1102,7 @@ pub fn codegen(ast: Arc<ParseTree>, options: CodegenOptions) -> MosResult<Codege
         iterations -= 1;
     }
 
-    Ok(ctx)
+    (Some(ctx), None)
 }
 
 #[cfg(test)]
@@ -1087,8 +1110,9 @@ mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
     use crate::core::codegen::{Segment, SegmentOptions};
     use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
-    use crate::core::parser::{parse_or_err, Identifier, IdentifierPath};
+    use crate::core::parser::{parse_or_err, Identifier};
     use crate::errors::MosResult;
+    use crate::{id, idpath};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -1644,9 +1668,9 @@ mod tests {
             &Path::new("test.asm"),
             InMemoryParsingSource::new().add("test.asm", &src).into(),
         )?;
-        let result = codegen(ast, CodegenOptions::default());
+        let (_, err) = codegen(ast, CodegenOptions::default());
         assert_eq!(
-            format!("{}", result.err().unwrap()),
+            format!("{}", err.unwrap()),
             "test.asm:141:1: error: branch too far"
         );
         Ok(())
@@ -1800,9 +1824,11 @@ mod tests {
             r"nop
               s1: {
               rol
+              .const X = 3
+              .const V = 1
               s2: {
                 asl
-                .const V = 1
+                .const V = 2
               }
             }",
         )?;
@@ -1811,32 +1837,28 @@ mod tests {
         let offset = ctx.source_map().address_to_offset(0xc002).unwrap();
         assert_eq!(offset.scope, "s1.s2".into());
 
-        let symbols = ctx.find_local_symbols(&offset.scope);
-        assert_eq!(symbols.len(), 3);
-        assert_eq!(
-            symbols
-                .get(&IdentifierPath::from("s1.s2.-"))
-                .unwrap()
-                .data
-                .as_i64(),
-            0xc002
-        );
-        assert_eq!(
-            symbols
-                .get(&IdentifierPath::from("s1.s2.+"))
-                .unwrap()
-                .data
-                .as_i64(),
-            0xc003
-        );
-        assert_eq!(
-            symbols
-                .get(&IdentifierPath::from("s1.s2.V"))
-                .unwrap()
-                .data
-                .as_i64(),
-            1
-        );
+        let scopes = ctx.visible_symbols(&offset.scope);
+        assert_eq!(scopes.len(), 3);
+
+        let scope = scopes.get(&idpath!("s1.s2")).unwrap();
+        assert_eq!(scope.len(), 3);
+        assert!(scope.contains_key(&id!("-")));
+        assert!(scope.contains_key(&id!("+")));
+        assert!(scope.contains_key(&id!("V")));
+        assert_eq!(scope.get(&id!("V")).unwrap().data.as_i64(), 2);
+
+        let scope = scopes.get(&idpath!("s1")).unwrap();
+        assert_eq!(scope.len(), 5);
+        assert!(scope.contains_key(&id!("s2")));
+        assert!(scope.contains_key(&id!("-")));
+        assert!(scope.contains_key(&id!("+")));
+        assert!(scope.contains_key(&id!("V")));
+        assert_eq!(scope.get(&id!("V")).unwrap().data.as_i64(), 1);
+        assert!(scope.contains_key(&id!("X")));
+
+        let scope = scopes.get(&idpath!("")).unwrap();
+        assert_eq!(scope.len(), 1);
+        assert!(scope.contains_key(&id!("s1")));
 
         Ok(())
     }
@@ -1849,6 +1871,10 @@ mod tests {
         src: Arc<Mutex<dyn ParsingSource>>,
     ) -> MosResult<CodegenContext> {
         let ast = parse_or_err(&Path::new("test.asm"), src)?;
-        codegen(ast, CodegenOptions::default())
+        let (ctx, err) = codegen(ast, CodegenOptions::default());
+        match err {
+            Some(e) => Err(e),
+            None => Ok(ctx.unwrap()),
+        }
     }
 }

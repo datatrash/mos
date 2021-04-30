@@ -69,7 +69,11 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             return Err(e);
         }
         let tree = tree.unwrap();
-        let generated_code = codegen(tree, CodegenOptions { pc: 0x2000.into() })?;
+        let (generated_code, error) = codegen(tree, CodegenOptions { pc: 0x2000.into() });
+        if let Some(error) = error {
+            return Err(error);
+        }
+        let generated_code = generated_code.unwrap();
 
         let mut merger = SegmentMerger::new(output_path);
         for (segment_name, segment) in generated_code.segments() {

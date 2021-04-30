@@ -395,12 +395,9 @@ fn braces(input: LocatedSpan) -> IResult<Token> {
 fn instruction(input: LocatedSpan) -> IResult<Token> {
     alt((
         map(
-            tuple((mws(mnemonic), operand)),
+            tuple((mws(mnemonic), expect(operand, ""))),
             move |(mnemonic, operand)| {
-                let instruction = Instruction {
-                    mnemonic,
-                    operand: Some(operand),
-                };
+                let instruction = Instruction { mnemonic, operand };
                 Token::Instruction(instruction)
             },
         ),
@@ -467,7 +464,7 @@ fn macro_invocation(input: LocatedSpan) -> IResult<Token> {
 fn error(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
-            ws(recognize(take_till1(|c| {
+            mws(recognize(take_till1(|c| {
                 c == ')' || c == '}' || c == '\n' || c == '\r'
             }))),
             opt(anychar),
@@ -493,7 +490,7 @@ fn error(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a label in the form of `foo:`
 fn label(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(identifier_name), ws(char(':')), opt(block))),
+        tuple((mws(identifier_name), located(char(':')), opt(block))),
         move |(id, colon, block)| Token::Label { id, colon, block },
     )(input)
 }
@@ -580,7 +577,7 @@ fn config_definition(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse tokens enclosed in braces, e.g. `{ ... }`
 fn block(input: LocatedSpan) -> IResult<Block> {
     map_once(
-        tuple((mws(char('{')), many0(statement), mws(char('}')))),
+        tuple((mws(char('{')), many0(statement_or_error), mws(char('}')))),
         move |(lparen, inner, rparen)| Block {
             lparen,
             inner,
@@ -1373,9 +1370,16 @@ mod test {
     }
 
     #[test]
-    fn error_when_using_operand_with_implied_mnemonic() {
+    fn instruction_errors() {
         check_err("inx $1234", "test.asm:1:5: error: unexpected '$1234'");
         check_err_span("inx $1234", 5, 10);
+
+        check_err("inc $", "test.asm:1:5: error: unexpected '$'");
+    }
+
+    #[test]
+    fn block_errors() {
+        check_err("{\ninvalid\n}", "test.asm:2:1: error: unexpected 'invalid'");
     }
 
     #[test]
