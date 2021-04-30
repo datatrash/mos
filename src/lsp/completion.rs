@@ -5,7 +5,7 @@ use crate::lsp::{LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::Completion;
 use lsp_types::{CompletionItem, CompletionParams, CompletionResponse};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct CompletionHandler {}
 
@@ -55,17 +55,18 @@ impl RequestHandler<Completion> for CompletionHandler {
                     scopes.extend(s);
                 });
 
-                let mut items = vec![];
+                let mut items = HashSet::new();
                 for (_, symbols) in scopes {
-                    let scope_items = symbols
-                        .keys()
-                        .map(|id| CompletionItem {
-                            label: id.to_string(),
-                            ..Default::default()
-                        })
-                        .collect_vec();
+                    let scope_items = symbols.keys().map(|id| id.to_string()).collect_vec();
                     items.extend(scope_items);
                 }
+                let items = items
+                    .into_iter()
+                    .map(|label| CompletionItem {
+                        label,
+                        ..Default::default()
+                    })
+                    .collect_vec();
                 return Ok(Some(CompletionResponse::from(items)));
             }
         }
