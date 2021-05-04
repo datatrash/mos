@@ -129,7 +129,6 @@
   },
   "dependencies": {
     "decompress": "^4.2.1",
-    "get-port": "^5.1.1",
     "https-proxy-agent": "^5.0.0",
     "node-fetch": "^2.6.1",
     "rimraf": "^3.0.2",

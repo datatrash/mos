@@ -4,7 +4,6 @@ import {getMosBinary} from "./auto-update/download-binary";
 import {log} from "./log";
 import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
 import {BuildTaskProvider} from "./build-task-provider";
-import getPort from "get-port";
 import {
     debug,
     DebugAdapterDescriptor,
@@ -13,6 +12,8 @@ import {
     DebugSession,
     ProviderResult
 } from "vscode";
+import * as net from "net";
+import {AddressInfo} from "net";
 
 let client: LanguageClient;
 
@@ -29,7 +30,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
         return;
     }
 
-    let debugAdapterPort = await getPort({port: getPort.makeRange(6503, 6603)});
+    let debugAdapterPort = await findFreePort();
 
     buildTaskProvider = vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state));
 
@@ -106,4 +107,16 @@ export function deactivate(): void {
         }
         await client.stop();
     })();
+}
+
+function findFreePort(): Promise<number> {
+    return new Promise(resolve => {
+        const srv = net.createServer(sock => {
+            sock.end();
+        });
+        srv.listen(0, () => {
+            let address = <AddressInfo>srv.address()!;
+            resolve(address.port);
+        });
+    });
 }
