@@ -235,7 +235,15 @@ impl ViceAdapter {
             binary_path.to_str().unwrap(),
         ];
         log::debug!("Launching VICE with arguments: {:?}", args);
-        let process = Command::new(&launch_args.vice_path).args(&args).spawn()?;
+
+        // Launch VICE but make sure it doesn't inherit any stdout/stderr stuff from our main LSP, since that will cause the LSp
+        // communication to break once VICE exits.
+        let process = Command::new(&launch_args.vice_path)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
 
         let mut attempts = 50;
         let stream = loop {
