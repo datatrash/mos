@@ -225,10 +225,12 @@ impl Handler<ScopesRequest> for ScopesRequestHandler {
     ) -> MosResult<ScopesResponse> {
         let mut registers = Scope::new("Registers", 1);
         registers.presentation_hint = Some(ScopePresentationHint::Registers);
-        let mut locals = Scope::new("Locals", 2);
+        let mut flags = Scope::new("Flags", 2);
+        flags.presentation_hint = Some(ScopePresentationHint::Registers);
+        let mut locals = Scope::new("Locals", 3);
         locals.presentation_hint = Some(ScopePresentationHint::Locals);
         let response = ScopesResponse {
-            scopes: vec![registers, locals],
+            scopes: vec![registers, flags, locals],
         };
         Ok(response)
     }
@@ -242,56 +244,77 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
         conn: &mut DebugSession,
         args: VariablesArguments,
     ) -> MosResult<VariablesResponse> {
-        let variables: HashMap<String, i64> = match args.variables_reference {
-            1 => {
-                // Registers
-                conn.machine_adapter()?
-                    .registers()?
-                    .into_iter()
-                    .map(|(name, val)| (name, val as i64))
-                    .collect()
-            }
-            2 => {
-                // Locals
-                let mut result = HashMap::new();
-                if let Some(codegen) = conn.lock_lsp().codegen() {
-                    let scopes = get_local_scopes(&conn, codegen)?;
-                    for symbols in scopes.values() {
-                        for (id, symbol) in symbols {
-                            // Hide + / - symbols by default
-                            if let Some(stem) = id.stem() {
-                                if stem == "-" || stem == "+" {
-                                    continue;
+        let variables = match args.variables_reference {
+            1 | 3 => {
+                let variables: HashMap<String, i64> = match args.variables_reference {
+                    1 => {
+                        // Registers
+                        conn.machine_adapter()?
+                            .registers()?
+                            .into_iter()
+                            .map(|(name, val)| (name, val as i64))
+                            .collect()
+                    }
+                    3 => {
+                        // Locals
+                        let mut result = HashMap::new();
+                        if let Some(codegen) = conn.lock_lsp().codegen() {
+                            let scopes = get_local_scopes(&conn, codegen)?;
+                            for symbols in scopes.values() {
+                                for (id, symbol) in symbols {
+                                    // Hide + / - symbols by default
+                                    if let Some(stem) = id.stem() {
+                                        if stem == "-" || stem == "+" {
+                                            continue;
+                                        }
+                                    }
+                                    if let Some(val) = symbol.data.try_as_i64() {
+                                        result.insert(id.to_string(), val);
+                                    }
                                 }
                             }
-                            if let Some(val) = symbol.data.try_as_i64() {
-                                result.insert(id.to_string(), val);
-                            }
                         }
+                        result
                     }
-                }
-                result
+                    _ => panic!(),
+                };
+
+                let variables = variables
+                    .iter()
+                    .map(|(name, value)| {
+                        let formatted_value = match args.format {
+                            Some(ValueFormat { hex: true }) => {
+                                if *value < 256 {
+                                    format!("${:02X}", value)
+                                } else {
+                                    format!("${:04X}", value)
+                                }
+                            }
+                            _ => format!("{}", value),
+                        };
+                        Variable::new(name, &formatted_value)
+                    })
+                    .sorted_by_key(|var| var.name.clone())
+                    .collect();
+
+                variables
+            }
+            2 => {
+                // Flags
+                let flags = conn.machine_adapter()?.flags()?;
+                let fmt = |b: u8| if b != 0 { "true" } else { "false" };
+                vec![
+                    Variable::new("N - Negative", fmt(flags & 128)),
+                    Variable::new("V - Overflow", fmt(flags & 64)),
+                    Variable::new("B - Break", fmt(flags & 16)),
+                    Variable::new("D - Decimal", fmt(flags & 8)),
+                    Variable::new("I - Interrupt", fmt(flags & 4)),
+                    Variable::new("Z - Zero", fmt(flags & 2)),
+                    Variable::new("C - Carry", fmt(flags & 1)),
+                ]
             }
             _ => panic!(),
         };
-
-        let variables = variables
-            .iter()
-            .map(|(name, value)| {
-                let formatted_value = match args.format {
-                    Some(ValueFormat { hex: true }) => {
-                        if *value < 256 {
-                            format!("${:02X}", value)
-                        } else {
-                            format!("${:04X}", value)
-                        }
-                    }
-                    _ => format!("{}", value),
-                };
-                Variable::new(name, &formatted_value)
-            })
-            .sorted_by_key(|var| var.name.clone())
-            .collect();
 
         let response = VariablesResponse { variables };
         Ok(response)

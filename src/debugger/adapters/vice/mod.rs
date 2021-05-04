@@ -6,7 +6,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::net::TcpListener;
-use std::process::Child;
+use std::process::{Child, Stdio};
 
 struct ViceConnection {
     sender: Sender<ViceRequest>,
@@ -53,7 +53,8 @@ impl MachineAdapter for ViceAdapter {
     }
 
     fn stop(&mut self) -> MosResult<()> {
-        self.send(ViceRequest::Quit)?;
+        // Quit VICE and don't wait for the response
+        self.connection.sender.send(ViceRequest::Quit)?;
         Ok(())
     }
 
@@ -171,16 +172,31 @@ impl MachineAdapter for ViceAdapter {
         Ok(validated_breakpoints)
     }
 
-    fn registers(&mut self) -> MosResult<HashMap<String, u16>> {
+    fn registers(&self) -> MosResult<HashMap<String, u16>> {
         Ok(self
             .current_register_values
             .iter()
             .filter_map(|(id, value)| {
                 self.available_registers
                     .get(id)
+                    .filter(|name| name.as_str() != "FL")
                     .map(|name| (name.clone(), *value))
             })
             .collect())
+    }
+
+    fn flags(&self) -> MosResult<u8> {
+        let result = self
+            .available_registers
+            .iter()
+            .find(|(_, value)| value.as_str() == "FL")
+            .map(|(flag_register_id, _)| self.current_register_values.get(flag_register_id))
+            .flatten();
+
+        match result {
+            Some(r) => Ok(*r as u8),
+            None => Err(MosError::Unknown),
+        }
     }
 }
 

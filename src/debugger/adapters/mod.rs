@@ -97,7 +97,10 @@ pub trait MachineAdapter {
     ) -> MosResult<Vec<MachineValidatedBreakpoint>>;
 
     /// Gets the current register values
-    fn registers(&mut self) -> MosResult<HashMap<String, u16>>;
+    fn registers(&self) -> MosResult<HashMap<String, u16>>;
+
+    /// Get the cpu flags
+    fn flags(&self) -> MosResult<u8>;
 }
 
 #[derive(Clone, Debug, PartialEq)]
