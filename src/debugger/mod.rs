@@ -48,11 +48,11 @@ impl DebugServer {
         let lsp = self.lsp.clone();
         self.thread = Some(std::thread::spawn(move || {
             while !thread_shutdown.load(Ordering::Relaxed) {
-                let mut dbg = DebugConnectionHandler::new(lsp.clone(), port);
+                let mut dbg = DebugSession::new(lsp.clone(), port);
                 match dbg.start() {
                     Ok(_) => (),
                     Err(e) => {
-                        log::debug!("Could not start DebugConnectionHandler: {:?}", e);
+                        log::debug!("Could not start DebugSession: {:?}", e);
                     }
                 }
             }
@@ -71,7 +71,7 @@ impl DebugServer {
 }
 
 #[allow(dead_code)]
-pub struct DebugConnectionHandler {
+pub struct DebugSession {
     lsp: Arc<Mutex<LspContext>>,
     lsp_shutdown_receiver: Receiver<()>,
     machine: Option<Machine>,
@@ -81,11 +81,7 @@ pub struct DebugConnectionHandler {
 }
 
 trait Handler<R: Request> {
-    fn handle(
-        &self,
-        conn: &mut DebugConnectionHandler,
-        args: R::Arguments,
-    ) -> MosResult<R::Response>;
+    fn handle(&self, conn: &mut DebugSession, args: R::Arguments) -> MosResult<R::Response>;
 }
 
 struct InitializeRequestHandler {}
@@ -93,7 +89,7 @@ struct InitializeRequestHandler {}
 impl Handler<InitializeRequest> for InitializeRequestHandler {
     fn handle(
         &self,
-        conn: &mut DebugConnectionHandler,
+        conn: &mut DebugSession,
         _args: InitializeRequestArguments,
     ) -> MosResult<Capabilities> {
         conn.enqueue_event::<InitializedEvent>(());
@@ -108,11 +104,7 @@ impl Handler<InitializeRequest> for InitializeRequestHandler {
 struct LaunchRequestHandler {}
 
 impl Handler<LaunchRequest> for LaunchRequestHandler {
-    fn handle(
-        &self,
-        conn: &mut DebugConnectionHandler,
-        args: LaunchRequestArguments,
-    ) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, args: LaunchRequestArguments) -> MosResult<()> {
         let cfg = conn.lock_lsp().config().unwrap();
         let asm_path = PathBuf::from(args.workspace.clone())
             .join(PathBuf::from(cfg.build.target_directory))
@@ -137,7 +129,7 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
 struct ConfigurationDoneRequestHandler {}
 
 impl Handler<ConfigurationDoneRequest> for ConfigurationDoneRequestHandler {
-    fn handle(&self, conn: &mut DebugConnectionHandler, _args: ()) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, _args: ()) -> MosResult<()> {
         conn.machine_adapter()?.start()?;
         Ok(())
     }
@@ -146,11 +138,7 @@ impl Handler<ConfigurationDoneRequest> for ConfigurationDoneRequestHandler {
 struct DisconnectRequestHandler {}
 
 impl Handler<DisconnectRequest> for DisconnectRequestHandler {
-    fn handle(
-        &self,
-        conn: &mut DebugConnectionHandler,
-        _args: DisconnectRequestArguments,
-    ) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, _args: DisconnectRequestArguments) -> MosResult<()> {
         conn.machine_adapter()?.stop()?;
         log::debug!("Machine adapter is STOPPED");
         let machine = std::mem::replace(&mut conn.machine, None);
@@ -165,7 +153,7 @@ struct ContinueRequestHandler {}
 impl Handler<ContinueRequest> for ContinueRequestHandler {
     fn handle(
         &self,
-        conn: &mut DebugConnectionHandler,
+        conn: &mut DebugSession,
         _args: ContinueArguments,
     ) -> MosResult<ContinueResponse> {
         conn.machine_adapter()?.resume()?;
@@ -178,7 +166,7 @@ impl Handler<ContinueRequest> for ContinueRequestHandler {
 struct ThreadsRequestHandler {}
 
 impl Handler<ThreadsRequest> for ThreadsRequestHandler {
-    fn handle(&self, _conn: &mut DebugConnectionHandler, _args: ()) -> MosResult<ThreadsResponse> {
+    fn handle(&self, _conn: &mut DebugSession, _args: ()) -> MosResult<ThreadsResponse> {
         let response = ThreadsResponse {
             threads: vec![Thread {
                 id: 1,
@@ -194,7 +182,7 @@ struct StackTraceRequestHandler {}
 impl Handler<StackTraceRequest> for StackTraceRequestHandler {
     fn handle(
         &self,
-        conn: &mut DebugConnectionHandler,
+        conn: &mut DebugSession,
         _args: StackTraceArguments,
     ) -> MosResult<StackTraceResponse> {
         let mut stack_frames = vec![];
@@ -230,7 +218,7 @@ struct ScopesRequestHandler {}
 impl Handler<ScopesRequest> for ScopesRequestHandler {
     fn handle(
         &self,
-        _conn: &mut DebugConnectionHandler,
+        _conn: &mut DebugSession,
         _args: ScopesArguments,
     ) -> MosResult<ScopesResponse> {
         let mut registers = Scope::new("Registers", 1);
@@ -249,7 +237,7 @@ struct VariablesRequestHandler {}
 impl Handler<VariablesRequest> for VariablesRequestHandler {
     fn handle(
         &self,
-        conn: &mut DebugConnectionHandler,
+        conn: &mut DebugSession,
         args: VariablesArguments,
     ) -> MosResult<VariablesResponse> {
         let variables: HashMap<String, i64> = match args.variables_reference {
@@ -313,7 +301,7 @@ struct SetBreakpointsRequestHandler {}
 impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
     fn handle(
         &self,
-        conn: &mut DebugConnectionHandler,
+        conn: &mut DebugSession,
         args: SetBreakpointsArguments,
     ) -> MosResult<SetBreakpointsResponse> {
         let source = args.source.clone();
@@ -377,7 +365,7 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
 struct NextRequestHandler {}
 
 impl Handler<NextRequest> for NextRequestHandler {
-    fn handle(&self, conn: &mut DebugConnectionHandler, _args: NextArguments) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, _args: NextArguments) -> MosResult<()> {
         conn.machine_adapter()?.next()?;
         Ok(())
     }
@@ -386,7 +374,7 @@ impl Handler<NextRequest> for NextRequestHandler {
 struct StepInRequestHandler {}
 
 impl Handler<StepInRequest> for StepInRequestHandler {
-    fn handle(&self, conn: &mut DebugConnectionHandler, _args: StepInArguments) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, _args: StepInArguments) -> MosResult<()> {
         conn.machine_adapter()?.step_in()?;
         Ok(())
     }
@@ -395,7 +383,7 @@ impl Handler<StepInRequest> for StepInRequestHandler {
 struct StepOutRequestHandler {}
 
 impl Handler<StepOutRequest> for StepOutRequestHandler {
-    fn handle(&self, conn: &mut DebugConnectionHandler, _args: StepOutArguments) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, _args: StepOutArguments) -> MosResult<()> {
         conn.machine_adapter()?.step_out()?;
         Ok(())
     }
@@ -404,7 +392,7 @@ impl Handler<StepOutRequest> for StepOutRequestHandler {
 struct PauseRequestHandler {}
 
 impl Handler<PauseRequest> for PauseRequestHandler {
-    fn handle(&self, conn: &mut DebugConnectionHandler, _args: PauseArguments) -> MosResult<()> {
+    fn handle(&self, conn: &mut DebugSession, _args: PauseArguments) -> MosResult<()> {
         conn.machine_adapter()?.pause()?;
         Ok(())
     }
@@ -415,7 +403,7 @@ struct EvaluateRequestHandler {}
 impl Handler<EvaluateRequest> for EvaluateRequestHandler {
     fn handle(
         &self,
-        conn: &mut DebugConnectionHandler,
+        conn: &mut DebugSession,
         args: EvaluateArguments,
     ) -> MosResult<EvaluateResponse> {
         if let Some(codegen) = conn.lock_lsp().codegen() {
@@ -444,7 +432,7 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
 
 /// Get all the symbols that are visible from the local scope
 fn get_local_scopes<'a>(
-    conn: &'a DebugConnectionHandler,
+    conn: &'a DebugSession,
     codegen: &'a CodegenContext,
 ) -> MosResult<HashMap<IdentifierPath, HashMap<IdentifierPath, &'a Symbol>>> {
     if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
@@ -459,7 +447,7 @@ fn get_local_scopes<'a>(
     Ok(HashMap::new())
 }
 
-impl DebugConnectionHandler {
+impl DebugSession {
     pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
         let lsp_shutdown_receiver = lsp.lock().unwrap().add_shutdown_handler();
 
@@ -489,7 +477,7 @@ impl DebugConnectionHandler {
     }
 
     pub fn start(&mut self) -> MosResult<()> {
-        log::info!("DebugConnectionHandler listening on port {}...", self.port);
+        log::info!("DebugSession listening on port {}...", self.port);
         let (debug_connection, _) = DebugConnection::tcp(&format!("127.0.0.1:{}", self.port))
             .unwrap_or_else(|e| panic!("Couldn't listen on port {}: {}", self.port, e));
         self.conn = Some(Arc::new(debug_connection));
@@ -538,7 +526,7 @@ impl DebugConnectionHandler {
             self.send_pending_events()?;
         }
 
-        log::debug!("DebugConnectionHandler shutting down.");
+        log::debug!("DebugSession shutting down.");
         Ok(())
     }
 
