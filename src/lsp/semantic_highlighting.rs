@@ -106,7 +106,7 @@ pub fn caps() -> SemanticTokensOptions {
     }
 }
 
-pub struct SemanticTokensFullRequestHandler {}
+pub struct SemanticTokensFullRequestHandler;
 
 impl_request_handler!(SemanticTokensFullRequestHandler);
 

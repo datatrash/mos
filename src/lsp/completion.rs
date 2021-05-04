@@ -7,7 +7,7 @@ use lsp_types::request::Completion;
 use lsp_types::{CompletionItem, CompletionParams, CompletionResponse};
 use std::collections::{HashMap, HashSet};
 
-pub struct CompletionHandler {}
+pub struct CompletionHandler;
 
 impl_request_handler!(CompletionHandler);
 

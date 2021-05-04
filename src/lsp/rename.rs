@@ -5,7 +5,7 @@ use itertools::Itertools;
 use lsp_types::request::Rename;
 use lsp_types::{RenameParams, TextEdit, WorkspaceEdit};
 
-pub struct RenameHandler {}
+pub struct RenameHandler;
 
 impl_request_handler!(RenameHandler);
 

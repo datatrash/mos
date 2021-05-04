@@ -5,8 +5,8 @@ use crate::lsp::{LspContext, RequestHandler};
 use dissimilar::{diff, Chunk};
 use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit, Url};
 
-pub struct FormattingRequestHandler {}
-pub struct OnTypeFormattingRequestHandler {}
+pub struct FormattingRequestHandler;
+pub struct OnTypeFormattingRequestHandler;
 
 impl_request_handler!(FormattingRequestHandler);
 impl_request_handler!(OnTypeFormattingRequestHandler);

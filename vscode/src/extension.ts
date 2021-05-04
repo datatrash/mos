@@ -35,7 +35,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     buildTaskProvider = vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state));
 
     let serverOptions: ServerOptions = {
-        command: state.mosPath, args: ["-vvv", "lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
+        command: state.mosPath, args: ["lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
     };
 
     let clientOptions: LanguageClientOptions = {

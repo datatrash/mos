@@ -14,9 +14,9 @@ use lsp_types::{
 };
 use std::collections::HashMap;
 
-pub struct DidOpenTextDocumentHandler {}
-pub struct DidChangeTextDocumentHandler {}
-pub struct DidCloseTextDocumentHandler {}
+pub struct DidOpenTextDocumentHandler;
+pub struct DidChangeTextDocumentHandler;
+pub struct DidCloseTextDocumentHandler;
 
 impl_notification_handler!(DidOpenTextDocumentHandler);
 impl_notification_handler!(DidChangeTextDocumentHandler);

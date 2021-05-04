@@ -9,9 +9,9 @@ use lsp_types::{
     Location, LocationLink, ReferenceParams, Url,
 };
 
-pub struct GoToDefinitionHandler {}
-pub struct FindReferencesHandler {}
-pub struct DocumentHighlightRequestHandler {}
+pub struct GoToDefinitionHandler;
+pub struct FindReferencesHandler;
+pub struct DocumentHighlightRequestHandler;
 
 impl_request_handler!(GoToDefinitionHandler);
 impl_request_handler!(FindReferencesHandler);
