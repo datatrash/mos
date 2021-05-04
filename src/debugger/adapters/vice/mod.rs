@@ -221,7 +221,7 @@ impl ViceAdapter {
         log::debug!("Launching VICE with arguments: {:?}", args);
         let process = Command::new(&launch_args.vice_path).args(&args).spawn()?;
 
-        let mut attempts = 20;
+        let mut attempts = 50;
         let stream = loop {
             let stream = TcpStream::connect_timeout(
                 &format!("127.0.0.1:{}", port).parse().unwrap(),
@@ -231,7 +231,7 @@ impl ViceAdapter {
                 Ok(s) => break s,
                 Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
                     log::debug!("VICE refused connection...");
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(300));
                 }
                 Err(e) => {
                     let m: MosError = e.into();

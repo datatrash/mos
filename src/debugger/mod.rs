@@ -78,6 +78,7 @@ pub struct DebugSession {
     port: u16,
     conn: Option<Arc<DebugConnection>>,
     pending_events: Vec<ProtocolMessage>,
+    no_debug: bool,
 }
 
 trait Handler<R: Request> {
@@ -105,6 +106,7 @@ struct LaunchRequestHandler {}
 
 impl Handler<LaunchRequest> for LaunchRequestHandler {
     fn handle(&self, conn: &mut DebugSession, args: LaunchRequestArguments) -> MosResult<()> {
+        conn.no_debug = args.no_debug.unwrap_or_default();
         let cfg = conn.lock_lsp().config().unwrap();
         let asm_path = PathBuf::from(args.workspace.clone())
             .join(PathBuf::from(cfg.build.target_directory))
@@ -304,6 +306,12 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
         conn: &mut DebugSession,
         args: SetBreakpointsArguments,
     ) -> MosResult<SetBreakpointsResponse> {
+        if conn.no_debug {
+            return Ok(SetBreakpointsResponse {
+                breakpoints: vec![],
+            });
+        }
+
         let source = args.source.clone();
         let source_path = args.source.path.as_ref().unwrap().clone();
 
@@ -458,6 +466,7 @@ impl DebugSession {
             port,
             conn: None,
             pending_events: vec![],
+            no_debug: false,
         }
     }
 
