@@ -125,7 +125,7 @@ mod tests {
             "vic: { .const border = $d020 }\nlda vic.",
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(1, 8))?;
-        assert_unordered_eq(&unwrap(&response), &vec!["border", "-", "+"]);
+        assert_unordered_eq(&unwrap(&response), &vec!["border"]);
         Ok(())
     }
 

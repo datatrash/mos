@@ -341,7 +341,7 @@ impl CodegenContext {
         span: S,
         id: I,
         value: Symbol,
-    ) -> MosResult<()> {
+    ) -> MosResult<SymbolIndex> {
         let span = span.into();
         let id = id.into();
         let path = self.current_scope.join(&id);
@@ -352,7 +352,7 @@ impl CodegenContext {
         let mut should_mark_as_undefined = false;
         let symbol_nx = self.symbols.try_index(self.current_scope_nx, &id);
         let existing = symbol_nx.map(|nx| self.symbols.try_get_mut(nx)).flatten();
-        match existing {
+        let symbol_nx = match existing {
             Some(existing) => {
                 if existing.ty != value.ty
                     || existing.read_only != value.read_only
@@ -376,11 +376,12 @@ impl CodegenContext {
                 }
 
                 *existing = value;
+                symbol_nx.unwrap()
             }
             None => {
-                let (parent, id) = path.split();
+                let (parent, id) = path.clone().split();
                 let parent_nx = self.symbols.ensure_index(self.symbols.root, &parent);
-                self.symbols.insert(parent_nx, id, value);
+                self.symbols.insert(parent_nx, id, value)
             }
         };
 
@@ -388,7 +389,16 @@ impl CodegenContext {
             self.mark_undefined(span.expect("expected a span"), &id);
         }
 
-        Ok(())
+        if let Some(span) = span {
+            log::trace!(
+                "Setting location for definition '{}' ({:?})",
+                &path,
+                symbol_nx
+            );
+            self.symbol_definition(symbol_nx).set_location(span);
+        }
+
+        Ok(symbol_nx)
     }
 
     fn remove_symbol<I: Into<IdentifierPath>>(&mut self, id: I) {
@@ -598,8 +608,15 @@ impl CodegenContext {
                     if let Some(import_nx) =
                         self.symbols.try_index(self.current_scope_nx, import_scope)
                     {
+                        let mut to_export = vec![];
+
                         match args {
                             ImportArgs::All(star, as_) => {
+                                let span = match &as_ {
+                                    Some(as_) => as_.path.span,
+                                    None => star.span,
+                                };
+
                                 let scope_nx = match &as_ {
                                     Some(as_) => {
                                         // Want to import into a new named scope
@@ -615,15 +632,12 @@ impl CodegenContext {
                                         continue;
                                     }
 
-                                    if !self.symbols.export(child_nx, scope_nx, &child_id) {
-                                        return self.error(
-                                            star.span,
-                                            format!(
-                                                "cannot import an already defined symbol: {}",
-                                                child_id
-                                            ),
-                                        );
-                                    }
+                                    to_export.push((
+                                        child_nx,
+                                        scope_nx,
+                                        IdentifierPath::from(child_id),
+                                        span,
+                                    ));
                                 }
                             }
                             ImportArgs::Specific(specific) => {
@@ -635,19 +649,12 @@ impl CodegenContext {
                                     };
                                     match self.symbols.try_index(import_nx, original_path) {
                                         Some(original_nx) => {
-                                            if !self.symbols.export(
+                                            to_export.push((
                                                 original_nx,
                                                 self.current_scope_nx,
-                                                target_path,
-                                            ) {
-                                                return self.error(
-                                                    arg.span,
-                                                    format!(
-                                                        "cannot import an already defined symbol: {}",
-                                                        target_path
-                                                    ),
-                                                );
-                                            }
+                                                target_path.clone(),
+                                                arg.span,
+                                            ));
                                         }
                                         None => {
                                             self.mark_undefined(arg.span, original_path);
@@ -656,6 +663,25 @@ impl CodegenContext {
                                 }
                             }
                         };
+
+                        for (to_export_nx, new_parent_nx, new_path, span) in to_export {
+                            if self.symbols.export(to_export_nx, new_parent_nx, &new_path) {
+                                log::trace!(
+                                    "Adding usage for import '{}' ({:?})",
+                                    &new_path,
+                                    to_export_nx
+                                );
+                                self.symbol_definition(to_export_nx).add_usage(span);
+                            } else {
+                                return self.error(
+                                    span,
+                                    format!(
+                                        "cannot import an already defined symbol: {}",
+                                        new_path
+                                    ),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -736,7 +762,6 @@ impl CodegenContext {
             Token::Label { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
                     self.add_symbol(id.span, id.data.clone(), Symbol::label(pc.as_i64()))?;
-                    self.update_definition(&id.data, |def| def.set_location(id));
                 }
 
                 if let Some(b) = block {
@@ -896,12 +921,14 @@ impl CodegenContext {
                 _ => self.error(name.span, format!("unknown function: {}", &name.data)),
             },
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                log::trace!(
-                    "Adding usage for definition '{}' --> {:?}",
-                    &path.data,
-                    path.span
-                );
-                self.update_definition(&path.data, |def| def.add_usage(path));
+                if let Some(symbol_nx) = self.symbols.try_index(self.current_scope_nx, &path.data) {
+                    log::trace!(
+                        "Adding usage for definition '{}' ({:?})",
+                        &path.data,
+                        symbol_nx
+                    );
+                    self.symbol_definition(symbol_nx).add_usage(path.span);
+                }
 
                 let val = self
                     .get_symbol_data(path.span, &path.data)
@@ -917,17 +944,9 @@ impl CodegenContext {
         }
     }
 
-    fn update_definition<IP: Into<IdentifierPath>, F: FnOnce(&mut Definition)>(
-        &mut self,
-        id: IP,
-        f: F,
-    ) {
-        if let Some((symbol_nx, _)) = self.get_symbol(self.current_scope_nx, &id.into()) {
-            let def = self
-                .analysis
-                .get_or_create_definition_mut(DefinitionType::Symbol(symbol_nx));
-            f(def);
-        }
+    fn symbol_definition(&mut self, symbol_nx: SymbolIndex) -> &mut Definition {
+        self.analysis
+            .get_or_create_definition_mut(DefinitionType::Symbol(symbol_nx))
     }
 
     fn with_suppressed_undefined_registration<F: FnOnce(&mut Self) -> MosResult<i64>>(

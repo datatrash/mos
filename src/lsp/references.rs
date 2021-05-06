@@ -120,19 +120,48 @@ mod tests {
     use crate::errors::MosResult;
     use crate::lsp::testing::{range, test_root};
     use crate::lsp::{LspContext, LspServer};
+    use crate::testing::enable_default_tracing;
     use itertools::Itertools;
     use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
     #[test]
-    fn can_go_to_reference_in_other_file() -> MosResult<()> {
+    fn can_go_to_const_reference() -> MosResult<()> {
         let mut server = LspServer::new(LspContext::new());
-        server.did_open_text_document(test_root().join("bar.asm"), "foo: nop\n.export foo")?;
         server.did_open_text_document(
             test_root().join("main.asm"),
-            "lda foo\n.import foo from \"bar.asm\"",
+            "vic: { .const border = $d020 }\nlda vic.border",
         )?;
+        // Look up 'vic.border'
         let response =
-            server.go_to_definition(test_root().join("main.asm"), Position::new(0, 4))?;
+            server.go_to_definition(test_root().join("main.asm"), Position::new(1, 9))?;
+        let location = match &response {
+            GotoDefinitionResponse::Link(links) => links.first().unwrap(),
+            _ => panic!(),
+        };
+        assert_eq!(
+            location.target_uri.to_file_path()?.to_string_lossy(),
+            test_root().join("main.asm").to_string_lossy()
+        );
+        assert_eq!(location.target_range, range(0, 14, 0, 20));
+        assert_eq!(location.target_selection_range, range(0, 14, 0, 20));
+        assert_eq!(location.origin_selection_range, Some(range(1, 4, 1, 14)));
+        Ok(())
+    }
+
+    #[test]
+    fn can_go_to_const_reference_in_other_file() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("bar.asm"),
+            "vic: { .const border = $d020 }",
+        )?;
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "lda vic.border\n.import * from \"bar.asm\"",
+        )?;
+        // Look up 'vic.border'
+        let response =
+            server.go_to_definition(test_root().join("main.asm"), Position::new(0, 9))?;
         let location = match &response {
             GotoDefinitionResponse::Link(links) => links.first().unwrap(),
             _ => panic!(),
@@ -141,19 +170,20 @@ mod tests {
             location.target_uri.to_file_path()?.to_string_lossy(),
             test_root().join("bar.asm").to_string_lossy()
         );
-        assert_eq!(location.target_range, range(0, 0, 0, 3));
-        assert_eq!(location.target_selection_range, range(0, 0, 0, 3));
-        assert_eq!(location.origin_selection_range, Some(range(0, 4, 0, 7)));
+        assert_eq!(location.target_range, range(0, 14, 0, 20));
+        assert_eq!(location.target_selection_range, range(0, 14, 0, 20));
+        assert_eq!(location.origin_selection_range, Some(range(0, 4, 0, 14)));
         Ok(())
     }
 
     #[test]
     fn find_all_references() -> MosResult<()> {
+        enable_default_tracing();
         let mut server = LspServer::new(LspContext::new());
-        server.did_open_text_document(test_root().join("bar.asm"), "foo: nop\n.export foo")?;
+        server.did_open_text_document(test_root().join("bar.asm"), "foo: nop")?;
         server.did_open_text_document(test_root().join("main.asm"), "lda f1\nlda f2\n.import foo as f1 from \"bar.asm\"\n.import foo as f2 from \"bar.asm\"")?;
         let response =
-            server.find_references(test_root().join("bar.asm"), Position::new(0, 0), false)?;
+            server.find_references(test_root().join("main.asm"), Position::new(0, 4), false)?;
         let response = response
             .unwrap()
             .into_iter()
@@ -168,7 +198,7 @@ mod tests {
                 },
                 Location {
                     uri: Url::from_file_path(test_root().join("main.asm"))?,
-                    range: range(1, 4, 1, 6)
+                    range: range(2, 8, 2, 17)
                 },
             ]
         );

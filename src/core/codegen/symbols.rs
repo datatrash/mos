@@ -79,7 +79,6 @@ impl<S: Debug> SymbolTable<S> {
         } else {
             // Doesn't exist yet. So, now link 'new_nx' to 'to_export_nx' via 'new_id'
             self.graph.add_edge(new_nx, to_export_nx, new_id);
-
             true
         }
     }
