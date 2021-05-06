@@ -1,6 +1,6 @@
-use crate::errors::MosResult;
+use crate::errors::{MosError, MosResult};
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -78,6 +78,12 @@ impl InMemoryParsingSource {
 
 impl ParsingSource for InMemoryParsingSource {
     fn get_contents(&self, path: &Path) -> MosResult<String> {
-        Ok(self.files.get(path.to_str().unwrap()).unwrap().to_string())
+        match self.files.get(path.to_str().unwrap()) {
+            Some(data) => Ok(data.to_string()),
+            None => Err(MosError::Io(std::io::Error::new(
+                ErrorKind::NotFound,
+                path.to_str().unwrap(),
+            ))),
+        }
     }
 }

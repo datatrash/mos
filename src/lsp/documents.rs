@@ -72,15 +72,11 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
 
         // Merge already existing parse errors
         let existing_error = std::mem::replace(&mut ctx.error, None);
-        match (existing_error, error) {
-            (Some(existing), Some(error)) => {
-                ctx.error = Some(MosError::Multiple(vec![existing, error]));
-            }
-            (None, error) => {
-                ctx.error = error;
-            }
-            (Some(_), None) => {}
-        }
+        ctx.error = match (existing_error, error) {
+            (Some(existing), Some(error)) => Some(MosError::Multiple(vec![existing, error])),
+            (None, error) => error,
+            (error, None) => error,
+        };
     }
 }
 

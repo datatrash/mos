@@ -715,7 +715,10 @@ fn import(input: LocatedSpan) -> IResult<Token> {
             let parent = current_file.parent().unwrap();
             let path = parent.join(&filename.data);
 
-            state.to_import.borrow_mut().insert(path.clone());
+            state
+                .to_import
+                .borrow_mut()
+                .insert(path.clone(), filename.span);
 
             Token::Import {
                 tag,
@@ -1056,8 +1059,24 @@ pub fn parse(
         log::trace!("`--> Parsing completed");
         files.insert(to_import, parsed_file);
 
-        let more_to_import = Arc::try_unwrap(more_to_import).ok().unwrap().into_inner();
-        files_to_import.extend(more_to_import);
+        for (also_import, span) in Arc::try_unwrap(more_to_import).ok().unwrap().into_inner() {
+            if state
+                .lock()
+                .unwrap()
+                .source
+                .lock()
+                .unwrap()
+                .exists(&also_import)
+            {
+                files_to_import.push(also_import);
+            } else {
+                let err = ParseError {
+                    location: state.lock().unwrap().code_map.look_up_span(span),
+                    message: format!("file not found: {}", also_import.to_str().unwrap()),
+                };
+                state.lock().unwrap().report_error(err);
+            }
+        }
     }
 
     let state = Arc::try_unwrap(state).ok().unwrap().into_inner().unwrap();
@@ -1339,6 +1358,20 @@ mod test {
                 .into(),
         );
         assert_eq!(err.unwrap().to_string(), "baz:1:1: error: unexpected 'foo'");
+    }
+
+    #[test]
+    fn parse_import_file_not_found() {
+        let (_, err) = parse(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new()
+                .add("test.asm", ".import * from \"baz\"")
+                .into(),
+        );
+        assert_eq!(
+            err.unwrap().to_string(),
+            "test.asm:1:17: error: file not found: baz"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use crate::core::parser::{Identifier, IdentifierPath};
 use crate::errors::{MosError, MosResult};
 use itertools::Itertools;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -61,7 +61,7 @@ impl ParseTree {
 pub struct ParserInstance {
     shared_state: Arc<Mutex<State>>,
     pub current_file: Arc<File>,
-    pub to_import: Arc<RefCell<HashSet<PathBuf>>>,
+    pub to_import: Arc<RefCell<HashMap<PathBuf, Span>>>,
 }
 
 impl ParserInstance {
@@ -69,7 +69,7 @@ impl ParserInstance {
         Self {
             shared_state: state,
             current_file,
-            to_import: Arc::new(RefCell::new(HashSet::new())),
+            to_import: Arc::new(RefCell::new(HashMap::new())),
         }
     }
 
