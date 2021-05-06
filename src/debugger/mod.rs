@@ -261,10 +261,8 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
                                 for (id, symbol_nx) in
                                     codegen.symbols().visible_symbols(scope, true)
                                 {
-                                    // Hide + / - symbols by default
-                                    if id == IdentifierPath::from("-")
-                                        || id == IdentifierPath::from("+")
-                                    {
+                                    // Hide special symbols by default
+                                    if id.is_special() {
                                         continue;
                                     }
 

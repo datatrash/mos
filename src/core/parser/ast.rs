@@ -48,11 +48,11 @@ impl ParseTree {
     }
 
     pub fn main_file(&self) -> &ParsedFile {
-        self.get_file(&self.main_file)
+        self.try_get_file(&self.main_file).unwrap()
     }
 
-    pub fn get_file<P: Into<PathBuf>>(&self, path: P) -> &ParsedFile {
-        self.files.get(&path.into()).unwrap()
+    pub fn try_get_file<P: Into<PathBuf>>(&self, path: P) -> Option<&ParsedFile> {
+        self.files.get(&path.into())
     }
 }
 

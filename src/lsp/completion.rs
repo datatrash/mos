@@ -83,6 +83,7 @@ impl RequestHandler<Completion> for CompletionHandler {
 
                 let items = symbols
                     .into_iter()
+                    .filter(|(id, _)| !id.is_special())
                     .map(|(id, _)| CompletionItem {
                         label: id.to_string(),
                         ..Default::default()

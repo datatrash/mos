@@ -118,17 +118,18 @@ impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHand
     ) -> MosResult<Option<SemanticTokensResult>> {
         if let Some(tree) = &ctx.tree {
             let path = params.text_document.uri.to_file_path()?;
-            let file = tree.get_file(&path);
-            let semtoks = emit_semantic_ast(&file.tokens);
-            let data = to_deltas(&tree.code_map, semtoks);
-            let tokens = SemanticTokens {
-                result_id: None,
-                data,
-            };
-            Ok(Some(SemanticTokensResult::Tokens(tokens)))
-        } else {
-            Ok(None)
+            if let Some(file) = tree.try_get_file(&path) {
+                let semtoks = emit_semantic_ast(&file.tokens);
+                let data = to_deltas(&tree.code_map, semtoks);
+                let tokens = SemanticTokens {
+                    result_id: None,
+                    data,
+                };
+                return Ok(Some(SemanticTokensResult::Tokens(tokens)));
+            }
         }
+
+        Ok(None)
     }
 }
 

@@ -113,8 +113,13 @@ impl ParsingSource for LspParsingSource {
         if let Some(file) = self.files.get(&path) {
             Ok(file.clone())
         } else {
-            let data = fs_err::read_to_string(path)?;
-            Ok(data)
+            match fs_err::read_to_string(path) {
+                Ok(data) => Ok(data),
+                Err(_) => {
+                    // We couldn't read the file, so we'll treat it as an empty file in our LSP
+                    Ok("".into())
+                }
+            }
         }
     }
 }
@@ -299,7 +304,7 @@ impl LspServer {
             rename_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
             completion_provider: Some(CompletionOptions {
-                trigger_characters: Some(vec!["$".into(), "#".into()]),
+                trigger_characters: Some(vec![".".into(), "#".into()]),
                 ..Default::default()
             }),
             ..Default::default()

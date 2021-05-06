@@ -109,7 +109,7 @@ impl CodeFormatter {
     fn format<P: Into<PathBuf>>(&mut self, path: P) -> String {
         let path = path.into();
         let tree = self.tree.clone();
-        self.format_tokens(&tree.get_file(path).tokens)
+        self.format_tokens(&tree.try_get_file(path).expect("File not found").tokens)
             .trim_end()
             .to_string()
     }

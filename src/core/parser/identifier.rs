@@ -30,7 +30,7 @@ impl Identifier {
     }
 
     pub fn anonymous(index: usize) -> Self {
-        Identifier::new(format!("$$scope_{}", index))
+        Identifier::new(format!("$scope_{}", index))
     }
 
     pub fn sup() -> Self {
@@ -47,6 +47,10 @@ impl Identifier {
 
     pub fn is_super(&self) -> bool {
         self.0.to_lowercase().eq("super")
+    }
+
+    pub fn is_special(&self) -> bool {
+        self.0 == "-" || self.0 == "+" || self.0.starts_with('$')
     }
 }
 
@@ -188,5 +192,9 @@ impl IdentifierPath {
     pub fn single(&self) -> &Identifier {
         assert_eq!(self.len(), 1);
         self.0.first().unwrap()
+    }
+
+    pub fn is_special(&self) -> bool {
+        self.0.first().map(|id| id.is_special()).unwrap_or_default()
     }
 }

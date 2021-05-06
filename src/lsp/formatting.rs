@@ -38,9 +38,13 @@ fn do_formatting(ctx: &mut LspContext, uri: &Url) -> Option<Vec<TextEdit>> {
     let path = uri.to_file_path().unwrap();
     ctx.analysis().map(|analysis| {
         let tree = analysis.tree();
-        let old_text = tree.get_file(&path).file.source();
-        let new_text = format(path, tree.clone(), FormattingOptions::default());
-        get_text_edits(old_text, &new_text)
+        if let Some(old_file) = tree.try_get_file(&path) {
+            let old_text = old_file.file.source();
+            let new_text = format(path, tree.clone(), FormattingOptions::default());
+            get_text_edits(old_text, &new_text)
+        } else {
+            vec![]
+        }
     })
 }
 

@@ -575,84 +575,88 @@ impl CodegenContext {
                 resolved_path,
                 ..
             } => {
-                let imported_file = self.tree.get_file(resolved_path);
-                let imported_file_tokens = imported_file.tokens.clone();
+                if let Some(imported_file) = self.tree.try_get_file(resolved_path) {
+                    let imported_file_tokens = imported_file.tokens.clone();
 
-                // Make the filename a definition by itself, allowing the user to follow the definition
-                let def = self
-                    .analysis
-                    .get_or_create_definition_mut(DefinitionType::Filename(resolved_path.clone()));
-                def.set_location(imported_file.file.span);
-                def.add_usage(filename.span);
+                    // Make the filename a definition by itself, allowing the user to follow the definition
+                    let def = self
+                        .analysis
+                        .get_or_create_definition_mut(DefinitionType::Filename(
+                            resolved_path.clone(),
+                        ));
+                    def.set_location(imported_file.file.span);
+                    def.add_usage(filename.span);
 
-                self.with_scope(import_scope, |s| {
-                    if let Some(block) = block {
-                        s.emit_tokens(&block.inner)?;
-                    }
+                    self.with_scope(import_scope, |s| {
+                        if let Some(block) = block {
+                            s.emit_tokens(&block.inner)?;
+                        }
 
-                    s.emit_tokens(&imported_file_tokens)
-                })?;
+                        s.emit_tokens(&imported_file_tokens)
+                    })?;
 
-                if let Some(import_nx) = self.symbols.try_index(self.current_scope_nx, import_scope)
-                {
-                    match args {
-                        ImportArgs::All(star, as_) => {
-                            let scope_nx = match &as_ {
-                                Some(as_) => {
-                                    // Want to import into a new named scope
-                                    self.symbols
-                                        .ensure_index(self.current_scope_nx, &as_.path.data)
-                                }
-                                None => self.current_scope_nx,
-                            };
+                    if let Some(import_nx) =
+                        self.symbols.try_index(self.current_scope_nx, import_scope)
+                    {
+                        match args {
+                            ImportArgs::All(star, as_) => {
+                                let scope_nx = match &as_ {
+                                    Some(as_) => {
+                                        // Want to import into a new named scope
+                                        self.symbols
+                                            .ensure_index(self.current_scope_nx, &as_.path.data)
+                                    }
+                                    None => self.current_scope_nx,
+                                };
 
-                            for (child_id, child_nx) in self.symbols.children(import_nx) {
-                                // Do not import 'special' identifiers
-                                if child_id == "-" || child_id == "+" {
-                                    continue;
-                                }
+                                for (child_id, child_nx) in self.symbols.children(import_nx) {
+                                    // Do not import special identifiers
+                                    if child_id.is_special() {
+                                        continue;
+                                    }
 
-                                if !self.symbols.export(child_nx, scope_nx, &child_id) {
-                                    return self.error(
-                                        star.span,
-                                        format!(
-                                            "cannot import an already defined symbol: {}",
-                                            child_id
-                                        ),
-                                    );
+                                    if !self.symbols.export(child_nx, scope_nx, &child_id) {
+                                        return self.error(
+                                            star.span,
+                                            format!(
+                                                "cannot import an already defined symbol: {}",
+                                                child_id
+                                            ),
+                                        );
+                                    }
                                 }
                             }
-                        }
-                        ImportArgs::Specific(specific) => {
-                            for (arg, _) in specific {
-                                let original_path = &arg.data.path.data;
-                                let target_path = match &arg.data.as_ {
-                                    Some(as_) => &as_.path.data,
-                                    None => original_path,
-                                };
-                                match self.symbols.try_index(import_nx, original_path) {
-                                    Some(original_nx) => {
-                                        if !self.symbols.export(
-                                            original_nx,
-                                            self.current_scope_nx,
-                                            target_path,
-                                        ) {
-                                            return self.error(
-                                                arg.span,
-                                                format!(
-                                                    "cannot import an already defined symbol: {}",
-                                                    target_path
-                                                ),
-                                            );
+                            ImportArgs::Specific(specific) => {
+                                for (arg, _) in specific {
+                                    let original_path = &arg.data.path.data;
+                                    let target_path = match &arg.data.as_ {
+                                        Some(as_) => &as_.path.data,
+                                        None => original_path,
+                                    };
+                                    match self.symbols.try_index(import_nx, original_path) {
+                                        Some(original_nx) => {
+                                            if !self.symbols.export(
+                                                original_nx,
+                                                self.current_scope_nx,
+                                                target_path,
+                                            ) {
+                                                return self.error(
+                                                    arg.span,
+                                                    format!(
+                                                        "cannot import an already defined symbol: {}",
+                                                        target_path
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        None => {
+                                            self.mark_undefined(arg.span, original_path);
                                         }
                                     }
-                                    None => {
-                                        self.mark_undefined(arg.span, original_path);
-                                    }
                                 }
                             }
-                        }
-                    };
+                        };
+                    }
                 }
             }
             Token::File { filename, .. } => {
