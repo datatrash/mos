@@ -667,32 +667,37 @@ fn filename(input: LocatedSpan) -> IResult<String> {
     })(input)
 }
 
+/// Tries to part an 'as' section of an import directive
+fn as_(input: LocatedSpan) -> IResult<Option<ImportAs>> {
+    map_once(
+        opt(tuple((ws(tag_no_case("as")), ws(identifier_path)))),
+        |as_| {
+            as_.map(|(tag, path)| {
+                let tag = tag.map_into(|_| "as".to_string());
+                ImportAs { tag, path }
+            })
+        },
+    )(input)
+}
+
 /// Tries to parse an import directive, optionally enclosing a block.
 /// It will also parse the imported file.
 fn import(input: LocatedSpan) -> IResult<Token> {
     let state = input.extra.clone();
 
     let specific_arg = || {
-        map(
-            tuple((
-                ws(identifier_path),
-                opt(tuple((ws(tag_no_case("as")), ws(identifier_path)))),
-            )),
-            |(path, as_)| {
-                let as_ = as_.map(|(tag, path)| {
-                    let tag = tag.map_into(|_| "as".to_string());
-                    (tag, path)
-                });
-                SpecificImportArg { path, as_ }
-            },
-        )
+        map(tuple((ws(identifier_path), as_)), |(path, as_)| {
+            SpecificImportArg { path, as_ }
+        })
     };
 
     map_once(
         tuple((
             mws(tag_no_case(".import")),
             alt((
-                map(ws(char('*')), ImportArgs::All),
+                map(tuple((ws(char('*')), as_)), |(star, as_)| {
+                    ImportArgs::All(star, as_)
+                }),
                 map(|input| arg_list(input, specific_arg), ImportArgs::Specific),
             )),
             mws(tag_no_case("from")),
@@ -722,25 +727,6 @@ fn import(input: LocatedSpan) -> IResult<Token> {
                 import_scope,
                 resolved_path: path,
             }
-        },
-    )(input)
-}
-
-/// Tries to parse an export directive
-fn export(input: LocatedSpan) -> IResult<Token> {
-    map_once(
-        tuple((
-            mws(tag_no_case(".export")),
-            ws(identifier_path),
-            opt(tuple((ws(tag_no_case("as")), ws(identifier_path)))),
-        )),
-        move |(tag, id, as_)| {
-            let tag = tag.map_into(|_| ".export".to_string());
-            let as_ = as_.map(|(tag, id)| {
-                let tag = tag.map_into(|_| "as".to_string());
-                (tag, id)
-            });
-            Token::Export { tag, id, as_ }
         },
     )(input)
 }
@@ -783,7 +769,6 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         if_,
         align,
         import,
-        export,
         file,
     ))(input)
 }
@@ -1322,6 +1307,14 @@ mod test {
             "   .IMPORT  * FROM     \"baz\"",
         );
 
+        check_with_parsing_source(
+            InMemoryParsingSource::new()
+                .add("test.asm", "   .import  *   as  boop   from     \"baz\"")
+                .add("baz", "nop")
+                .into(),
+            "   .IMPORT  *   AS  boop   FROM     \"baz\"",
+        );
+
         let tree = check_with_parsing_source(
             InMemoryParsingSource::new()
                 .add(
@@ -1346,15 +1339,6 @@ mod test {
                 .into(),
         );
         assert_eq!(err.unwrap().to_string(), "baz:1:1: error: unexpected 'foo'");
-    }
-
-    #[test]
-    fn parse_export() {
-        check("   .export  foo", "   .EXPORT  foo");
-        check(
-            "   .export  foo.bar  as   bar.baz",
-            "   .EXPORT  foo.bar  AS   bar.baz",
-        );
     }
 
     #[test]

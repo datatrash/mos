@@ -1,6 +1,6 @@
 use crate::core::parser::{
     format_trivia, AddressingMode, ArgItem, Block, Expression, ExpressionFactor, Identifier,
-    ImportArgs, Located, Operand, ParseTree, SpecificImportArg, Token, Trivia,
+    ImportArgs, ImportAs, Located, Operand, ParseTree, SpecificImportArg, Token, Trivia,
 };
 use itertools::Itertools;
 use serde::Deserialize;
@@ -276,21 +276,6 @@ impl CodeFormatter {
             Token::Error(invalid) => Fmt::new()
                 .push(format_trivia(&invalid.trivia))
                 .push(&invalid.data),
-            Token::Export { tag, id, as_ } => {
-                let f = Fmt::new()
-                    .push(&tag.data)
-                    .spc()
-                    .fmt(self, id.map(|i| i.to_string()));
-
-                if let Some((tag_as, id_as)) = as_ {
-                    f.spc()
-                        .fmt(self, tag_as)
-                        .spc()
-                        .fmt(self, id_as.map(|i| i.to_string()))
-                } else {
-                    f
-                }
-            }
             Token::Expression(expr) => Fmt::new().fmt(self, expr),
             Token::If {
                 tag_if,
@@ -320,7 +305,13 @@ impl CodeFormatter {
                 let f = Fmt::new().push(&tag.data).spc();
 
                 let f = match args {
-                    ImportArgs::All(c) => f.fmt(self, c),
+                    ImportArgs::All(c, as_) => {
+                        let f = f.fmt(self, c);
+                        match as_ {
+                            Some(as_) => f.push(self.format_import_as(as_)),
+                            None => f,
+                        }
+                    }
                     ImportArgs::Specific(args) => f.fmt(self, args),
                 };
 
@@ -521,17 +512,23 @@ impl CodeFormatter {
         fmt
     }
 
+    fn format_import_as(&mut self, as_: &ImportAs) -> Fmt {
+        let mut fmt = Fmt::new();
+        fmt = fmt
+            .spc()
+            .fmt(self, &as_.tag)
+            .spc()
+            .fmt(self, &as_.path.map(|p| p.to_string()));
+        fmt
+    }
+
     fn format_specific_import_args(&mut self, args: &[ArgItem<SpecificImportArg>]) -> Fmt {
         let mut fmt = Fmt::new();
         for (path, comma) in args {
             fmt = fmt.fmt(self, &path.data.path.map(|p| p.to_string()));
 
-            if let Some((tag_as, id_as)) = &path.data.as_ {
-                fmt = fmt
-                    .spc()
-                    .fmt(self, tag_as)
-                    .spc()
-                    .fmt(self, &id_as.map(|p| p.to_string()));
+            if let Some(as_) = &path.data.as_ {
+                fmt = fmt.push(self.format_import_as(as_));
             }
 
             fmt = fmt.fmt(self, comma).spc_if_next();

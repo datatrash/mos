@@ -1,5 +1,6 @@
+use crate::core::codegen::symbols::SymbolIndex;
 use crate::core::parser::code_map::{LineCol, Span, SpanLoc};
-use crate::core::parser::{IdentifierPath, ParseTree};
+use crate::core::parser::ParseTree;
 use itertools::Itertools;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -16,7 +17,7 @@ pub struct Definition {
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum DefinitionType {
     Filename(PathBuf),
-    Symbol(IdentifierPath),
+    Symbol(SymbolIndex),
 }
 
 impl Definition {
@@ -179,7 +180,7 @@ mod tests {
         let ctx = test_codegen_parsing_source(
             InMemoryParsingSource::new()
                 .add("test.asm", "lda foo\n.import foo from \"bar\"")
-                .add("bar", "foo: nop\n.export foo")
+                .add("bar", "foo: nop")
                 .into(),
         )?;
         let defs = ctx.analysis().find("test.asm", (0, 4));
@@ -200,7 +201,7 @@ mod tests {
                     "test.asm",
                     "lda baz\n.import foo as baz from \"bar\" { .const ENABLE = 1 }",
                 )
-                .add("bar", ".if defined(ENABLE) {\nfoo: nop\n.export foo\n}")
+                .add("bar", ".if defined(ENABLE) {\nfoo: nop\n}")
                 .into(),
         )?;
         let defs = ctx.analysis().find("test.asm", (0, 4));
@@ -218,7 +219,7 @@ mod tests {
         let ctx = test_codegen_parsing_source(
             InMemoryParsingSource::new()
                 .add("test.asm", ".import foo from \"bar\"")
-                .add("bar", "foo: nop\n.export foo")
+                .add("bar", "foo: nop")
                 .into(),
         )?;
         // Click on the 'bar' filename in the import
@@ -227,7 +228,7 @@ mod tests {
             ctx.analysis()
                 .look_up(defs.first().unwrap().location.unwrap())
                 .to_string(),
-            "bar:1:1: 2:12"
+            "bar:1:1: 1:9"
         );
         Ok(())
     }

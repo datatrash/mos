@@ -474,16 +474,28 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct ImportAs {
+    pub tag: Located<String>,
+    pub path: Located<IdentifierPath>,
+}
+
+impl Display for ImportAs {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}{}", self.tag.map(|t| t.to_uppercase()), self.path)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpecificImportArg {
     pub path: Located<IdentifierPath>,
-    pub as_: Option<(Located<String>, Located<IdentifierPath>)>,
+    pub as_: Option<ImportAs>,
 }
 
 impl Display for SpecificImportArg {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let as_ = match &self.as_ {
-            Some((tag, path)) => {
-                format!("{}{}", tag.map(|t| t.to_uppercase()), path)
+            Some(a) => {
+                format!("{}", a)
             }
             None => "".to_string(),
         };
@@ -493,7 +505,7 @@ impl Display for SpecificImportArg {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImportArgs {
-    All(Located<char>),
+    All(Located<char>, Option<ImportAs>),
     Specific(Vec<ArgItem<SpecificImportArg>>),
 }
 
@@ -525,11 +537,6 @@ pub enum Token {
     },
     Eof(Located<()>),
     Error(Located<String>),
-    Export {
-        tag: Located<String>,
-        id: Located<IdentifierPath>,
-        as_: Option<(Located<String>, Located<IdentifierPath>)>,
-    },
     Expression(Expression),
     If {
         tag_if: Located<String>,
@@ -609,7 +616,6 @@ impl Token {
             Token::Definition { tag, .. } => &tag.trivia,
             Token::Eof(empty) => &empty.trivia,
             Token::Error(invalid) => &invalid.trivia,
-            Token::Export { tag, .. } => &tag.trivia,
             Token::Expression(expr) => {
                 return expr.trivia();
             }
@@ -852,18 +858,6 @@ impl Display for Token {
             Token::Error(str) => {
                 write!(f, "{}", str)
             }
-            Token::Export { tag, id, as_ } => {
-                let as_ = as_
-                    .as_ref()
-                    .map(|(tag, id)| (tag.map(|t| t.to_uppercase()), id));
-                let as_ = match as_ {
-                    Some((tag_as, id_as)) => {
-                        format!("{}{}", tag_as, id_as)
-                    }
-                    None => "".to_string(),
-                };
-                write!(f, "{}{}{}", tag.map(|t| t.to_uppercase()), id, as_)
-            }
             Token::Expression(e) => write!(f, "{}", e),
             Token::If {
                 tag_if,
@@ -899,7 +893,13 @@ impl Display for Token {
                     None => "".to_string(),
                 };
                 let args = match args {
-                    ImportArgs::All(c) => format!("{}", c),
+                    ImportArgs::All(c, as_) => {
+                        let as_ = match as_ {
+                            Some(a) => format!("{}", a),
+                            None => "".to_string(),
+                        };
+                        format!("{}{}", c, as_)
+                    }
                     ImportArgs::Specific(args) => format_arglist(args),
                 };
                 write!(

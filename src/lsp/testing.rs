@@ -1,11 +1,11 @@
 use crate::errors::MosResult;
 use crate::lsp::{LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
-use lsp_types::request::{GotoDefinition, References, Rename, Request};
+use lsp_types::request::{Completion, GotoDefinition, References, Rename, Request};
 use lsp_types::{
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, Position,
-    ReferenceContext, ReferenceParams, RenameParams, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, Url,
+    CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
+    GotoDefinitionResponse, Position, ReferenceContext, ReferenceParams, RenameParams,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
 };
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
@@ -96,6 +96,25 @@ impl LspServer {
             context: ReferenceContext {
                 include_declaration,
             },
+        }))?;
+        Ok(self.lock_context().pop_response())
+    }
+
+    pub fn completion<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        position: Position,
+    ) -> MosResult<Option<CompletionResponse>> {
+        self.handle_message(request::<Completion>(CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Url::from_file_path(path)?,
+                },
+                position,
+            },
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+            context: None,
         }))?;
         Ok(self.lock_context().pop_response())
     }

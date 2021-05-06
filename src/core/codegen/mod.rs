@@ -16,14 +16,12 @@ use crate::core::codegen::source_map::SourceMap;
 use crate::core::parser::code_map::Span;
 use crate::core::parser::{
     AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
-    Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, SpecificImportArg, Token,
-    VariableType,
+    Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, Token, VariableType,
 };
 use crate::errors::{MosError, MosResult};
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
@@ -225,8 +223,6 @@ impl Symbol {
     }
 }
 
-pub type SymbolTable = HashMap<IdentifierPath, Symbol>;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct MacroDefinition {
     id: Located<Identifier>,
@@ -242,20 +238,18 @@ pub struct CodegenContext {
     segments: HashMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
 
-    symbols: SymbolTable,
+    symbols: SymbolTable<Symbol>,
     undefined: Arc<Mutex<HashSet<UndefinedSymbol>>>,
     suppress_undefined_symbol_registration: bool,
     current_scope: IdentifierPath,
-
-    exports: HashMap<IdentifierPath, IdentifierPath>,
-    export_filter: Option<Vec<SpecificImportArg>>,
+    current_scope_nx: SymbolIndex,
 
     source_map: SourceMap,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct UndefinedSymbol {
-    scope: IdentifierPath,
+    scope_nx: SymbolIndex,
     id: IdentifierPath,
     span: Span,
 }
@@ -269,12 +263,11 @@ impl CodegenContext {
             analysis,
             segments: HashMap::new(),
             current_segment: None,
-            symbols: HashMap::new(),
+            symbols: SymbolTable::new(),
             undefined: Arc::new(Mutex::new(HashSet::new())),
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
-            exports: HashMap::new(),
-            export_filter: None,
+            current_scope_nx: SymbolIndex::new(0),
             source_map: SourceMap::default(),
         }
     }
@@ -287,7 +280,7 @@ impl CodegenContext {
         &self.segments
     }
 
-    pub fn symbols(&self) -> &SymbolTable {
+    pub fn symbols(&self) -> &SymbolTable<Symbol> {
         &self.symbols
     }
 
@@ -319,12 +312,6 @@ impl CodegenContext {
 
     fn next_pass(&mut self) {
         log::trace!("\n* NEXT PASS *");
-
-        log::trace!("Currently available symbols:");
-        for (key, value) in self.symbols.iter().sorted_by_key(|(k, _)| k.to_string()) {
-            log::trace!("`--> {}: {:?}", key, value);
-        }
-
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.lock().unwrap().clear();
         self.source_map.clear();
@@ -363,22 +350,22 @@ impl CodegenContext {
         // If the symbol already existed but with a different value,
         // mark it as undefined so we will trigger another pass
         let mut should_mark_as_undefined = false;
-        match self.symbols.entry(path) {
-            Entry::Occupied(e) => {
-                let old_symbol = e.get();
-
-                if old_symbol.ty != value.ty
-                    || old_symbol.read_only != value.read_only
-                    || (old_symbol != &value && old_symbol.read_only)
+        let symbol_nx = self.symbols.try_index(self.current_scope_nx, &id);
+        let existing = symbol_nx.map(|nx| self.symbols.try_get_mut(nx)).flatten();
+        match existing {
+            Some(existing) => {
+                if existing.ty != value.ty
+                    || existing.read_only != value.read_only
+                    || (existing != &value && existing.read_only)
                 {
                     let span = span.expect("no span provided");
-                    return self.error(span, format!("cannot redefine symbol: {}", &id));
+                    return self.error(span, format!("cannot redefine symbol: {}", &path));
                 }
 
-                if old_symbol != &value {
+                if existing != &value {
                     log::trace!(
                         "`--> Symbol already existed, but has changed. Old value was: {:?}",
-                        old_symbol
+                        existing
                     );
 
                     should_mark_as_undefined = match &value.ty {
@@ -388,15 +375,17 @@ impl CodegenContext {
                     };
                 }
 
-                let e = e.into_mut();
-                *e = value;
-                e
+                *existing = value;
             }
-            Entry::Vacant(e) => e.insert(value),
+            None => {
+                let (parent, id) = path.split();
+                let parent_nx = self.symbols.ensure_index(self.symbols.root, &parent);
+                self.symbols.insert(parent_nx, id, value);
+            }
         };
 
         if should_mark_as_undefined {
-            self.mark_undefined(span.expect("expected a span"), id);
+            self.mark_undefined(span.expect("expected a span"), &id);
         }
 
         Ok(())
@@ -405,57 +394,18 @@ impl CodegenContext {
     fn remove_symbol<I: Into<IdentifierPath>>(&mut self, id: I) {
         let id = id.into();
         let path = self.current_scope.join(&id);
-        assert_eq!(self.symbols.contains_key(&path), true);
-        self.symbols.remove(&path);
-    }
-
-    /// Gets the identifiers of all symbols that are in scope, grouped by the scope they are actually in
-    pub fn visible_symbols(
-        &self,
-        current_scope: &IdentifierPath,
-    ) -> HashMap<IdentifierPath, HashMap<Identifier, &Symbol>> {
-        let mut visible: HashMap<IdentifierPath, HashMap<Identifier, &Symbol>> = HashMap::new();
-
-        for (id, symbol) in &self.symbols {
-            if let Some(scope) = id.is_visible_in_scope(current_scope) {
-                if let Some(stem) = id.stem() {
-                    match visible.entry(scope) {
-                        Entry::Occupied(mut e) => e.get_mut().insert(stem.clone(), symbol),
-                        Entry::Vacant(e) => e.insert(HashMap::new()).insert(stem.clone(), symbol),
-                    };
-                }
-            }
-        }
-
-        visible
+        let nx = self.symbols.index(self.symbols.root, path);
+        self.symbols.remove(nx);
     }
 
     pub fn get_symbol(
         &self,
-        current_scope: &IdentifierPath,
+        scope_nx: SymbolIndex,
         id: &IdentifierPath,
-    ) -> Option<(IdentifierPath, &Symbol)> {
+    ) -> Option<(SymbolIndex, &Symbol)> {
         log::trace!("Trying to get symbol value: {}", id);
-        let mut cur_scope = current_scope.clone();
-        loop {
-            let path = cur_scope.join(id).canonicalize();
-            log::trace!("`--> Querying: {}", path);
-            if let Some(symbol) = self.symbols.get(&path) {
-                log::trace!("`--> Found");
-                return Some((path, symbol));
-            }
-
-            log::trace!("`--> Querying exports: {}", path);
-            if let Some(exported) = self.exports.get(&path) {
-                log::trace!("`--> Was exported as: {}", exported);
-                return self.get_symbol(current_scope, exported);
-            }
-
-            if cur_scope.is_empty() {
-                break;
-            }
-
-            cur_scope.pop();
+        if let Some(nx) = self.symbols.query(scope_nx, id) {
+            return self.symbols.try_get(nx).map(|s| (nx, s));
         }
 
         None
@@ -463,7 +413,7 @@ impl CodegenContext {
 
     fn get_symbol_data<I: Into<IdentifierPath>>(&self, span: Span, id: I) -> Option<&SymbolData> {
         let id = id.into();
-        match self.get_symbol(&self.current_scope, &id) {
+        match self.get_symbol(self.current_scope_nx, &id) {
             Some((_, s)) => Some(&s.data),
             None => {
                 // Undefined symbol!
@@ -485,7 +435,7 @@ impl CodegenContext {
                 self.current_scope
             );
             self.undefined.lock().unwrap().insert(UndefinedSymbol {
-                scope: self.current_scope.clone(),
+                scope_nx: self.current_scope_nx,
                 id,
                 span,
             });
@@ -511,7 +461,7 @@ impl CodegenContext {
                     &bytes
                 );
                 self.source_map
-                    .add(&self.current_scope, span, segment.pc, bytes.len());
+                    .add(self.current_scope_nx, span, segment.pc, bytes.len());
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
@@ -607,36 +557,6 @@ impl CodegenContext {
                     }
                 }
             }
-            Token::Export { id, as_, .. } => {
-                let target = match as_ {
-                    Some((_, target_id)) => target_id.data.clone(),
-                    None => id.data.clone(),
-                };
-                let id = self.current_scope.join(&id.data);
-
-                // See if we are allowed to export this (because it was requested during import)
-                // and, if so, if we need to rename the export target
-                let target = self.current_scope.parent().join(&target);
-                let target = if let Some(filter) = &self.export_filter {
-                    filter.iter().find_map(|f| {
-                        if target.has_parent(&f.path.data) {
-                            match &f.as_ {
-                                Some((_, target_id)) => Some(target_id.data.clone()),
-                                None => Some(f.path.data.clone()),
-                            }
-                        } else {
-                            None
-                        }
-                    })
-                } else {
-                    Some(target)
-                };
-
-                if let Some(target) = target {
-                    log::trace!("Exporting {} as: {}", id, target);
-                    self.exports.insert(target, id);
-                }
-            }
             Token::If {
                 value, if_, else_, ..
             } => {
@@ -665,8 +585,6 @@ impl CodegenContext {
                 def.set_location(imported_file.file.span);
                 def.add_usage(filename.span);
 
-                let prev_exports = self.exports.clone();
-                self.exports.clear();
                 self.with_scope(import_scope, |s| {
                     if let Some(block) = block {
                         s.emit_tokens(&block.inner)?;
@@ -674,64 +592,67 @@ impl CodegenContext {
 
                     s.emit_tokens(&imported_file_tokens)
                 })?;
-                let mut new_exports = self.exports.clone();
-                self.exports = prev_exports;
 
-                for i in new_exports.keys() {
-                    log::trace!("New export: {}", i);
-                }
+                if let Some(import_nx) = self.symbols.try_index(self.current_scope_nx, import_scope)
+                {
+                    match args {
+                        ImportArgs::All(star, as_) => {
+                            let scope_nx = match &as_ {
+                                Some(as_) => {
+                                    // Want to import into a new named scope
+                                    self.symbols
+                                        .ensure_index(self.current_scope_nx, &as_.path.data)
+                                }
+                                None => self.current_scope_nx,
+                            };
 
-                let args: Vec<SpecificImportArg> = match args {
-                    ImportArgs::All(star) => {
-                        // Just take whatever new exports we have and pretend we have manually
-                        // selected them to import
-                        new_exports
-                            .keys()
-                            .map(|path| SpecificImportArg {
-                                path: star.map(|_| path.clone()),
-                                as_: None,
-                            })
-                            .collect()
-                    }
-                    ImportArgs::Specific(specific) => {
-                        specific.iter().map(|(arg, _)| arg.data.clone()).collect()
-                    }
-                };
+                            for (child_id, child_nx) in self.symbols.children(import_nx) {
+                                // Do not import 'special' identifiers
+                                if child_id == "-" || child_id == "+" {
+                                    continue;
+                                }
 
-                for arg in &args {
-                    let target = match &arg.as_ {
-                        Some((_, path)) => path,
-                        None => &arg.path,
-                    };
-
-                    log::trace!("Trying to remove: {}", &arg.path.data);
-                    match new_exports.remove_entry(&arg.path.data) {
-                        Some((_original_symbol_name, export)) => {
-                            let existing_export = self.exports.get(&target.data);
-
-                            // Don't allow import if there is already a symbol with the same name
-                            // _or_ an import that goes somehwere else
-                            if self.symbols.contains_key(&target.data)
-                                || (existing_export.is_some() && existing_export != Some(&export))
-                            {
-                                return self.error(
-                                    target.span,
-                                    format!(
-                                        "cannot import an already defined symbol: {}",
-                                        target.data
-                                    ),
-                                );
+                                if !self.symbols.export(child_nx, scope_nx, &child_id) {
+                                    return self.error(
+                                        star.span,
+                                        format!(
+                                            "cannot import an already defined symbol: {}",
+                                            child_id
+                                        ),
+                                    );
+                                }
                             }
-
-                            self.exports.insert(target.data.clone(), export);
                         }
-                        None => {
-                            return self.error(
-                                target.span,
-                                format!("undefined export: {}", arg.path.data),
-                            );
+                        ImportArgs::Specific(specific) => {
+                            for (arg, _) in specific {
+                                let original_path = &arg.data.path.data;
+                                let target_path = match &arg.data.as_ {
+                                    Some(as_) => &as_.path.data,
+                                    None => original_path,
+                                };
+                                match self.symbols.try_index(import_nx, original_path) {
+                                    Some(original_nx) => {
+                                        if !self.symbols.export(
+                                            original_nx,
+                                            self.current_scope_nx,
+                                            target_path,
+                                        ) {
+                                            return self.error(
+                                                arg.span,
+                                                format!(
+                                                    "cannot import an already defined symbol: {}",
+                                                    target_path
+                                                ),
+                                            );
+                                        }
+                                    }
+                                    None => {
+                                        self.mark_undefined(arg.span, original_path);
+                                    }
+                                }
+                            }
                         }
-                    }
+                    };
                 }
             }
             Token::File { filename, .. } => {
@@ -997,10 +918,10 @@ impl CodegenContext {
         id: IP,
         f: F,
     ) {
-        if let Some((symbol_path, _)) = self.get_symbol(&self.current_scope, &id.into()) {
+        if let Some((symbol_nx, _)) = self.get_symbol(self.current_scope_nx, &id.into()) {
             let def = self
                 .analysis
-                .get_or_create_definition_mut(DefinitionType::Symbol(symbol_path));
+                .get_or_create_definition_mut(DefinitionType::Symbol(symbol_nx));
             f(def);
         }
     }
@@ -1020,7 +941,11 @@ impl CodegenContext {
         scope: &Identifier,
         f: F,
     ) -> MosResult<()> {
+        let old_scope_nx = self.current_scope_nx;
         self.current_scope.push(scope);
+        self.current_scope_nx = self
+            .symbols
+            .ensure_index(self.symbols.root, &self.current_scope);
         self.try_current_target_pc()
             .map(|pc| self.add_symbol(None, "-", Symbol::variable(pc.as_i64())));
         log::trace!("Entering scope: {}", self.current_scope);
@@ -1028,6 +953,7 @@ impl CodegenContext {
         log::trace!("Leaving scope: {}", self.current_scope);
         self.try_current_target_pc()
             .map(|pc| self.add_symbol(None, "+", Symbol::variable(pc.as_i64())));
+        self.current_scope_nx = old_scope_nx;
         self.current_scope.pop();
         result
     }
@@ -1083,7 +1009,7 @@ pub fn codegen(
                 .iter()
                 .sorted_by_key(|k| k.id.to_string())
                 .filter_map(|item| {
-                    if ctx.get_symbol(&item.scope, &item.id).is_none() {
+                    if ctx.get_symbol(item.scope_nx, &item.id).is_none() {
                         Some(MosError::Codegen {
                             location: ctx.tree.code_map.look_up_span(item.span),
                             message: format!("unknown identifier: {}", item.id),
@@ -1112,7 +1038,6 @@ mod tests {
     use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::core::parser::{parse_or_err, Identifier};
     use crate::errors::MosResult;
-    use crate::{id, idpath};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -1703,15 +1628,33 @@ mod tests {
         let src = InMemoryParsingSource::new()
             .add(
                 "test.asm",
-                ".import * from \"bar\"\nlda #defined(foo)\nlda #defined(bar)\nlda #defined(baz)",
+                ".import * from \"bar\"\nlda #defined(foo)\nlda #defined(bar)",
             )
-            .add("bar", "foo: nop\nbar: nop\n.export foo\n.export bar as baz")
+            .add("bar", "foo: nop\nbar: nop")
             .into();
 
         let ctx = test_codegen_parsing_source(src)?;
         assert_eq!(
             ctx.current_segment().range_data(),
-            vec![0xea, 0xea, 0xa9, 1, 0xa9, 0, 0xa9, 1]
+            vec![0xea, 0xea, 0xa9, 1, 0xa9, 1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_wildcard_imports_as() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                ".import * as baz from \"bar\"\nlda #defined(baz.foo)\nlda #defined(baz.bar)",
+            )
+            .add("bar", "foo: nop\nbar: nop")
+            .into();
+
+        let ctx = test_codegen_parsing_source(src)?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xea, 0xea, 0xa9, 1, 0xa9, 1]
         );
         Ok(())
     }
@@ -1721,15 +1664,33 @@ mod tests {
         let src = InMemoryParsingSource::new()
             .add(
                 "test.asm",
-                ".import biz.baz as boz from \"bar\"\nlda #defined(foo)\nlda #defined(bar)\nlda #defined(biz.baz)\nlda #defined(boz)",
+                ".import bar from \"bar\"\nlda #defined(foo)\nlda #defined(bar)",
             )
-            .add("bar", "foo: nop\nbar: nop\n.export foo\n.export bar as biz.baz")
+            .add("bar", "foo: nop\nbar: nop")
             .into();
 
         let ctx = test_codegen_parsing_source(src)?;
         assert_eq!(
             ctx.current_segment().range_data(),
-            vec![0xea, 0xea, 0xa9, 0, 0xa9, 0, 0xa9, 0, 0xa9, 1]
+            vec![0xea, 0xea, 0xa9, 0, 0xa9, 1]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_specific_imports_as() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                "lda baz\n.import bar as baz from \"bar\"\nlda #defined(foo)\nlda #defined(bar)\nlda #defined(baz)",
+            )
+            .add("bar", "foo: nop\nbar: nop")
+            .into();
+
+        let ctx = test_codegen_parsing_source(src)?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xad, 4, 0xc0, 0xea, 0xea, 0xa9, 0, 0xa9, 0, 0xa9, 1]
         );
         Ok(())
     }
@@ -1738,7 +1699,7 @@ mod tests {
     fn can_have_imports_with_block() -> MosResult<()> {
         let src = InMemoryParsingSource::new()
             .add("test.asm", ".import foo from \"bar\" { .const CONST = 1 }")
-            .add("bar", "foo: lda #CONST\n.export foo")
+            .add("bar", "foo: lda #CONST")
             .into();
 
         let ctx = test_codegen_parsing_source(src)?;
@@ -1756,7 +1717,7 @@ mod tests {
         let err = test_codegen_parsing_source(src).err().unwrap();
         assert_eq!(
             err.to_string(),
-            "test.asm:1:9: error: undefined export: foo"
+            "test.asm:1:9: error: unknown identifier: foo"
         );
     }
 
@@ -1767,7 +1728,7 @@ mod tests {
                 "test.asm",
                 ".import foo from \"bar\"\n.import foo as foo2 from \"bar\"\n.import foo from \"bar\"",
             )
-            .add("bar", "foo: nop\n.export foo")
+            .add("bar", "foo: nop")
             .into();
 
         let err = test_codegen_parsing_source(src).err().unwrap();
@@ -1781,7 +1742,7 @@ mod tests {
     fn cannot_have_duplicate_imports_via_wildcard_import() {
         let src = InMemoryParsingSource::new()
             .add("test.asm", ".import * from \"bar\"\n.import * from \"bar\"")
-            .add("bar", "foo: nop\n.export foo")
+            .add("bar", "foo: nop")
             .into();
 
         let err = test_codegen_parsing_source(src).err().unwrap();
@@ -1814,51 +1775,6 @@ mod tests {
         assert_eq!(sl.begin.column, 0);
         assert_eq!(sl.end.line, 1);
         assert_eq!(sl.end.column, 9);
-
-        Ok(())
-    }
-
-    #[test]
-    fn can_perform_scope_queries() -> MosResult<()> {
-        let ctx = test_codegen(
-            r"nop
-              s1: {
-              rol
-              .const X = 3
-              .const V = 1
-              s2: {
-                asl
-                .const V = 2
-              }
-            }",
-        )?;
-
-        // Look up 'asl'
-        let offset = ctx.source_map().address_to_offset(0xc002).unwrap();
-        assert_eq!(offset.scope, "s1.s2".into());
-
-        let scopes = ctx.visible_symbols(&offset.scope);
-        assert_eq!(scopes.len(), 3);
-
-        let scope = scopes.get(&idpath!("s1.s2")).unwrap();
-        assert_eq!(scope.len(), 3);
-        assert!(scope.contains_key(&id!("-")));
-        assert!(scope.contains_key(&id!("+")));
-        assert!(scope.contains_key(&id!("V")));
-        assert_eq!(scope.get(&id!("V")).unwrap().data.as_i64(), 2);
-
-        let scope = scopes.get(&idpath!("s1")).unwrap();
-        assert_eq!(scope.len(), 5);
-        assert!(scope.contains_key(&id!("s2")));
-        assert!(scope.contains_key(&id!("-")));
-        assert!(scope.contains_key(&id!("+")));
-        assert!(scope.contains_key(&id!("V")));
-        assert_eq!(scope.get(&id!("V")).unwrap().data.as_i64(), 1);
-        assert!(scope.contains_key(&id!("X")));
-
-        let scope = scopes.get(&idpath!("")).unwrap();
-        assert_eq!(scope.len(), 1);
-        assert!(scope.contains_key(&id!("s1")));
 
         Ok(())
     }

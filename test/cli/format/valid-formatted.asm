@@ -54,5 +54,3 @@ nop
 .import foo as bar from "other.asm" {
     nop
 }
-
-.export data as boop

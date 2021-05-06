@@ -1,7 +1,7 @@
 use crate::core::parser::code_map::{CodeMap, Span};
 use crate::core::parser::{
-    ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, SpecificImportArg, Token,
-    VariableType,
+    ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, ImportAs,
+    SpecificImportArg, Token, VariableType,
 };
 use crate::errors::MosResult;
 use crate::impl_request_handler;
@@ -234,12 +234,16 @@ impl SemTokBuilder {
         self
     }
 
+    fn import_as(self, as_: &ImportAs) -> Self {
+        self.keyword(&as_.tag).identifier(&as_.path)
+    }
+
     fn specific_import_args(mut self, args: &[ArgItem<SpecificImportArg>]) -> Self {
         for (arg, _) in args {
             let arg = &arg.data;
             self = self.identifier(&arg.path);
             self = match &arg.as_ {
-                Some((tag, id)) => self.keyword(tag).identifier(id),
+                Some(as_) => self.import_as(as_),
                 None => self,
             };
         }
@@ -271,14 +275,6 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         }
         Token::Eof(_) => b,
         Token::Error(_) => b,
-        Token::Export { tag, id, as_ } => {
-            let b = b.keyword(tag).identifier(id);
-            if let Some((tag_as, id_as)) = as_ {
-                b.keyword(tag_as).identifier(id_as)
-            } else {
-                b
-            }
-        }
         Token::Expression(expr) => b.expression(&expr),
         Token::File { tag, filename, .. } => b
             .push(tag, TokenType::Keyword)
@@ -302,7 +298,10 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             let b = b.keyword(tag);
 
             let b = match args {
-                ImportArgs::All(_) => b,
+                ImportArgs::All(_, as_) => match as_ {
+                    Some(a) => b.import_as(a),
+                    None => b,
+                },
                 ImportArgs::Specific(args) => b.specific_import_args(args),
             };
             let b = b.keyword(from).push(filename, TokenType::Constant);
