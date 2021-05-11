@@ -277,6 +277,16 @@ impl CodeFormatter {
                 .push(format_trivia(&invalid.trivia))
                 .push(&invalid.data),
             Token::Expression(expr) => Fmt::new().fmt(self, expr),
+            Token::File {
+                tag,
+                lquote,
+                filename,
+            } => Fmt::new()
+                .push(&tag.data)
+                .spc()
+                .fmt(self, lquote)
+                .fmt(self, filename)
+                .push("\""),
             Token::If {
                 tag_if,
                 value,
@@ -323,16 +333,6 @@ impl CodeFormatter {
                     .spc_if_next()
                     .fmt(self, block)
             }
-            Token::File {
-                tag,
-                lquote,
-                filename,
-            } => Fmt::new()
-                .push(&tag.data)
-                .spc()
-                .fmt(self, lquote)
-                .fmt(self, filename)
-                .push("\""),
             Token::Instruction(i) => Fmt::new()
                 .push(
                     &self
@@ -397,6 +397,19 @@ impl CodeFormatter {
                 .fmt(self, id)
                 .spc_if_next()
                 .fmt(self, block),
+            Token::Text {
+                tag,
+                encoding,
+                lquote,
+                text,
+            } => Fmt::new()
+                .push(&tag.data)
+                .spc_if_next_if_not_empty()
+                .fmt_opt(self, encoding, |e| e.map(|f| format!("{}\"", f)))
+                .spc()
+                .fmt(self, lquote)
+                .fmt(self, text)
+                .push("\""),
             Token::VariableDefinition { ty, id, eq, value } => Fmt::new()
                 .push(&ty.data.to_string())
                 .spc()

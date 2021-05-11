@@ -486,6 +486,23 @@ impl Display for ImportAs {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum TextEncoding {
+    Ascii,
+    Petscii,
+    Unspecified,
+}
+
+impl Display for TextEncoding {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            TextEncoding::Ascii => write!(f, "ascii"),
+            TextEncoding::Petscii => write!(f, "petscii"),
+            TextEncoding::Unspecified => write!(f, ""),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpecificImportArg {
     pub path: Located<IdentifierPath>,
     pub as_: Option<ImportAs>,
@@ -596,6 +613,12 @@ pub enum Token {
         id: Located<Identifier>,
         block: Option<Block>,
     },
+    Text {
+        tag: Located<String>,
+        encoding: Option<Located<TextEncoding>>,
+        lquote: Located<char>,
+        text: Located<String>,
+    },
     VariableDefinition {
         ty: Located<VariableType>,
         id: Located<Identifier>,
@@ -629,6 +652,7 @@ impl Token {
             Token::MacroInvocation { id: name, .. } => &name.trivia,
             Token::ProgramCounterDefinition { star, .. } => &star.trivia,
             Token::Segment { tag, .. } => &tag.trivia,
+            Token::Text { tag, .. } => &tag.trivia,
             Token::VariableDefinition { ty, .. } => &ty.trivia,
         };
 
@@ -1016,6 +1040,24 @@ impl Display for Token {
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, block)
+            }
+            Token::Text {
+                tag,
+                encoding,
+                lquote,
+                text,
+            } => {
+                write!(
+                    f,
+                    "{}{}{}{}\"",
+                    tag.map(|t| t.to_uppercase()),
+                    encoding
+                        .as_ref()
+                        .map(|t| format!("{}", t).to_uppercase())
+                        .unwrap_or_default(),
+                    lquote,
+                    text,
+                )
             }
             Token::VariableDefinition { ty, id, eq, value } => {
                 write!(

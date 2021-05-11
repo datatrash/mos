@@ -16,9 +16,11 @@ use crate::core::codegen::source_map::SourceMap;
 use crate::core::parser::code_map::Span;
 use crate::core::parser::{
     AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
-    Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, Token, VariableType,
+    Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, TextEncoding, Token,
+    VariableType,
 };
 use crate::errors::{MosError, MosResult};
+use cbm::Petscii;
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -844,6 +846,15 @@ impl CodegenContext {
                     }
                 }
             }
+            Token::Text { encoding, text, .. } => {
+                let data = match encoding.as_ref().map(|e| &e.data) {
+                    Some(TextEncoding::Petscii) => {
+                        Petscii::from_str(&text.data).as_bytes().to_vec()
+                    }
+                    _ => text.data.as_bytes().to_vec(),
+                };
+                self.emit(text.span, &data)?;
+            }
             Token::VariableDefinition { ty, id, value, .. } => {
                 let value = self.evaluate_expression(&value)?;
                 let mut symbol = Symbol::variable(value);
@@ -1561,6 +1572,17 @@ mod tests {
             ctx.current_segment().range_data(),
             vec![123, 0, 0x06, 0xc0, 234, 0, 0xea]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn can_store_text() -> MosResult<()> {
+        let ctx = test_codegen(".text \"abc\"")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![97, 98, 99]);
+
+        let ctx = test_codegen(".text petscii \"abc\"")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![65, 66, 67]);
+
         Ok(())
     }
 

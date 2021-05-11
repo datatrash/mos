@@ -98,6 +98,23 @@ where
     }
 }
 
+/// If parsing fails, try to continue but log the error in the parser's [State]. Eat the following error.
+fn expect_and_eat<'a, F, E, T>(
+    parser: F,
+    error_msg: E,
+) -> impl FnMut(LocatedSpan<'a>) -> IResult<'a, Option<T>>
+where
+    F: FnMut(LocatedSpan<'a>) -> IResult<'a, T>,
+    E: ToString,
+{
+    let mut e = expect(parser, error_msg);
+    move |input| {
+        let (input, result) = e(input)?;
+        input.extra.shared_state().ignore_next_error();
+        Ok((input, result))
+    }
+}
+
 /// Handles a comment in the C++ style, e.g. `// foo"`
 fn cpp_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
     recognize(pair(tag("//"), is_not("\n\r")))(input)
@@ -660,8 +677,8 @@ fn align(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
-// Parses a filename, up to (but not including) the closing quote
-fn filename(input: LocatedSpan) -> IResult<String> {
+// Parses a string, up to (but not including) the closing quote
+fn string(input: LocatedSpan) -> IResult<String> {
     map_once(recognize(many1(none_of("\"\r\n"))), |span: LocatedSpan| {
         span.fragment().to_string()
     })(input)
@@ -702,7 +719,7 @@ fn import(input: LocatedSpan) -> IResult<Token> {
             )),
             mws(tag_no_case("from")),
             ws(char('"')),
-            located(filename),
+            located(string),
             char('"'),
             opt(block),
         )),
@@ -734,13 +751,45 @@ fn import(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+/// Tries to parse a text directive
+fn text(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            mws(tag_no_case(".text")),
+            expect_and_eat(
+                ws(alt((
+                    map(tag_no_case("ascii"), |_| TextEncoding::Ascii),
+                    map(tag_no_case("petscii"), |_| TextEncoding::Petscii),
+                    map(not(alphanumeric1), |_| {
+                        // If there are no characters, then we leave it to 'unspecified'
+                        TextEncoding::Unspecified
+                    }),
+                ))),
+                "unknown text encoding",
+            ),
+            ws(char('"')),
+            located(string),
+            char('"'),
+        )),
+        |(tag, encoding, lquote, text, _)| {
+            let tag = tag.map_into(|_| ".text".to_string());
+            Token::Text {
+                tag,
+                encoding,
+                lquote,
+                text,
+            }
+        },
+    )(input)
+}
+
 /// Tries to parse a file directive, of the form `.file "foo.bin"`
 fn file(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
             mws(tag_no_case(".file")),
             ws(char('"')),
-            located(filename),
+            located(string),
             char('"'),
         )),
         move |(tag, lquote, filename, _)| {
@@ -772,6 +821,7 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         if_,
         align,
         import,
+        text,
         file,
     ))(input)
 }
@@ -1314,6 +1364,17 @@ mod test {
     #[test]
     fn parse_file() {
         check("   .file    \"foo.bin\"", "   .FILE    \"foo.bin\"");
+    }
+
+    #[test]
+    fn parse_text() {
+        check("   .text   ascii \"blah\"", "   .TEXT   ASCII \"blah\"");
+        check("   .text   petscii \"blah\"", "   .TEXT   PETSCII \"blah\"");
+        check("   .text    \"blah\"", "   .TEXT    \"blah\"");
+        check_err(
+            "   .text   fartscii  \"blah\"",
+            "test.asm:1:9: error: unknown text encoding",
+        );
     }
 
     #[test]
