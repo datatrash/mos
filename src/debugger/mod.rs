@@ -14,7 +14,7 @@ use crate::debugger::protocol::{Event, EventMessage, ProtocolMessage, Request, R
 use crate::debugger::types::*;
 use crate::errors::{MosError, MosErrorOptions, MosResult};
 use crate::lsp::LspContext;
-use crossbeam_channel::{Receiver, Select};
+use crossbeam_channel::Select;
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -71,7 +71,6 @@ impl DebugServer {
 #[allow(dead_code)]
 pub struct DebugSession {
     lsp: Arc<Mutex<LspContext>>,
-    lsp_shutdown_receiver: Receiver<()>,
     machine: Option<Machine>,
     port: u16,
     conn: Option<Arc<DebugConnection>>,
@@ -473,11 +472,8 @@ fn current_scope(conn: &DebugSession, codegen: &CodegenContext) -> MosResult<Opt
 
 impl DebugSession {
     pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
-        let lsp_shutdown_receiver = lsp.lock().unwrap().add_shutdown_handler();
-
         Self {
             lsp,
-            lsp_shutdown_receiver,
             machine: None,
             port,
             conn: None,
@@ -506,6 +502,7 @@ impl DebugSession {
         let (debug_connection, _) = DebugConnection::tcp(&format!("127.0.0.1:{}", self.port))
             .unwrap_or_else(|e| panic!("Couldn't listen on port {}: {}", self.port, e));
         self.conn = Some(Arc::new(debug_connection));
+        let lsp_shutdown_receiver = self.lsp.lock().unwrap().add_shutdown_handler();
 
         loop {
             let mut sel = Select::new();
@@ -515,7 +512,7 @@ impl DebugSession {
             sel.recv(receiver);
 
             // ...or from the LSP telling us we should be shutting down...
-            sel.recv(&self.lsp_shutdown_receiver);
+            sel.recv(&lsp_shutdown_receiver.receiver());
 
             // ...or from the machine...
             let machine_receiver = self

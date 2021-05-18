@@ -35,6 +35,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 pub use traits::*;
 
@@ -80,7 +81,7 @@ pub struct LspContext {
     error: Option<MosError>,
     codegen: Option<CodegenContext>,
     parsing_source: Arc<Mutex<LspParsingSource>>,
-    shutdown_senders: Vec<Sender<()>>,
+    shutdown_manager: Arc<Mutex<ShutdownManager>>,
     #[cfg(test)]
     responses: Arc<Mutex<Vec<lsp_server::Response>>>,
 }
@@ -119,6 +120,42 @@ impl ParsingSource for LspParsingSource {
     }
 }
 
+struct ShutdownManager {
+    handlers: HashMap<usize, Sender<()>>,
+}
+
+static HANDLER_ID: AtomicUsize = AtomicUsize::new(0);
+
+pub struct ShutdownReceiverHandle {
+    manager: Arc<Mutex<ShutdownManager>>,
+    receiver: Receiver<()>,
+    handler_id: usize,
+}
+
+impl ShutdownReceiverHandle {
+    pub fn receiver(&self) -> &Receiver<()> {
+        &self.receiver
+    }
+}
+
+impl Drop for ShutdownReceiverHandle {
+    fn drop(&mut self) {
+        self.manager
+            .lock()
+            .unwrap()
+            .handlers
+            .remove(&self.handler_id);
+    }
+}
+
+impl ShutdownManager {
+    fn new() -> Self {
+        Self {
+            handlers: HashMap::new(),
+        }
+    }
+}
+
 impl LspContext {
     pub(crate) fn new() -> Self {
         Self {
@@ -127,7 +164,7 @@ impl LspContext {
             error: None,
             codegen: None,
             parsing_source: Arc::new(Mutex::new(LspParsingSource::new())),
-            shutdown_senders: vec![],
+            shutdown_manager: Arc::new(Mutex::new(ShutdownManager::new())),
             #[cfg(test)]
             responses: Arc::new(Mutex::new(vec![])),
         }
@@ -145,10 +182,30 @@ impl LspContext {
         test_connection
     }
 
-    pub fn add_shutdown_handler(&mut self) -> Receiver<()> {
-        let (s, r) = crossbeam_channel::bounded(0);
-        self.shutdown_senders.push(s);
-        r
+    pub fn add_shutdown_handler(&mut self) -> ShutdownReceiverHandle {
+        let (s, r) = crossbeam_channel::bounded(1);
+        let handler_id = HANDLER_ID.fetch_add(1, Ordering::Relaxed);
+        self.shutdown_manager
+            .lock()
+            .unwrap()
+            .handlers
+            .insert(handler_id, s);
+        ShutdownReceiverHandle {
+            manager: self.shutdown_manager.clone(),
+            receiver: r,
+            handler_id,
+        }
+    }
+
+    pub fn invoke_shutdown_handlers(&mut self) {
+        // Grab the handlers and unlock the shutdown manager
+        let handlers = {
+            let mut mgr = self.shutdown_manager.lock().unwrap();
+            std::mem::replace(&mut mgr.handlers, HashMap::new())
+        };
+        for sender in handlers.values() {
+            let _ = sender.send(());
+        }
     }
 
     pub fn config(&self) -> Option<Config> {
@@ -335,9 +392,7 @@ impl LspServer {
                 }
                 None => {
                     if req.method == "shutdown" {
-                        for sender in &ctx.shutdown_senders {
-                            sender.send(())?;
-                        }
+                        ctx.invoke_shutdown_handlers();
                         if ctx.connection().unwrap().handle_shutdown(&req)? {
                             return Ok(());
                         }
@@ -384,5 +439,26 @@ impl LspServer {
     ) {
         self.notification_handlers
             .insert(handler.method(), Box::new(handler));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[allow(unused_variables)]
+    #[test]
+    fn shutdown_handlers() {
+        let mut ctx = LspContext::new();
+        {
+            let h1 = ctx.add_shutdown_handler();
+            {
+                let h2 = ctx.add_shutdown_handler();
+            }
+            assert_eq!(ctx.shutdown_manager.lock().unwrap().handlers.len(), 1);
+        }
+
+        // This should not block now, because all handlers are dropped
+        ctx.invoke_shutdown_handlers();
     }
 }

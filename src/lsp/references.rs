@@ -120,7 +120,6 @@ mod tests {
     use crate::errors::MosResult;
     use crate::lsp::testing::{range, test_root};
     use crate::lsp::{LspContext, LspServer};
-    use crate::testing::enable_default_tracing;
     use itertools::Itertools;
     use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
@@ -178,7 +177,6 @@ mod tests {
 
     #[test]
     fn find_all_references() -> MosResult<()> {
-        enable_default_tracing();
         let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(test_root().join("bar.asm"), "foo: nop")?;
         server.did_open_text_document(test_root().join("main.asm"), "lda f1\nlda f2\n.import foo as f1 from \"bar.asm\"\n.import foo as f2 from \"bar.asm\"")?;

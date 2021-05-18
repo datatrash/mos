@@ -164,6 +164,7 @@ impl MosError {
             MosError::Multiple(errors) => errors
                 .iter()
                 .map(|e| e.format(&options))
+                .sorted()
                 .collect_vec()
                 .join("\n"),
         }

@@ -27,6 +27,7 @@ mod tests {
             st.root,
             "foo",
             Symbol {
+                pass_idx: 0,
                 data: SymbolData::Number(0x1234),
                 ty: SymbolType::Label,
                 read_only: false,

@@ -5,6 +5,7 @@ mod opcodes;
 mod program_counter;
 mod source_map;
 mod symbols;
+mod text_encoding;
 
 pub use analysis::*;
 pub use program_counter::*;
@@ -13,6 +14,7 @@ pub use symbols::*;
 use crate::core::codegen::config_validator::ConfigValidator;
 use crate::core::codegen::opcodes::get_opcode_bytes;
 use crate::core::codegen::source_map::SourceMap;
+use crate::core::codegen::text_encoding::encode_text;
 use crate::core::parser::code_map::Span;
 use crate::core::parser::{
     AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
@@ -20,7 +22,6 @@ use crate::core::parser::{
     VariableType,
 };
 use crate::errors::{MosError, MosResult};
-use cbm::Petscii;
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -186,38 +187,43 @@ pub enum SymbolType {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Symbol {
+    pub pass_idx: usize,
     pub data: SymbolData,
     pub ty: SymbolType,
     pub read_only: bool,
 }
 
 impl Symbol {
-    fn label<V: Into<SymbolData>>(data: V) -> Self {
+    fn label<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
         Self {
+            pass_idx,
             data: data.into(),
             ty: SymbolType::Label,
-            read_only: false,
+            read_only: true,
         }
     }
 
-    fn constant<V: Into<SymbolData>>(data: V) -> Self {
+    fn constant<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
         Self {
+            pass_idx,
             data: data.into(),
             ty: SymbolType::Variable,
             read_only: true,
         }
     }
 
-    fn macro_arg<V: Into<SymbolData>>(data: V) -> Self {
+    fn macro_arg<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
         Self {
+            pass_idx,
             data: data.into(),
             ty: SymbolType::MacroArgument,
             read_only: true,
         }
     }
 
-    fn variable<V: Into<SymbolData>>(data: V) -> Self {
+    fn variable<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
         Self {
+            pass_idx,
             data: data.into(),
             ty: SymbolType::Variable,
             read_only: false,
@@ -236,6 +242,8 @@ pub struct CodegenContext {
     tree: Arc<ParseTree>,
 
     analysis: Analysis,
+
+    pass_idx: usize,
 
     segments: HashMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
@@ -263,6 +271,7 @@ impl CodegenContext {
         Self {
             tree,
             analysis,
+            pass_idx: 0,
             segments: HashMap::new(),
             current_segment: None,
             symbols: SymbolTable::new(),
@@ -306,14 +315,20 @@ impl CodegenContext {
             let _ = self.add_symbol(
                 None,
                 path.join("start"),
-                Symbol::variable(range.start as i64),
+                Symbol::variable(self.pass_idx, range.start as i64),
             );
-            let _ = self.add_symbol(None, path.join("end"), Symbol::variable(range.end as i64));
+            let _ = self.add_symbol(
+                None,
+                path.join("end"),
+                Symbol::variable(self.pass_idx, range.end as i64),
+            );
         }
     }
 
     fn next_pass(&mut self) {
-        log::trace!("\n* NEXT PASS *");
+        self.pass_idx += 1;
+
+        log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.lock().unwrap().clear();
         self.source_map.clear();
@@ -347,43 +362,65 @@ impl CodegenContext {
         let span = span.into();
         let id = id.into();
         let path = self.current_scope.join(&id);
-        log::trace!("Inserting symbol: {} with value '{:?}'", path, value);
+        log::trace!(
+            "Inserting symbol: '{}' with value '{:?}' (inside scope '{}')",
+            &id,
+            value,
+            &self.current_scope
+        );
 
-        // If the symbol already existed but with a different value,
-        // mark it as undefined so we will trigger another pass
         let mut should_mark_as_undefined = false;
         let symbol_nx = self.symbols.try_index(self.current_scope_nx, &id);
-        let existing = symbol_nx.map(|nx| self.symbols.try_get_mut(nx)).flatten();
-        let symbol_nx = match existing {
-            Some(existing) => {
-                if existing.ty != value.ty
-                    || existing.read_only != value.read_only
-                    || (existing != &value && existing.read_only)
-                {
-                    let span = span.expect("no span provided");
-                    return self.error(span, format!("cannot redefine symbol: {}", &path));
+        log::trace!("Trying to lookup symbol '{}': {:?}", &id, symbol_nx);
+        let symbol_nx = match symbol_nx {
+            Some(symbol_nx) => {
+                match self.symbols.try_get_mut(symbol_nx) {
+                    Some(existing) => {
+                        if existing.ty != value.ty
+                            || existing.read_only != value.read_only
+                            || (existing.pass_idx == value.pass_idx
+                                && existing.data != value.data
+                                && existing.read_only)
+                        {
+                            let span = span.expect("no span provided");
+                            return self.error(span, format!("cannot redefine symbol: {}", &path));
+                        }
+
+                        // If the symbol already existed but with a different value,
+                        // mark it as undefined so we will trigger another pass
+                        if existing.data != value.data {
+                            log::trace!(
+                                "`--> Symbol already existed, but has changed. Old value was: {:?}",
+                                existing
+                            );
+
+                            should_mark_as_undefined = match &value.ty {
+                                SymbolType::Label => true,
+                                SymbolType::Variable => false,
+                                SymbolType::MacroArgument => false,
+                            };
+                        }
+
+                        log::trace!("Symbol was updated with index: {:?}", symbol_nx);
+                        *existing = value;
+                    }
+                    None => {
+                        log::trace!(
+                            "Symbol was updated from 'no data' with index: {:?}",
+                            symbol_nx
+                        );
+                        self.symbols.update_data(symbol_nx, value);
+                    }
                 }
 
-                if existing != &value {
-                    log::trace!(
-                        "`--> Symbol already existed, but has changed. Old value was: {:?}",
-                        existing
-                    );
-
-                    should_mark_as_undefined = match &value.ty {
-                        SymbolType::Label => true,
-                        SymbolType::Variable => false,
-                        SymbolType::MacroArgument => false,
-                    };
-                }
-
-                *existing = value;
-                symbol_nx.unwrap()
+                symbol_nx
             }
             None => {
                 let (parent, id) = path.clone().split();
                 let parent_nx = self.symbols.ensure_index(self.symbols.root, &parent);
-                self.symbols.insert(parent_nx, id, value)
+                let nx = self.symbols.insert(parent_nx, id, value);
+                log::trace!("Symbol was inserted with index: {:?}", nx);
+                nx
             }
         };
 
@@ -763,7 +800,11 @@ impl CodegenContext {
             }
             Token::Label { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    self.add_symbol(id.span, id.data.clone(), Symbol::label(pc.as_i64()))?;
+                    self.add_symbol(
+                        id.span,
+                        id.data.clone(),
+                        Symbol::label(self.pass_idx, pc.as_i64()),
+                    )?;
                 }
 
                 if let Some(b) = block {
@@ -779,7 +820,7 @@ impl CodegenContext {
                 let loop_count = self.evaluate_expression(expr)?;
                 for index in 0..loop_count {
                     self.with_scope(loop_scope, |s| {
-                        s.add_symbol(expr.span, "index", Symbol::constant(index))?;
+                        s.add_symbol(expr.span, "index", Symbol::constant(s.pass_idx, index))?;
                         let result = s.emit_tokens(&block.inner);
                         s.remove_symbol("index");
                         result
@@ -793,11 +834,14 @@ impl CodegenContext {
                 self.add_symbol(
                     id.span,
                     &id.data,
-                    Symbol::constant(MacroDefinition {
-                        id: id.clone(),
-                        args,
-                        block: block.inner.clone(),
-                    }),
+                    Symbol::constant(
+                        self.pass_idx,
+                        MacroDefinition {
+                            id: id.clone(),
+                            args,
+                            block: block.inner.clone(),
+                        },
+                    ),
                 )?;
             }
             Token::MacroInvocation { id: name, args, .. } => {
@@ -811,7 +855,11 @@ impl CodegenContext {
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
                             let value = s.evaluate_expression(expr)?;
-                            s.add_symbol(arg_name.span, &arg_name.data, Symbol::macro_arg(value))?;
+                            s.add_symbol(
+                                arg_name.span,
+                                &arg_name.data,
+                                Symbol::macro_arg(s.pass_idx, value),
+                            )?;
                         }
 
                         s.emit_tokens(&def.block)?;
@@ -838,7 +886,7 @@ impl CodegenContext {
                     Some(block) => {
                         let old_segment =
                             std::mem::replace(&mut self.current_segment, Some(id.data.clone()));
-                        self.with_scope(&id.data, |s| s.emit_tokens(&block.inner))?;
+                        self.emit_tokens(&block.inner)?;
                         self.current_segment = old_segment;
                     }
                     None => {
@@ -847,17 +895,15 @@ impl CodegenContext {
                 }
             }
             Token::Text { encoding, text, .. } => {
-                let data = match encoding.as_ref().map(|e| &e.data) {
-                    Some(TextEncoding::Petscii) => {
-                        Petscii::from_str(&text.data).as_bytes().to_vec()
-                    }
-                    _ => text.data.as_bytes().to_vec(),
-                };
-                self.emit(text.span, &data)?;
+                let encoding = encoding
+                    .as_ref()
+                    .map(|e| e.data)
+                    .unwrap_or(TextEncoding::Ascii);
+                self.emit(text.span, &encode_text(&text.data, encoding))?;
             }
             Token::VariableDefinition { ty, id, value, .. } => {
                 let value = self.evaluate_expression(&value)?;
-                let mut symbol = Symbol::variable(value);
+                let mut symbol = Symbol::variable(self.pass_idx, value);
                 symbol.read_only = match &ty.data {
                     VariableType::Constant => true,
                     VariableType::Variable => false,
@@ -981,12 +1027,20 @@ impl CodegenContext {
             .symbols
             .ensure_index(self.symbols.root, &self.current_scope);
         self.try_current_target_pc()
-            .map(|pc| self.add_symbol(None, "-", Symbol::variable(pc.as_i64())));
-        log::trace!("Entering scope: {}", self.current_scope);
+            .map(|pc| self.add_symbol(None, "-", Symbol::variable(self.pass_idx, pc.as_i64())));
+        log::trace!(
+            "Entering scope: {} ({:?})",
+            self.current_scope,
+            self.current_scope_nx
+        );
         let result = f(self);
-        log::trace!("Leaving scope: {}", self.current_scope);
+        log::trace!(
+            "Leaving scope: {} ({:?})",
+            self.current_scope,
+            self.current_scope_nx
+        );
         self.try_current_target_pc()
-            .map(|pc| self.add_symbol(None, "+", Symbol::variable(pc.as_i64())));
+            .map(|pc| self.add_symbol(None, "+", Symbol::variable(self.pass_idx, pc.as_i64())));
         self.current_scope_nx = old_scope_nx;
         self.current_scope.pop();
         result
@@ -1005,8 +1059,8 @@ pub fn codegen(
     #[cfg(not(test))]
     const MAX_ITERATIONS: usize = usize::MAX;
 
-    let mut iterations = MAX_ITERATIONS;
-    while iterations != 0 {
+    ctx.pass_idx = 0;
+    while ctx.pass_idx != MAX_ITERATIONS {
         match ctx.emit_tokens(&ast.main_file().tokens) {
             Ok(()) => (),
             Err(e) => {
@@ -1059,7 +1113,6 @@ pub fn codegen(
         }
 
         ctx.next_pass();
-        iterations -= 1;
     }
 
     (Some(ctx), None)
@@ -1300,12 +1353,12 @@ mod tests {
     #[test]
     fn can_use_forward_references_to_other_segments() -> MosResult<()> {
         // segment b can access 'bar' since it is in a root scope
-        // segment a can access 'foo' as 'b.foo' since it is in a segment scope
+        // segment a can access 'foo' since it is in a segment scope
         let ctx = test_codegen(
             r"
                 .define segment { name = a start = $1000 }
                 .define segment { name = b start = $2000 }
-                lda b.foo
+                lda foo
                 .segment b { foo: lda bar }
                 bar: nop
                 ",
@@ -1378,6 +1431,15 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "test.asm:2:8: error: cannot redefine symbol: foo"
+        );
+    }
+
+    #[test]
+    fn cannot_redefine_labels() {
+        let err = test_codegen("foo: nop\nfoo: nop").err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:2:1: error: cannot redefine symbol: foo"
         );
     }
 
@@ -1577,9 +1639,6 @@ mod tests {
 
     #[test]
     fn can_store_text() -> MosResult<()> {
-        let ctx = test_codegen(".text \"abc\"")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![97, 98, 99]);
-
         let ctx = test_codegen(".text petscii \"abc\"")?;
         assert_eq!(ctx.current_segment().range_data(), vec![65, 66, 67]);
 

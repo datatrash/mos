@@ -1,10 +1,10 @@
 use crate::core::parser::{
-    format_trivia, AddressingMode, ArgItem, Block, Expression, ExpressionFactor, Identifier,
-    ImportArgs, ImportAs, Located, Operand, ParseTree, SpecificImportArg, Token, Trivia,
+    AddressModifier, AddressingMode, ArgItem, BinaryOp, Block, Expression, ExpressionFactor,
+    Identifier, IdentifierPath, ImportArgs, ImportAs, Located, Number, NumberType, Operand,
+    ParseTree, RegisterSuffix, SpecificImportArg, TextEncoding, Token, Trivia,
 };
-use itertools::Itertools;
 use serde::Deserialize;
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -95,6 +95,21 @@ struct CodeFormatter {
     tree: Arc<ParseTree>,
     options: FormattingOptions,
     indent: usize,
+    chunks: Vec<Chunk>,
+    spc_if_next: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum ChunkType {
+    Label,
+    Comment,
+}
+
+#[derive(Debug)]
+struct Chunk {
+    ty: Option<ChunkType>,
+    indent: usize,
+    str: String,
 }
 
 impl CodeFormatter {
@@ -103,206 +118,151 @@ impl CodeFormatter {
             tree,
             options,
             indent: 0,
+            chunks: vec![],
+            spc_if_next: false,
         }
     }
 
-    fn format<P: Into<PathBuf>>(&mut self, path: P) -> String {
+    fn format<P: Into<PathBuf>>(mut self, path: P) -> String {
         let path = path.into();
         let tree = self.tree.clone();
-        self.format_tokens(&tree.try_get_file(path).expect("File not found").tokens)
-            .trim_end()
-            .to_string()
+        self.format_tokens(
+            &tree.try_get_file(path).expect("File not found").tokens,
+            false,
+        );
+        join_chunks(self.chunks)
     }
 
-    fn format_tokens(&mut self, tokens: &[Token]) -> String {
-        let leading_trivia = self.format_line(tokens, None).nl_if_not_empty();
+    fn format_tokens(&mut self, tokens: &[Token], trim_leading_trivia: bool) {
+        // Leading trivia
+        let chunk_index = self.chunks.len();
+        self.format_line(tokens, None);
 
-        let formatted = tokens
-            .iter()
-            .enumerate()
-            .map(|(token_idx, _)| {
-                let fmt = self.format_line(tokens, Some(token_idx));
-
-                // Do we need an additional newline?
-                let extra_newline = match tokens.get(token_idx + 1) {
-                    Some(next_token) => {
-                        let token = &tokens[token_idx];
-
-                        // If the next token is an error, don't do anything special. We just want to
-                        // paste the error right after this token.
-                        if let Token::Error(_) = next_token {
-                            return fmt;
-                        }
-
-                        let (newline_if_same, newline_if_diff) = match token {
-                            Token::If { .. } => (true, true),
-                            Token::ProgramCounterDefinition { .. } => (false, false),
-                            _ => (false, true),
-                        };
-
-                        let token_type = std::mem::discriminant(token);
-                        let next_token_type = std::mem::discriminant(next_token);
-
-                        (token_type == next_token_type && newline_if_same)
-                            || (token_type != next_token_type && newline_if_diff)
-                    }
-                    None => false,
-                };
-
-                // Was the previous line a standalone comment? Then we'll skip the extra newline since we'll consider the previous
-                // comment part of this token.
-                //
-                // If there wasn't even a previous token, then we also definitely don't want to skip extra lines.
-                let allowed_to_have_extra_newlines = match fmt.last() {
-                    Some(t) => !t.starts_with("/*") && !t.starts_with("//"),
-                    None => false,
-                };
-
-                if extra_newline && allowed_to_have_extra_newlines {
-                    fmt.nl().nl()
+        if trim_leading_trivia {
+            // If we want to trim leading trivia, we'll remove any new-line chunks that were added
+            while let Some(chunk) = self.chunks.get(chunk_index) {
+                if chunk.str == "\n" {
+                    self.chunks.remove(chunk_index);
                 } else {
-                    fmt.nl()
+                    break;
                 }
-            })
-            .collect_vec();
-        let formatted = Fmt::flatten(formatted);
-        let result = Fmt::new().push(leading_trivia).push(formatted);
+            }
+        }
 
-        // Convert the Fmt into a string. Trim the start to prevent any unwanted newlines originating from the leading trivia.
-        let result = result.join("").trim_start().to_string();
+        for token_idx in 0..tokens.len() {
+            let token = &tokens[token_idx];
 
-        // If we want to indent, split all the lines, indent them and join them up again.
-        if self.indent > 0 {
-            result
-                .lines()
-                .map(|line| {
-                    if line.trim().is_empty() {
-                        "".to_string()
-                    } else {
-                        format!("{}{}", indent_prefix(self.options.whitespace.indent), line)
-                    }
-                })
-                .join("\n")
-        } else {
-            result
+            // Determine if we need some additional newlines before this token
+            if let Token::Error(_) = token {
+                // Don't do anything special
+            } else if let Some(prev_token) = if token_idx > 0 {
+                tokens.get(token_idx - 1)
+            } else {
+                None
+            } {
+                let (newline_if_same, newline_if_diff) = match token {
+                    Token::Align { .. } => (false, true),
+                    Token::Braces { .. } => (true, true),
+                    Token::File { .. } => (false, true),
+                    Token::If { .. } => (true, true),
+                    Token::Instruction(_) => (false, true),
+                    Token::Label { block, .. } => (block.is_some(), block.is_some()),
+                    Token::Loop { .. } => (true, true),
+                    Token::MacroInvocation { .. } => (
+                        false,
+                        !matches!(
+                            prev_token,
+                            Token::Instruction(_) | Token::MacroInvocation { .. }
+                        ),
+                    ),
+                    Token::VariableDefinition { .. } => (false, true),
+                    _ => (false, false),
+                };
+
+                let token_type = std::mem::discriminant(token);
+                let prev_token_type = std::mem::discriminant(prev_token);
+
+                if (token_type == prev_token_type && newline_if_same)
+                    || (token_type != prev_token_type && newline_if_diff)
+                {
+                    self.push("\n");
+                }
+            }
+
+            self.format_line(tokens, Some(token_idx));
         }
     }
 
-    fn format_line(&mut self, tokens: &[Token], token_idx: Option<usize>) -> Fmt {
-        let token = match token_idx {
-            Some(idx) => {
-                let token = &tokens[idx];
-                self.format_token(token)
-            }
-            None => Fmt::new(),
+    fn format_line(&mut self, tokens: &[Token], token_idx: Option<usize>) {
+        if let Some(idx) = token_idx {
+            let token = &tokens[idx];
+            self.format_token(token)
         };
 
-        let trivia = {
-            let trivia_idx = match token_idx {
-                Some(idx) => idx + 1,
-                None => 0,
-            };
-            match &tokens.get(trivia_idx) {
-                Some(next_token) => next_token
-                    .trivia()
-                    .map(|t| self.format_trivia(t))
-                    .unwrap_or_else(Fmt::new),
-                None => Fmt::new(),
-            }
+        let trivia_idx = match token_idx {
+            Some(idx) => idx + 1,
+            None => 0,
         };
-
-        Fmt::new()
-            .push(token)
-            .spc_if_next_if_not_empty()
-            .push(trivia)
-    }
-
-    fn format_trivia(&mut self, trivia: &[Trivia]) -> Fmt {
-        let mut fmt = Fmt::new();
-        let mut prev_newlines = 0;
-        for triv in trivia {
-            fmt = match triv {
-                Trivia::CStyle(comment) | Trivia::CppStyle(comment) => {
-                    let fmt = match prev_newlines {
-                        0 => fmt,
-                        1 => fmt.nl(),
-                        _ => {
-                            // Limit the amount of newlines to 2
-                            fmt.nl().nl()
-                        }
-                    };
-                    prev_newlines = 0;
-                    fmt.push(comment)
-                }
-                Trivia::Whitespace(_) => fmt,
-                Trivia::NewLine => {
-                    prev_newlines += 1;
-                    fmt
-                }
-            };
+        if let Some(next_token) = &tokens.get(trivia_idx) {
+            next_token.trivia().map(|t| self.fmt(t));
         }
-        fmt
     }
 
-    fn format_optional_token<T: AsRef<Token>>(&mut self, token: &Option<T>) -> Fmt {
-        token
-            .as_ref()
-            .map(|t| self.format_token(t.as_ref()))
-            .unwrap_or_default()
-    }
-
-    fn format_token(&mut self, token: &Token) -> Fmt {
+    fn format_token(&mut self, token: &Token) {
         match token {
-            Token::Align { tag, value } => Fmt::new().push(&tag.data).spc().fmt(self, value),
-            Token::Braces { block, .. } => Fmt::new().fmt(self, block),
-            Token::Config(block) => Fmt::new().fmt(self, block),
-            Token::ConfigPair { key, eq, value } => Fmt::new()
-                .push(&key.data)
-                .spc()
-                .fmt(self, eq)
-                .spc()
-                .fmt(self, value),
-            Token::Data { values, size } => Fmt::new()
-                .push(size.data.to_string())
-                .spc()
-                .fmt(self, values),
-            Token::Definition { tag, id, value } => Fmt::new()
-                .push(&tag.data)
-                .spc()
-                .fmt(self, id)
-                .spc()
-                .fmt(self, value),
-            Token::Eof(_) => Fmt::new(),
-            Token::Error(invalid) => Fmt::new()
-                .push(format_trivia(&invalid.trivia))
-                .push(&invalid.data),
-            Token::Expression(expr) => Fmt::new().fmt(self, expr),
+            Token::Align { tag, value } => {
+                self.push(&tag.data).push(" ").fmt(value.as_ref());
+            }
+            Token::Braces { block, .. } | Token::Config(block) => {
+                self.format_block(block);
+            }
+            Token::ConfigPair { key, eq, value } => {
+                self.push(&key.data)
+                    .push(" ")
+                    .fmt(eq)
+                    .push(" ")
+                    .fmt(value.as_ref());
+            }
+            Token::Data { values, size } => {
+                self.push(&size.data).push(" ").fmt(values);
+            }
+            Token::Definition { tag, id, value } => {
+                self.push(&tag.data).push(" ").fmt(id).push(" ").fmt(value);
+            }
+            Token::Error(_) => panic!("Should have been filtered out"),
+            Token::Eof(_) => (),
+            Token::Expression(expr) => self.format_expression(expr),
             Token::File {
                 tag,
                 lquote,
                 filename,
-            } => Fmt::new()
-                .push(&tag.data)
-                .spc()
-                .fmt(self, lquote)
-                .fmt(self, filename)
-                .push("\""),
+            } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(lquote)
+                    .fmt(filename)
+                    .push("\"");
+            }
             Token::If {
                 tag_if,
                 value,
                 if_,
                 tag_else,
                 else_,
-            } => Fmt::new()
-                .push(&tag_if.data)
-                .spc()
-                .fmt(self, value)
-                .spc()
-                .fmt(self, if_)
-                .spc_if_next()
-                .fmt(self, tag_else)
-                .spc_if_next()
-                .fmt(self, else_),
+            } => {
+                self.push(&tag_if.data)
+                    .push(" ")
+                    .fmt(value)
+                    .push(" ")
+                    .fmt(if_);
+
+                if let Some(tag_else) = tag_else {
+                    self.push(" ")
+                        .fmt(tag_else.as_ref())
+                        .push(" ")
+                        .fmt(else_.as_ref().unwrap());
+                }
+            }
             Token::Import {
                 tag,
                 args,
@@ -312,29 +272,28 @@ impl CodeFormatter {
                 block,
                 ..
             } => {
-                let f = Fmt::new().push(&tag.data).spc();
+                self.push(&tag.data).push(" ");
 
-                let f = match args {
+                match args {
                     ImportArgs::All(c, as_) => {
-                        let f = f.fmt(self, c);
-                        match as_ {
-                            Some(as_) => f.push(self.format_import_as(as_)),
-                            None => f,
-                        }
+                        self.fmt(c.as_ref()).spc_if_next().fmt(as_);
                     }
-                    ImportArgs::Specific(args) => f.fmt(self, args),
+                    ImportArgs::Specific(args) => {
+                        self.fmt(args);
+                    }
                 };
 
-                f.spc()
-                    .push(&from.data)
-                    .spc()
-                    .fmt(self, lquote)
-                    .fmt(self, filename.map(|f| format!("{}\"", f)))
+                self.push(" ")
+                    .fmt(from.as_ref())
+                    .push(" ")
+                    .fmt(lquote.as_ref())
+                    .fmt(filename.as_ref())
+                    .push("\"")
                     .spc_if_next()
-                    .fmt(self, block)
+                    .fmt(block);
             }
-            Token::Instruction(i) => Fmt::new()
-                .push(
+            Token::Instruction(i) => {
+                self.push(
                     &self
                         .options
                         .mnemonics
@@ -342,578 +301,380 @@ impl CodeFormatter {
                         .format(&i.mnemonic.data.to_string()),
                 )
                 .spc_if_next()
-                .fmt(self, &i.operand),
-            Token::Label { id, colon, block } => Fmt::new()
-                .push(&id.data.to_string())
-                .fmt(self, colon)
-                .spc()
-                .fmt(self, block),
+                .fmt(&i.operand)
+                .clear_spc_if_next();
+            }
+            Token::Label {
+                id,
+                colon: _,
+                block,
+            } => {
+                self.push_type(ChunkType::Label, format!("{}:", &id.data))
+                    .fmt(block);
+            }
             Token::Loop {
                 tag,
                 loop_scope: _,
                 expr,
                 block,
-            } => Fmt::new()
-                .push(&tag.data)
-                .spc()
-                .fmt(self, expr)
-                .spc()
-                .fmt(self, block),
+            } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(expr.as_ref())
+                    .push(" ")
+                    .fmt(block);
+            }
             Token::MacroDefinition {
                 tag,
                 id,
                 lparen,
-                rparen,
                 args,
+                rparen,
                 block,
-            } => Fmt::new()
-                .push(&tag.data)
-                .spc()
-                .fmt(self, id)
-                .fmt(self, lparen)
-                .fmt(self, args)
-                .fmt(self, rparen)
-                .spc()
-                .fmt(self, block),
+            } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(id.as_ref())
+                    .fmt(lparen.as_ref())
+                    .fmt(args)
+                    .fmt(rparen.as_ref())
+                    .spc_if_next()
+                    .fmt(block);
+            }
             Token::MacroInvocation {
-                id: name,
+                id,
                 lparen,
                 args,
                 rparen,
-            } => Fmt::new()
-                .fmt(self, name)
-                .fmt(self, lparen)
-                .fmt(self, args)
-                .fmt(self, rparen),
-            Token::ProgramCounterDefinition { star, eq, value } => Fmt::new()
-                .push(&star.data.to_string())
-                .spc()
-                .fmt(self, eq)
-                .spc()
-                .fmt(self, value),
-            Token::Segment { tag, id, block } => Fmt::new()
-                .push(&tag.data)
-                .spc()
-                .fmt(self, id)
-                .spc_if_next()
-                .fmt(self, block),
+            } => {
+                self.push(&id.data)
+                    .fmt(lparen.as_ref())
+                    .fmt(args)
+                    .fmt(rparen.as_ref());
+            }
+            Token::ProgramCounterDefinition { star, eq, value } => {
+                self.push(&star.data)
+                    .push(" ")
+                    .fmt(eq.as_ref())
+                    .push(" ")
+                    .fmt(value.as_ref());
+            }
+            Token::Segment { tag, id, block } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(id.as_ref())
+                    .push(" ")
+                    .fmt(block);
+            }
             Token::Text {
                 tag,
                 encoding,
                 lquote,
                 text,
-            } => Fmt::new()
-                .push(&tag.data)
-                .spc_if_next_if_not_empty()
-                .fmt_opt(self, encoding, |e| e.map(|f| format!("{}\"", f)))
-                .spc()
-                .fmt(self, lquote)
-                .fmt(self, text)
-                .push("\""),
-            Token::VariableDefinition { ty, id, eq, value } => Fmt::new()
-                .push(&ty.data.to_string())
-                .spc()
-                .fmt(self, id)
-                .spc()
-                .fmt(self, eq)
-                .spc()
-                .fmt(self, value),
+            } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(encoding)
+                    .push(" ")
+                    .fmt(lquote.as_ref())
+                    .fmt(text.as_ref())
+                    .push("\"");
+            }
+            Token::VariableDefinition { ty, id, eq, value } => {
+                self.push(&ty.data)
+                    .push(" ")
+                    .fmt(id)
+                    .push(" ")
+                    .fmt(eq)
+                    .push(" ")
+                    .fmt(value);
+            }
         }
     }
 
-    fn format_operand(&mut self, operand: &Operand) -> Fmt {
-        let suffix = operand
-            .suffix
-            .as_ref()
-            .map(|s| {
-                Fmt::new().fmt(self, &s.comma).fmt(
-                    self,
-                    s.register.map(|r| {
-                        self.options
-                            .mnemonics
-                            .register_casing
-                            .format(&r.to_string())
-                    }),
-                )
-            })
-            .unwrap_or_default();
+    fn format_block(&mut self, block: &Block) {
+        self.push(&block.lparen.data).push("\n");
 
-        let fmt = Fmt::new()
-            .fmt(self, &operand.lchar)
-            .fmt(self, &operand.expr);
-
-        match operand.addressing_mode {
-            AddressingMode::Indirect => fmt.push(suffix).fmt(self, &operand.rchar),
-            AddressingMode::OuterIndirect => fmt.fmt(self, &operand.rchar).push(suffix),
-            _ => fmt.push(suffix),
-        }
-    }
-
-    fn format_block(&mut self, block: &Block) -> Fmt {
+        // Since we want to deal with tokens and the trivia _after_ the token,
+        // we have to grab the trivia from the 'rparen' and attach it to the inner token,
+        // so that format_tokens can deal with the full Vec<Token> correctly.
+        let mut inner = block.inner.clone();
+        inner.push(Token::Eof(block.rparen.clone().map_into(|_| ())));
         self.indent += 4;
-        let inner = self.format_tokens(&block.inner);
+        self.format_tokens(&inner, true);
         self.indent -= 4;
-        Fmt::new()
-            .fmt(self, &block.lparen.map(|_| "{\n"))
-            .push(inner)
-            .spc_if_next()
-            .fmt(self, &block.rparen.map(|_| "\n}"))
+
+        // If the inner chunks did not end with a new-line, we'll add one here.
+        let need_nl = self
+            .chunks
+            .last()
+            .map(|chunk| !chunk.str.ends_with('\n'))
+            .unwrap_or_default();
+        if need_nl {
+            self.push("\n");
+        }
+
+        // Now, in order to prevent the rparen trivia to be handled twice, we don't use rparen's trivia.
+        self.push(&block.rparen.data);
     }
 
-    fn format_expression(&mut self, expr: &Expression) -> Fmt {
+    fn format_expression(&mut self, expr: &Expression) {
         match expr {
+            Expression::BinaryExpression(b) => {
+                self.fmt(b.lhs.as_ref())
+                    .push(" ")
+                    .fmt(&b.op)
+                    .push(" ")
+                    .fmt(b.rhs.as_ref());
+            }
             Expression::Factor {
                 factor,
                 flags: _,
                 tag_not,
                 tag_neg,
-            } => Fmt::new()
-                .fmt(self, tag_not)
-                .fmt(self, tag_neg)
-                .fmt(self, factor),
-            Expression::BinaryExpression(b) => Fmt::new()
-                .fmt(self, &b.lhs)
-                .spc()
-                .fmt(self, b.op.map(|op| op.to_string()))
-                .spc()
-                .fmt(self, &b.rhs),
+            } => {
+                self.fmt(tag_not).fmt(tag_neg).fmt(factor.as_ref());
+            }
         }
     }
-    fn format_expression_factor(&mut self, factor: &ExpressionFactor) -> Fmt {
+
+    fn format_expression_factor(&mut self, factor: &ExpressionFactor) {
         match factor {
-            ExpressionFactor::CurrentProgramCounter(star) => Fmt::new().fmt(self, star),
+            ExpressionFactor::CurrentProgramCounter(star) => {
+                self.fmt(star);
+            }
             ExpressionFactor::ExprParens {
                 lparen,
                 inner,
                 rparen,
-            } => Fmt::new()
-                .fmt(self, lparen)
-                .fmt(self, inner)
-                .fmt(self, rparen),
+            } => {
+                self.fmt(lparen).fmt(inner.as_ref()).fmt(rparen);
+            }
             ExpressionFactor::FunctionCall {
                 name,
                 lparen,
                 args,
                 rparen,
-            } => Fmt::new()
-                .fmt(self, name)
-                .fmt(self, lparen)
-                .fmt(self, args)
-                .fmt(self, rparen),
-            ExpressionFactor::IdentifierValue { path, modifier } => Fmt::new()
-                .fmt_opt(self, modifier, |m| m.map(|m| m.to_string()))
-                .fmt(self, path.map(|p| p.to_string())),
-            ExpressionFactor::Number { ty, value } => Fmt::new()
-                .fmt(self, ty.map(|t| t.to_string()))
-                .fmt(self, value.map(|v| v.to_string())),
-        }
-    }
-
-    fn format_expression_args(&mut self, args: &[ArgItem<Expression>]) -> Fmt {
-        let mut fmt = Fmt::new();
-        for (expr, comma) in args {
-            fmt = fmt.fmt(self, expr).fmt(self, comma).spc_if_next();
-        }
-        fmt
-    }
-
-    fn format_identifier_args(&mut self, args: &[ArgItem<Identifier>]) -> Fmt {
-        let mut fmt = Fmt::new();
-        for (id, comma) in args {
-            fmt = fmt.fmt(self, id).fmt(self, comma).spc_if_next();
-        }
-        fmt
-    }
-
-    fn format_import_as(&mut self, as_: &ImportAs) -> Fmt {
-        let mut fmt = Fmt::new();
-        fmt = fmt
-            .spc()
-            .fmt(self, &as_.tag)
-            .spc()
-            .fmt(self, &as_.path.map(|p| p.to_string()));
-        fmt
-    }
-
-    fn format_specific_import_args(&mut self, args: &[ArgItem<SpecificImportArg>]) -> Fmt {
-        let mut fmt = Fmt::new();
-        for (path, comma) in args {
-            fmt = fmt.fmt(self, &path.data.path.map(|p| p.to_string()));
-
-            if let Some(as_) = &path.data.as_ {
-                fmt = fmt.push(self.format_import_as(as_));
+            } => {
+                self.fmt(name).fmt(lparen).fmt(args).fmt(rparen);
             }
-
-            fmt = fmt.fmt(self, comma).spc_if_next();
-        }
-        fmt
-    }
-
-    fn format_optional_located<T: Display, L: AsRef<Located<T>>>(&mut self, lt: &Option<L>) -> Fmt {
-        lt.as_ref()
-            .map(|lt| self.format_located(lt.as_ref()))
-            .unwrap_or_default()
-    }
-
-    fn format_located<T: Display>(&mut self, lt: &Located<T>) -> Fmt {
-        let trivia = self.format_located_trivia(lt);
-        Fmt::new()
-            .push(trivia)
-            .spc_if_next_if_not_empty()
-            .push(lt.data.to_string())
-    }
-
-    fn format_located_token(&mut self, lt: &Located<Token>) -> Fmt {
-        let trivia = self.format_located_trivia(lt);
-        let data = self.format_token(&lt.data);
-        Fmt::new()
-            .push(trivia)
-            .spc_if_next_if_not_empty()
-            .push(data)
-    }
-
-    fn format_located_expression(&mut self, lt: &Located<Expression>) -> Fmt {
-        let trivia = self.format_located_trivia(lt);
-        let data = self.format_expression(&lt.data);
-        Fmt::new()
-            .push(trivia)
-            .spc_if_next_if_not_empty()
-            .push(data)
-    }
-
-    fn format_located_expression_factor(&mut self, lt: &Located<ExpressionFactor>) -> Fmt {
-        let trivia = self.format_located_trivia(lt);
-        let data = self.format_expression_factor(&lt.data);
-        Fmt::new()
-            .push(trivia)
-            .spc_if_next_if_not_empty()
-            .push(data)
-    }
-
-    fn format_located_trivia<T>(&mut self, lt: &Located<T>) -> Fmt {
-        lt.trivia
-            .as_ref()
-            .map(|t| self.format_trivia(&t.data))
-            .unwrap_or_default()
-    }
-}
-
-#[derive(Debug)]
-struct Fmt {
-    lines: Vec<String>,
-    debug: bool,
-    spc_if_next: bool,
-}
-
-#[derive(Debug)]
-struct FmtLine(Vec<String>);
-
-impl FmtLine {
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    fn starts_with(&self, pat: &str) -> bool {
-        self.0
-            .first()
-            .map(|s| s.starts_with(pat))
-            .unwrap_or_default()
-    }
-}
-
-impl From<Fmt> for FmtLine {
-    fn from(f: Fmt) -> Self {
-        Self(f.lines)
-    }
-}
-
-impl From<String> for FmtLine {
-    fn from(f: String) -> Self {
-        FmtLine(vec![f])
-    }
-}
-
-impl From<&String> for FmtLine {
-    fn from(f: &String) -> Self {
-        FmtLine(vec![f.clone()])
-    }
-}
-
-impl From<&str> for FmtLine {
-    fn from(f: &str) -> Self {
-        FmtLine(vec![f.to_string()])
-    }
-}
-
-impl From<Vec<String>> for FmtLine {
-    fn from(f: Vec<String>) -> Self {
-        FmtLine(f)
-    }
-}
-
-impl Default for Fmt {
-    fn default() -> Self {
-        Fmt::new()
-    }
-}
-
-trait Formattable {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt;
-}
-
-impl Formattable for &Box<Located<Token>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located_token(self)
-    }
-}
-
-impl Formattable for &Located<Token> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located_token(self)
-    }
-}
-
-impl Formattable for &Option<Box<Token>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_optional_token(self)
-    }
-}
-
-impl Formattable for &Located<Expression> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located_expression(self)
-    }
-}
-
-impl Formattable for &Located<ExpressionFactor> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located_expression_factor(self)
-    }
-}
-
-impl Formattable for &Located<char> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located(self)
-    }
-}
-
-impl Formattable for &Option<Located<char>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_optional_located(self)
-    }
-}
-
-impl Formattable for &Located<Identifier> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located(&self.map(|i| i.to_string()))
-    }
-}
-
-impl Formattable for &Located<&str> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located(self)
-    }
-}
-
-impl Formattable for &Located<String> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located(self)
-    }
-}
-
-impl Formattable for Located<String> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located(self)
-    }
-}
-
-impl Formattable for &Option<Located<String>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        self.as_ref()
-            .map(|s| formatter.format_located(s))
-            .unwrap_or_default()
-    }
-}
-
-impl Formattable for &Block {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_block(self)
-    }
-}
-
-impl Formattable for &Option<Block> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        self.as_ref()
-            .map(|b| formatter.format_block(b))
-            .unwrap_or_default()
-    }
-}
-
-impl Formattable for &Option<Operand> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        self.as_ref()
-            .map(|o| formatter.format_operand(o))
-            .unwrap_or_default()
-    }
-}
-
-impl Formattable for &Expression {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_expression(self)
-    }
-}
-
-impl Formattable for &Box<Located<Expression>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located_expression(self)
-    }
-}
-
-impl Formattable for &Box<Located<ExpressionFactor>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_located_expression_factor(self)
-    }
-}
-
-impl Formattable for &Vec<ArgItem<Expression>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_expression_args(self)
-    }
-}
-
-impl Formattable for &Vec<ArgItem<Identifier>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_identifier_args(self)
-    }
-}
-
-impl Formattable for &Vec<ArgItem<SpecificImportArg>> {
-    fn format(&self, formatter: &mut CodeFormatter) -> Fmt {
-        formatter.format_specific_import_args(self)
-    }
-}
-
-impl Fmt {
-    fn new() -> Self {
-        Self {
-            lines: vec![],
-            debug: false,
-            spc_if_next: false,
+            ExpressionFactor::IdentifierValue { path, modifier } => {
+                self.fmt(path).fmt(modifier);
+            }
+            ExpressionFactor::Number { ty, value } => {
+                self.fmt(ty).fmt(value);
+            }
         }
     }
 
-    #[allow(dead_code)]
-    fn debug(mut self) -> Self {
-        self.debug = true;
-        log::trace!("== debug =============================");
+    fn fmt<F: Formattable>(&mut self, f: F) -> &mut Self {
+        f.format(self);
         self
     }
 
-    #[allow(dead_code)]
-    fn debug_end(mut self) -> Self {
-        log::trace!("== debug end =========================");
-        self.debug = false;
-        self
-    }
-
-    #[allow(dead_code)]
-    fn trace(&self) {
-        log::trace!("== trace =============================");
-        for line in &self.lines {
-            log::trace!("{}", line);
-        }
-        log::trace!("== trace end =========================");
-    }
-
-    fn last(&self) -> Option<&String> {
-        self.lines.last()
-    }
-
-    fn push<D: Into<FmtLine>>(mut self, data: D) -> Self {
-        let was_spc_if_next = self.spc_if_next;
-        self.spc_if_next = false;
-
-        let data = data.into();
-        if data.is_empty() {
-            return self;
-        }
-
-        let should_add_space = !data.starts_with("\n");
-        let data = if was_spc_if_next && should_add_space {
-            let mut r = vec![" ".to_string()];
-            r.extend(data.0);
-            FmtLine(r)
-        } else {
-            data
-        };
-
-        if self.debug {
-            log::trace!("Inserting: {:?}", &data);
-        }
-        self.lines.extend(data.0);
-        self
-    }
-
-    fn fmt<D: Formattable>(self, formatter: &mut CodeFormatter, data: D) -> Self {
-        self.push(data.format(formatter))
-    }
-
-    fn fmt_opt<D, F: Fn(&D) -> T, T: Formattable>(
-        self,
-        formatter: &mut CodeFormatter,
-        data: &Option<D>,
-        map: F,
-    ) -> Self {
-        if let Some(d) = data {
-            let d = map(d);
-            self.push(d.format(formatter))
-        } else {
-            self
-        }
-    }
-
-    fn spc(self) -> Self {
-        self.push(" ")
-    }
-
-    fn spc_if_next(mut self) -> Self {
+    fn spc_if_next(&mut self) -> &mut Self {
         self.spc_if_next = true;
         self
     }
 
-    fn spc_if_next_if_not_empty(mut self) -> Self {
-        if !self.is_empty() {
-            self.spc_if_next = true;
-        }
+    fn clear_spc_if_next(&mut self) -> &mut Self {
+        self.spc_if_next = false;
         self
     }
 
-    fn nl(self) -> Self {
-        self.push("\n")
+    fn push<S: Display>(&mut self, str: S) -> &mut Self {
+        self.push_type(None, str)
     }
 
-    fn nl_if_not_empty(self) -> Self {
-        if !self.is_empty() {
-            self.nl()
-        } else {
-            self
+    fn push_type<TY: Into<Option<ChunkType>>, S: Display>(&mut self, ty: TY, str: S) -> &mut Self {
+        let mut str = str.to_string();
+        if str.is_empty() {
+            return self;
+        }
+
+        if self.spc_if_next {
+            str = format!(" {}", str);
+            self.spc_if_next = false;
+        }
+
+        self.chunks.push(Chunk {
+            ty: ty.into(),
+            indent: self.indent,
+            str,
+        });
+        self
+    }
+}
+
+trait Formattable {
+    fn format(&self, formatter: &mut CodeFormatter);
+}
+
+macro_rules! basic_format {
+    ($s:ty) => {
+        impl Formattable for $s {
+            fn format(&self, formatter: &mut CodeFormatter) {
+                formatter.push(self);
+            }
+        }
+    };
+}
+
+basic_format!(&char);
+basic_format!(&str);
+basic_format!(&String);
+basic_format!(&AddressModifier);
+basic_format!(&BinaryOp);
+basic_format!(&Identifier);
+basic_format!(&IdentifierPath);
+basic_format!(&NumberType);
+basic_format!(&Number);
+basic_format!(&TextEncoding);
+
+impl Formattable for &Block {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter.format_block(self);
+    }
+}
+
+impl Formattable for &Operand {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        let fmt_suffix = |formatter: &mut CodeFormatter, suffix: &Option<RegisterSuffix>| {
+            if let Some(s) = suffix {
+                formatter.fmt(&s.comma).spc_if_next();
+                formatter.fmt(&s.register.map(|r| {
+                    formatter
+                        .options
+                        .mnemonics
+                        .register_casing
+                        .format(&r.to_string())
+                }));
+                formatter.clear_spc_if_next();
+            }
+        };
+
+        formatter.fmt(&self.lchar).fmt(&self.expr);
+
+        match self.addressing_mode {
+            AddressingMode::Indirect => {
+                fmt_suffix(formatter, &self.suffix);
+                formatter.fmt(&self.rchar);
+            }
+            AddressingMode::OuterIndirect => {
+                formatter.fmt(&self.rchar);
+                fmt_suffix(formatter, &self.suffix);
+            }
+            _ => {
+                fmt_suffix(formatter, &self.suffix);
+            }
         }
     }
+}
 
-    fn is_empty(&self) -> bool {
-        self.lines.iter().all(|line| line.is_empty())
+impl Formattable for &Token {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter.format_token(self);
     }
+}
 
-    fn join(self, join: &str) -> String {
-        self.lines.into_iter().join(join)
+impl Formattable for &Box<Token> {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter.format_token(self);
     }
+}
 
-    fn flatten(fmts: Vec<Fmt>) -> Fmt {
-        let mut result = Fmt::new();
-        for fmt in fmts {
-            result = result.push(fmt.lines);
+impl Formattable for &Expression {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter.format_expression(self);
+    }
+}
+
+impl Formattable for &ExpressionFactor {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter.format_expression_factor(self);
+    }
+}
+
+impl Formattable for &ImportAs {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter
+            .fmt(self.tag.as_ref())
+            .push(" ")
+            .fmt(self.path.as_ref());
+    }
+}
+
+impl Formattable for &Vec<ArgItem<Expression>> {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        for (expr, comma) in *self {
+            formatter.fmt(expr).fmt(comma).spc_if_next();
         }
-        result
+        formatter.clear_spc_if_next();
+    }
+}
+
+impl Formattable for &Vec<ArgItem<Identifier>> {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        for (id, comma) in *self {
+            formatter.fmt(id).fmt(comma).spc_if_next();
+        }
+        formatter.clear_spc_if_next();
+    }
+}
+
+impl Formattable for &Vec<ArgItem<SpecificImportArg>> {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        for (path, comma) in *self {
+            formatter
+                .fmt(&path.data.path)
+                .spc_if_next()
+                .fmt(&path.data.as_)
+                .fmt(comma)
+                .spc_if_next();
+        }
+        formatter.clear_spc_if_next();
+    }
+}
+
+impl<'a, T> Formattable for &'a Option<T>
+where
+    &'a T: Formattable,
+    T: 'a,
+{
+    fn format(&self, formatter: &mut CodeFormatter) {
+        if let Some(s) = self.as_ref() {
+            s.format(formatter)
+        }
+    }
+}
+
+impl<'a, T> Formattable for &'a Located<T>
+where
+    &'a T: Formattable,
+    T: 'a,
+{
+    fn format(&self, formatter: &mut CodeFormatter) {
+        if let Some(t) = self.trivia.as_ref() {
+            formatter.fmt(&t.data);
+        }
+
+        formatter.fmt(&self.data);
+    }
+}
+
+impl Formattable for &Vec<Trivia> {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        for triv in *self {
+            match triv {
+                Trivia::CStyle(comment) | Trivia::CppStyle(comment) => {
+                    formatter.push_type(ChunkType::Comment, comment);
+                }
+                Trivia::Whitespace(_) => (),
+                Trivia::NewLine => {
+                    formatter.push("\n");
+                }
+            };
+        }
     }
 }
 
@@ -922,118 +683,115 @@ pub fn format<P: Into<PathBuf>>(
     ast: Arc<ParseTree>,
     options: FormattingOptions,
 ) -> String {
-    let mut fmt = CodeFormatter::new(ast, options);
+    let fmt = CodeFormatter::new(ast, options);
     fmt.format(path)
 }
 
-fn indent_prefix(indent: usize) -> String {
-    let mut indent_prefix = "".to_string();
-    for _ in 0..indent {
-        indent_prefix += " "
+fn join_chunks(chunks: Vec<Chunk>) -> String {
+    let mut result = vec![];
+    let num_chunks = chunks.len();
+
+    let mut line: String = "".into();
+    let mut indent = None;
+    let mut had_standalone_comment = false;
+    let mut prev_newlines = 0;
+
+    for (idx, chunk) in chunks.iter().enumerate() {
+        if indent.is_none() {
+            indent = Some(chunk.indent);
+        }
+
+        for str in chunk.str.split_inclusive("\n") {
+            match chunk.ty {
+                Some(ChunkType::Label) => {
+                    line += format!("{:>width$}", format!("{} ", str), width = 20).as_str();
+                }
+                None => {
+                    line = format!("{:<width$}{}", line, str, width = 20);
+                }
+                Some(ChunkType::Comment) => {
+                    let mut is_eol = false;
+
+                    // Is the next chunk a newline? Then this comment is at the end of the line.
+                    if let Some(next_chunk) = chunks.get(idx + 1) {
+                        if next_chunk.str == "\n" {
+                            is_eol = true;
+                        }
+                    } else {
+                        // eof, so definitely eol :)
+                        is_eol = true;
+                    }
+                    if is_eol {
+                        line = format!("{:<width$}{}", line, str, width = 40);
+                    } else {
+                        // Add comment in-line, and add a space at the end to cleanly separate it
+                        line = format!("{:<width$}{} ", line, str, width = 20);
+                    }
+                }
+            }
+
+            if str.contains('\n') || idx == num_chunks - 1 {
+                let should_add;
+
+                if line.trim().is_empty() {
+                    // We should only add empty lines if:
+                    // - The previous line was not a standalone comment
+                    // - We did not have more than 1 empty line already
+                    should_add = !had_standalone_comment && prev_newlines == 0;
+                    if should_add {
+                        prev_newlines += 1;
+                    }
+                } else {
+                    // If the line only consists of comments, move them to the 'code' column
+                    if line.len() > 40 {
+                        let (label_code, comment) = line.split_at(40);
+                        if label_code.trim().is_empty() {
+                            line = format!("{:<width$}{}", "", comment, width = 20);
+                            had_standalone_comment = true;
+                            prev_newlines = 0;
+                            should_add = true;
+                        } else {
+                            had_standalone_comment = false;
+                            prev_newlines = 0;
+                            should_add = true;
+                        }
+                    } else {
+                        had_standalone_comment = false;
+                        prev_newlines = 0;
+                        should_add = true;
+                    }
+                }
+
+                if should_add {
+                    let formatted = format!(
+                        "{:<indent$}{}",
+                        "",
+                        line,
+                        indent = indent.unwrap_or_default()
+                    )
+                    .trim_end()
+                    .to_string();
+                    result.push(formatted);
+                }
+
+                line = "".into();
+                indent = None;
+            }
+        }
     }
-    indent_prefix
+
+    result.join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::{format, FormattingOptions};
+    use crate::core::parser::parse_or_err;
     use crate::core::parser::source::{InMemoryParsingSource, ParsingSource};
-    use crate::core::parser::{parse, parse_or_err};
-    use crate::errors::{MosError, MosResult};
-    use crate::formatting::BracePosition;
-    use itertools::Itertools;
+    use crate::errors::MosResult;
+    use crate::formatting::{join_chunks, Chunk, ChunkType};
+    use crate::testing::xplat_eq;
     use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn newline_braces() -> MosResult<()> {
-        let source = "{nop}";
-        let expected = "{\n    nop\n}";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let mut opts = FormattingOptions::default();
-        opts.braces.position = BracePosition::NewLine;
-        let actual = format("test.asm", ast, opts);
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn no_newline_if_same() -> MosResult<()> {
-        let source = "nop\nnop\n// hello\nnop\n\n// foo\n.align 8\n.align 16";
-        let expected = "nop\nnop\n// hello\nnop\n\n// foo\n.align 8\n.align 16";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn keep_standalone_comments() -> MosResult<()> {
-        let source = "nop\n\n// standalone\nnop";
-        let expected = "nop\n\n// standalone\nnop";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn keep_grouped_comments() -> MosResult<()> {
-        let source = "// a\n// b";
-        let expected = "// a\n// b";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn block_indentation() -> MosResult<()> {
-        let source = "{stx data\n           .if test { nop  }      }";
-        let expected = "{\n    stx data\n\n    .if test {\n        nop\n    }\n}";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn simple_leading_trivia_block_comments() -> MosResult<()> {
-        let source = "{\n/* nice*/\nnop}";
-        let expected = "{\n    /* nice*/\n    nop\n}";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn simple_block_comments() -> MosResult<()> {
-        let source = "{nop/* nice*/}";
-        let expected = "{\n    nop /* nice*/\n}";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn block_comments() -> MosResult<()> {
-        let source = r"data: {          /* here it is */
- .byte          1// hello
- .word  4
- nop}";
-        let expected = r"data: {
-    /* here it is */
-    .byte 1 // hello
-    .word 4
-
-    nop
-}";
-        let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
-        let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
-        Ok(())
-    }
 
     #[test]
     fn default_formatting_options() -> MosResult<()> {
@@ -1041,7 +799,7 @@ mod tests {
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
+        xplat_eq(actual, expected);
         Ok(())
     }
 
@@ -1051,36 +809,39 @@ mod tests {
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format("test.asm", ast, FormattingOptions::default());
-        eq(actual, expected);
+        xplat_eq(actual, expected);
         Ok(())
     }
 
     #[test]
-    fn can_read_config() -> MosResult<()> {
-        let toml = include_str!("../../test/cli/format/mos-default-formatting.toml");
-        let cfg: FormattingOptions = toml::from_str(toml).map_err(MosError::from)?;
-        assert_eq!(cfg, FormattingOptions::default());
-
-        Ok(())
-    }
-
-    #[test]
-    fn format_with_errors() {
-        let source = ".segment foo {boop}\n{nop}";
-        let expected = ".segment foo {boop}\n\n{\n    nop\n}";
-        let (ast, _) = parse("test.asm".as_ref(), get_source(source));
-        let actual = format("test.asm", ast.unwrap(), FormattingOptions::default());
-        eq(actual, expected);
-    }
-
-    #[test]
-    fn multiple_files() {
-        let (ast, _) = parse(
-            "test.asm".as_ref(),
-            get_source(".import * from \"other.asm\""),
+    fn can_join_chunks() {
+        let chunks = vec![
+            chunk(Some(ChunkType::Comment), 0, "// hello"),
+            chunk(None, 0, "\n"),
+            chunk(None, 0, "\n"),
+            chunk(None, 0, "\n"),
+            chunk(None, 0, "foo "),
+            chunk(Some(ChunkType::Comment), 0, "/* hi */\n/* ho */"),
+            chunk(None, 0, "bar"),
+            chunk(Some(ChunkType::Comment), 0, "// comment"),
+            chunk(None, 0, "\n"),
+            chunk(None, 0, "\n"),
+            chunk(None, 0, "\n"),
+            chunk(Some(ChunkType::Label), 4, "label:"),
+            chunk(None, 4, "baz"),
+        ];
+        assert_eq!(
+            join_chunks(chunks),
+            "                    // hello\n                    foo /* hi */\n                    /* ho */ bar        // comment\n\n                 label: baz"
         );
-        let actual = format("other.asm", ast.unwrap(), FormattingOptions::default());
-        eq(actual, "{\n    nop\n}");
+    }
+
+    fn chunk<S: Into<String>>(ty: Option<ChunkType>, indent: usize, str: S) -> Chunk {
+        Chunk {
+            ty,
+            indent,
+            str: str.into(),
+        }
     }
 
     fn get_source(src: &str) -> Arc<Mutex<dyn ParsingSource>> {
@@ -1088,16 +849,5 @@ mod tests {
             .add("test.asm", src)
             .add("other.asm", "{nop}")
             .into()
-    }
-
-    // Cross-platform eq
-    fn eq<S: AsRef<str>, T: AsRef<str>>(actual: S, expected: T) {
-        use crate::LINE_ENDING;
-
-        // Split the result into lines to work around cross-platform line ending normalization issues
-        assert_eq!(
-            actual.as_ref().lines().join(LINE_ENDING),
-            expected.as_ref().lines().join(LINE_ENDING)
-        );
     }
 }

@@ -54,7 +54,7 @@ mod tests {
         let shutdown_receiver = ctx.add_shutdown_handler();
         let some_other_thread = thread::spawn(move || {
             // expect this shutdown receiver to be called
-            shutdown_receiver.recv().unwrap();
+            shutdown_receiver.receiver().recv().unwrap();
             log::info!("Received shutdown callback!");
         });
 

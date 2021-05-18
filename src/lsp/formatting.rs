@@ -165,7 +165,6 @@ fn rng(start_line: u32, start_column: u32, end_line: u32, end_column: u32) -> ls
 #[cfg(test)]
 mod tests {
     use crate::lsp::formatting::{get_text_edits, rng, RangeKeeper};
-    use crate::testing::enable_default_tracing;
     use lsp_types::TextEdit;
 
     #[test]
@@ -266,7 +265,6 @@ mod tests {
 
     #[test]
     fn vscode_workarounds() {
-        enable_default_tracing();
         /*
         If the edit sequence is this:
         Delete("}"),

@@ -1,56 +1,64 @@
-// woof
-.define segment {
-    name = default
-    start = $2000 + 4 - %00100
-}
+                    // woof
+                    .define segment {
+                        name /*hello*/ = default
+                        start = $2000 + 4 - %00100
+                    }
 
-.file "foo.bin"
+                    .file "foo.bin"
 
-.const test /* test value */ = 1
-.var test2 = 5
+                    .const test /* test value */ = 1
+                    .var test2 = 5
 
-// first comment
-// second comment
-* = $1000
-{
-    lda data
-    sta data
-    stx data
+                    // first comment
+                    // second comment
+                    * = $1000
 
-    .if test {
-        nop
-    }
+                    {
+                        lda data            // interesting
+                        sta data
+                        stx data
 
-    .if test {
-        sta $d020,x
-    } else {
-        nop
-    }
+                        .if test {
+                            nop
+                        }
 
-    rts
-}
+                        .if test {
+                            sta $d020, x
+                            asl
+                        } else {
+                            nop
+                        }
 
-.segment default {
-    nop /* nice*/
-}
+                        rts
+                    }
 
-.align 8
+                    .segment default {
+                        nop                 /* nice*/
+                    }
 
-// here is some data
-data: {
-    /* here it is */
-    .byte 1, 2 // hello
-    .word 4
+                    .align 8
 
-    nop
-}
+                    // here is some data
+              data: {
+                        /* here it is */
+                        .byte 1, 2          // hello
+                        .word 4
 
-nop
+                        nop
+                    }
 
-.macro MyMacro(arg1, arg2) {
-    brk
-}
+                    nop
 
-.import foo as bar from "other.asm" {
-    nop
-}
+                    .macro MyMacro(arg1, arg2) {
+                        brk
+                    }
+
+                    MyMacro(1, 2)
+
+                    .import foo as bar from "other.asm" {
+                        nop
+                    }
+
+                    .loop 123 {
+                        nop
+                    }

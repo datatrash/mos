@@ -760,6 +760,7 @@ fn text(input: LocatedSpan) -> IResult<Token> {
                 ws(alt((
                     map(tag_no_case("ascii"), |_| TextEncoding::Ascii),
                     map(tag_no_case("petscii"), |_| TextEncoding::Petscii),
+                    map(tag_no_case("petscreen"), |_| TextEncoding::Petscreen),
                     map(not(alphanumeric1), |_| {
                         // If there are no characters, then we leave it to 'unspecified'
                         TextEncoding::Unspecified
@@ -1370,6 +1371,10 @@ mod test {
     fn parse_text() {
         check("   .text   ascii \"blah\"", "   .TEXT   ASCII \"blah\"");
         check("   .text   petscii \"blah\"", "   .TEXT   PETSCII \"blah\"");
+        check(
+            "   .text   petscreen \"blah\"",
+            "   .TEXT   PETSCREEN \"blah\"",
+        );
         check("   .text    \"blah\"", "   .TEXT    \"blah\"");
         check_err(
             "   .text   fartscii  \"blah\"",

@@ -31,19 +31,22 @@ impl RequestHandler<Completion> for CompletionHandler {
 
                 // Try to determine the previous characters to see if we're trying to auto-complete inside a scope
                 let mut nested_scope = None;
-                if source_column > 0 {
-                    if let Some(source_file) = codegen.tree().files.get(path) {
-                        let line = source_file.file.source_line(source_line);
+                if let Some(source_file) = codegen.tree().files.get(path) {
+                    let line = source_file.file.source_line(source_line);
 
-                        // Only look at the line until the source_column
-                        let (line, _) = line.split_at(source_column - 1);
+                    // Only look at the line until the source_column
+                    if source_column <= line.len() {
+                        let (line, suffix) = line.split_at(source_column - 1);
 
-                        // Go back until the first non-identifier character (e.g. a space or a dot) to determine the scope
-                        if let Some(scope_at) =
-                            line.find(|c: char| !c.is_alphanumeric() && c != '_')
-                        {
-                            let (_, scope) = line.split_at(scope_at + 1);
-                            nested_scope = Some(IdentifierPath::from(scope));
+                        // Are we autocompleting a dot?
+                        if suffix.starts_with('.') {
+                            // Go back until the first non-identifer or dot character to determine the scope prefix
+                            if let Some(scope_at) =
+                                line.rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+                            {
+                                let (_, scope) = line.split_at(scope_at + 1);
+                                nested_scope = Some(IdentifierPath::from(scope));
+                            }
                         }
                     }
                 }
@@ -110,7 +113,19 @@ mod tests {
         let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(
             test_root().join("main.asm"),
-            "vic: { .const border = $d020 }\nlda ",
+            "vic: { .const border = $d020 }\n  lda ",
+        )?;
+        let response = server.completion(test_root().join("main.asm"), Position::new(1, 6))?;
+        assert_unordered_eq(&unwrap(&response), &vec!["segments", "vic"]);
+        Ok(())
+    }
+
+    #[test]
+    fn basic_completion_inside_a_block() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "{\nlda \n}\nvic: { .const border = $d020 }",
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(1, 4))?;
         assert_unordered_eq(&unwrap(&response), &vec!["segments", "vic"]);
@@ -122,9 +137,9 @@ mod tests {
         let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(
             test_root().join("main.asm"),
-            "vic: { .const border = $d020 }\nlda vic.",
+            "outer: { vic: { .const border = $d020 } }\n lda outer.vic.",
         )?;
-        let response = server.completion(test_root().join("main.asm"), Position::new(1, 8))?;
+        let response = server.completion(test_root().join("main.asm"), Position::new(1, 15))?;
         assert_unordered_eq(&unwrap(&response), &vec!["border"]);
         Ok(())
     }

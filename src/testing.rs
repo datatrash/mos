@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use crate::core::parser::code_map::{CodeMap, Span};
+use itertools::Itertools;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -35,4 +36,15 @@ where
     let b: HashSet<_> = b.iter().collect();
 
     assert_eq!(a, b)
+}
+
+// Cross-platform eq
+pub fn xplat_eq<S: AsRef<str>, T: AsRef<str>>(actual: S, expected: T) {
+    use crate::LINE_ENDING;
+
+    // Split the result into lines to work around cross-platform line ending normalization issues
+    assert_eq!(
+        actual.as_ref().lines().join(LINE_ENDING),
+        expected.as_ref().lines().join(LINE_ENDING)
+    );
 }

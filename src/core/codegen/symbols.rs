@@ -52,9 +52,20 @@ impl<S: Debug> SymbolTable<S> {
         id: I,
         data: D,
     ) -> SymbolIndex {
+        let id = id.into();
         let new_nx = self.graph.add_node(Item { data: data.into() });
-        self.graph.add_edge(parent_nx, new_nx, id.into());
+        log::trace!(
+            "Inserted node '{}' ({:?}) (parent: {:?})",
+            &id,
+            new_nx,
+            parent_nx
+        );
+        self.graph.add_edge(parent_nx, new_nx, id);
         new_nx
+    }
+
+    pub fn update_data<D: Into<Option<S>>>(&mut self, nx: SymbolIndex, data: D) {
+        self.graph[nx].data = data.into();
     }
 
     pub fn export<I: Into<IdentifierPath>>(
@@ -84,6 +95,7 @@ impl<S: Debug> SymbolTable<S> {
     }
 
     pub fn remove(&mut self, nx: SymbolIndex) {
+        log::trace!("Removing node: {:?}", nx);
         self.graph.remove_node(nx);
     }
 
@@ -154,16 +166,28 @@ impl<S: Debug> SymbolTable<S> {
     pub fn query<I: Into<IdentifierPath>>(&self, nx: SymbolIndex, path: I) -> Option<SymbolIndex> {
         let path = path.into();
         let (path, id) = path.split();
-        let mut nx = self.try_index(nx, path);
+        let refers_to_super = path.contains_super();
+
+        let mut nx = Some(nx);
         while nx.is_some() {
-            let child = self.child(nx.unwrap(), &id);
-            match child {
-                Some(child_nx) => {
-                    return Some(child_nx);
+            let mut path_nx = self.try_index(nx.unwrap(), &path);
+            while path_nx.is_some() {
+                let child = self.child(path_nx.unwrap(), &id);
+                match child {
+                    Some(child_nx) => {
+                        return Some(child_nx);
+                    }
+                    None => {
+                        path_nx = self.parent(path_nx.unwrap());
+                    }
                 }
-                None => {
-                    nx = self.parent(nx.unwrap());
-                }
+            }
+
+            // If path is not explicitly referring to 'super', we can bubble up and try again
+            if refers_to_super {
+                break;
+            } else {
+                nx = self.parent(nx.unwrap());
             }
         }
         None
@@ -175,6 +199,7 @@ impl<S: Debug> SymbolTable<S> {
         bubble_up: bool,
     ) -> HashMap<IdentifierPath, SymbolIndex> {
         let mut result = HashMap::new();
+        let mut added_to_result = HashSet::new();
         let mut visited = HashSet::new();
 
         let mut nx = Some(nx);
@@ -186,6 +211,11 @@ impl<S: Debug> SymbolTable<S> {
                 if visited.contains(&edge.target()) {
                     continue;
                 }
+
+                if added_to_result.contains(&edge.target()) {
+                    //continue;
+                }
+                added_to_result.insert(edge.target());
 
                 let id = edge.weight();
                 let full_path = path.join(id);
@@ -272,6 +302,9 @@ mod tests {
         assert_eq!(t.table.query(t.s, &idpath!("super.a")), Some(t.a));
         assert_eq!(t.table.query(t.table.root, &idpath!("super.a")), None);
 
+        // Can query symbols that have a longer path, on a higher level (requiring bubbling up)
+        assert_eq!(t.table.query(t.s_ss, &idpath!("T.U.a")), Some(t.t_u_a));
+
         // Can also query symbols that exist on a higher level
         let nx_c = t.table.insert(t.table.root, "c", 50);
         assert_eq!(t.table.query(t.s_ss, &id!("c")), Some(nx_c));
@@ -305,6 +338,22 @@ mod tests {
             .map(|(id, _)| id)
             .collect_vec();
         assert_unordered_eq(&vis, &[idpath!("a"), idpath!("b"), idpath!("U")]);
+
+        let vis = dbg!(t.table.visible_symbols(t.t, true))
+            .into_iter()
+            .map(|(_, idx)| idx)
+            .collect_vec();
+        assert_unordered_eq(
+            &vis,
+            &[
+                SymbolIndex::new(1),
+                SymbolIndex::new(2),
+                SymbolIndex::new(3),
+                SymbolIndex::new(7),
+                SymbolIndex::new(8),
+                SymbolIndex::new(9),
+            ],
+        );
     }
 
     #[test]

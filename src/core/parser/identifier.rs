@@ -194,6 +194,10 @@ impl IdentifierPath {
         self.0.first().unwrap()
     }
 
+    pub fn contains_super(&self) -> bool {
+        self.0.iter().any(|id| id.is_super())
+    }
+
     pub fn is_special(&self) -> bool {
         self.0.first().map(|id| id.is_special()).unwrap_or_default()
     }

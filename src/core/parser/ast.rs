@@ -281,7 +281,10 @@ impl BinaryOp {
             BinaryOp::Add => lhs + rhs,
             BinaryOp::Sub => lhs - rhs,
             BinaryOp::Mul => lhs * rhs,
-            BinaryOp::Div => lhs / rhs,
+            BinaryOp::Div => match rhs {
+                0 => 0,
+                _ => lhs / rhs,
+            },
             BinaryOp::Shl => lhs << rhs,
             BinaryOp::Shr => lhs >> rhs,
             BinaryOp::Xor => lhs ^ rhs,
@@ -485,10 +488,11 @@ impl Display for ImportAs {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TextEncoding {
     Ascii,
     Petscii,
+    Petscreen,
     Unspecified,
 }
 
@@ -497,6 +501,7 @@ impl Display for TextEncoding {
         match self {
             TextEncoding::Ascii => write!(f, "ascii"),
             TextEncoding::Petscii => write!(f, "petscii"),
+            TextEncoding::Petscreen => write!(f, "petscreen"),
             TextEncoding::Unspecified => write!(f, ""),
         }
     }
@@ -708,6 +713,10 @@ impl<T> Located<T> {
     /// Take ownership of the [Located] and map the data into something else
     pub fn map_into<U, F: FnOnce(T) -> U>(self, map_fn: F) -> Located<U> {
         Located::new_with_trivia(self.span, map_fn(self.data), self.trivia)
+    }
+
+    pub fn without_trivia(self) -> Located<T> {
+        Located::new_with_trivia(self.span, self.data, None)
     }
 
     pub fn new(span: Span, data: T) -> Self {

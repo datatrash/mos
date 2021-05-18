@@ -31,6 +31,13 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "grammars": [
+      {
+        "language": "asm",
+        "scopeName": "source.asm",
+        "path": "./syntaxes/asm.tmLanguage.json"
+      }
+    ],
     "taskDefinitions": [
       {
         "type": "build"
