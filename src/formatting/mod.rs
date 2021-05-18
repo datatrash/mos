@@ -65,11 +65,17 @@ impl Default for BraceOptions {
 #[serde(default, deny_unknown_fields, rename_all = "snake_case")]
 pub struct WhitespaceOptions {
     pub indent: usize,
+    pub label_margin: usize,
+    pub code_margin: usize,
 }
 
 impl Default for WhitespaceOptions {
     fn default() -> Self {
-        Self { indent: 4 }
+        Self {
+            indent: 4,
+            label_margin: 20,
+            code_margin: 30,
+        }
     }
 }
 
@@ -130,7 +136,7 @@ impl CodeFormatter {
             &tree.try_get_file(path).expect("File not found").tokens,
             false,
         );
-        join_chunks(self.chunks)
+        join_chunks(self.chunks, &self.options)
     }
 
     fn format_tokens(&mut self, tokens: &[Token], trim_leading_trivia: bool) {
@@ -400,9 +406,9 @@ impl CodeFormatter {
         // so that format_tokens can deal with the full Vec<Token> correctly.
         let mut inner = block.inner.clone();
         inner.push(Token::Eof(block.rparen.clone().map_into(|_| ())));
-        self.indent += 4;
+        self.indent += self.options.whitespace.indent;
         self.format_tokens(&inner, true);
-        self.indent -= 4;
+        self.indent -= self.options.whitespace.indent;
 
         // If the inner chunks did not end with a new-line, we'll add one here.
         let need_nl = self
@@ -687,7 +693,7 @@ pub fn format<P: Into<PathBuf>>(
     fmt.format(path)
 }
 
-fn join_chunks(chunks: Vec<Chunk>) -> String {
+fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
     let mut result = vec![];
     let num_chunks = chunks.len();
 
@@ -704,10 +710,24 @@ fn join_chunks(chunks: Vec<Chunk>) -> String {
         for str in chunk.str.split_inclusive("\n") {
             match chunk.ty {
                 Some(ChunkType::Label) => {
-                    line += format!("{:>width$}", format!("{} ", str), width = 20).as_str();
+                    if line.len() > options.whitespace.label_margin {
+                        line += format!("{} ", str).as_str();
+                    } else {
+                        line += format!(
+                            "{:>width$}",
+                            format!("{} ", str),
+                            width = options.whitespace.label_margin
+                        )
+                        .as_str();
+                    }
                 }
                 None => {
-                    line = format!("{:<width$}{}", line, str, width = 20);
+                    line = format!(
+                        "{:<width$}{}",
+                        line,
+                        str,
+                        width = options.whitespace.label_margin
+                    );
                 }
                 Some(ChunkType::Comment) => {
                     let mut is_eol = false;
@@ -721,11 +741,24 @@ fn join_chunks(chunks: Vec<Chunk>) -> String {
                         // eof, so definitely eol :)
                         is_eol = true;
                     }
+
                     if is_eol {
-                        line = format!("{:<width$}{}", line, str, width = 40);
+                        // An EOL comment will be formatted in a separate column
+                        line = format!(
+                            "{:<width$}{}",
+                            line,
+                            str,
+                            width =
+                                options.whitespace.label_margin + options.whitespace.code_margin
+                        );
                     } else {
-                        // Add comment in-line, and add a space at the end to cleanly separate it
-                        line = format!("{:<width$}{} ", line, str, width = 20);
+                        // Add comment in-line (making sure 'line' has at least a minimum width) and add a space at the end to cleanly separate it
+                        line = format!(
+                            "{:<width$}{} ",
+                            line,
+                            str,
+                            width = options.whitespace.label_margin
+                        );
                     }
                 }
             }
@@ -743,10 +776,18 @@ fn join_chunks(chunks: Vec<Chunk>) -> String {
                     }
                 } else {
                     // If the line only consists of comments, move them to the 'code' column
-                    if line.len() > 40 {
-                        let (label_code, comment) = line.split_at(40);
+                    if line.len() > options.whitespace.label_margin + options.whitespace.code_margin
+                    {
+                        let (label_code, comment) = line.split_at(
+                            options.whitespace.label_margin + options.whitespace.code_margin,
+                        );
                         if label_code.trim().is_empty() {
-                            line = format!("{:<width$}{}", "", comment, width = 20);
+                            line = format!(
+                                "{:<width$}{}",
+                                "",
+                                comment,
+                                width = options.whitespace.label_margin
+                            );
                             had_standalone_comment = true;
                             prev_newlines = 0;
                             should_add = true;
@@ -822,6 +863,7 @@ mod tests {
             chunk(None, 0, "\n"),
             chunk(None, 0, "foo "),
             chunk(Some(ChunkType::Comment), 0, "/* hi */\n/* ho */"),
+            chunk(Some(ChunkType::Label), 0, "label:"),
             chunk(None, 0, "bar"),
             chunk(Some(ChunkType::Comment), 0, "// comment"),
             chunk(None, 0, "\n"),
@@ -831,8 +873,8 @@ mod tests {
             chunk(None, 4, "baz"),
         ];
         assert_eq!(
-            join_chunks(chunks),
-            "                    // hello\n                    foo /* hi */\n                    /* ho */ bar        // comment\n\n                 label: baz"
+            join_chunks(chunks, &FormattingOptions::default()),
+            "                    // hello\n                    foo /* hi */\n                    /* ho */ label: bar           // comment\n\n                 label: baz"
         );
     }
 
