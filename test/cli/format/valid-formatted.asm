@@ -14,7 +14,7 @@
                     * = $1000
 
                     {
-                        lda data            // interesting
+                        lda data                      // interesting
                         sta data
                         stx data
 
@@ -33,7 +33,7 @@
                     }
 
                     .segment default {
-                        nop                 /* nice*/
+                        nop                           /* nice*/
                     }
 
                     .align 8
@@ -41,7 +41,7 @@
                     // here is some data
               data: {
                         /* here it is */
-                        .byte 1, 2          // hello
+                        .byte 1, 2                    // hello
                         .word 4
 
                         nop
@@ -54,6 +54,8 @@
                     }
 
                     MyMacro(1, 2)
+                    nop
+                    MyMacro(3, 4)
 
                     .import foo as bar from "other.asm" {
                         nop

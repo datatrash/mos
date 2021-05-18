@@ -171,16 +171,15 @@ impl CodeFormatter {
                     Token::Braces { .. } => (true, true),
                     Token::File { .. } => (false, true),
                     Token::If { .. } => (true, true),
-                    Token::Instruction(_) => (false, true),
-                    Token::Label { block, .. } => (block.is_some(), block.is_some()),
-                    Token::Loop { .. } => (true, true),
-                    Token::MacroInvocation { .. } => (
+                    Token::Instruction(_) | Token::MacroInvocation { .. } => (
                         false,
                         !matches!(
                             prev_token,
                             Token::Instruction(_) | Token::MacroInvocation { .. }
                         ),
                     ),
+                    Token::Label { block, .. } => (block.is_some(), block.is_some()),
+                    Token::Loop { .. } => (true, true),
                     Token::VariableDefinition { .. } => (false, true),
                     _ => (false, false),
                 };

@@ -36,6 +36,9 @@ start=$2000 + 4 -%00100}
 
  .macro MyMacro(arg1,arg2){brk}
  MyMacro(1,2)
+nop
+  MyMacro(3,4)
+
 
  .import   foo    as    bar    from    "other.asm" {nop}
     .loop 123 {  nop}
