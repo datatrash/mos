@@ -413,13 +413,9 @@ impl CodeFormatter {
         self.indent -= self.options.whitespace.indent;
 
         // Make sure the inner chunk ends with exactly one new-line.
-        loop {
-            if let Some(last_chunk) = self.chunks.last() {
-                if last_chunk.str == "\n" {
-                    self.chunks.pop();
-                } else {
-                    break;
-                }
+        while let Some(last_chunk) = self.chunks.last() {
+            if last_chunk.str == "\n" {
+                self.chunks.pop();
             } else {
                 break;
             }
