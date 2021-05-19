@@ -170,6 +170,7 @@ impl CodeFormatter {
                     Token::Braces { .. } => (true, true),
                     Token::Definition { .. } => (true, true),
                     Token::If { .. } => (true, true),
+                    Token::Import { block, .. } => (block.is_some(), true),
                     Token::Instruction(_) | Token::MacroInvocation { .. } => (
                         false,
                         !matches!(
@@ -284,7 +285,10 @@ impl CodeFormatter {
 
                 match args {
                     ImportArgs::All(c, as_) => {
-                        self.fmt(c.as_ref()).spc_if_next().fmt(as_);
+                        self.fmt(c.as_ref())
+                            .spc_if_next()
+                            .fmt(as_)
+                            .clear_spc_if_next();
                     }
                     ImportArgs::Specific(args) => {
                         self.fmt(args);

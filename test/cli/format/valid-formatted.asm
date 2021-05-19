@@ -57,6 +57,8 @@
                     nop
                     MyMacro(3, 4)
 
+                    .import * from "other.asm"
+
                     .import foo as bar from "other.asm" {
                         nop
                     }
