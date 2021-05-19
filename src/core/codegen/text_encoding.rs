@@ -1,5 +1,5 @@
+use crate::core::cbm::petscii::Petscii;
 use crate::core::parser::TextEncoding;
-use cbm::Petscii;
 
 pub fn encode_text(str: &str, encoding: TextEncoding) -> Vec<u8> {
     match encoding {
