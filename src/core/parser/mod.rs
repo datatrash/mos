@@ -13,6 +13,7 @@ use nom::combinator::{all_consuming, map, not, opt, recognize, rest};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{pair, tuple};
 use nom::InputTake;
+use path_dedot::ParseDot;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -1078,7 +1079,12 @@ pub fn parse(
     let mut files_to_import = vec![filename.to_path_buf()];
 
     while !files_to_import.is_empty() {
-        let to_import = files_to_import.pop().unwrap();
+        let to_import = files_to_import
+            .pop()
+            .unwrap()
+            .parse_dot()
+            .unwrap()
+            .to_path_buf();
         log::trace!("Going to parse: {:?}", &to_import);
         let already_imported = state
             .lock()

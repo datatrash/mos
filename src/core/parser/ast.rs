@@ -4,6 +4,7 @@ use crate::core::parser::source::ParsingSource;
 use crate::core::parser::{Identifier, IdentifierPath};
 use crate::errors::{MosError, MosResult};
 use itertools::Itertools;
+use path_dedot::ParseDot;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Binary, Debug, Display, Formatter, LowerHex};
@@ -52,7 +53,7 @@ impl ParseTree {
     }
 
     pub fn try_get_file<P: Into<PathBuf>>(&self, path: P) -> Option<&ParsedFile> {
-        self.files.get(&path.into())
+        self.files.get(path.into().parse_dot().unwrap().as_ref())
     }
 }
 

@@ -436,6 +436,7 @@ dependencies = [
  "nom_locate",
  "once_cell",
  "path-absolutize",
+ "path-dedot",
  "pathdiff",
  "petgraph",
  "serde",
