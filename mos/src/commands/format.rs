@@ -1,8 +1,8 @@
 use crate::config::Config;
 use crate::errors::MosResult;
-use crate::formatting::format;
 use clap::App;
 use fs_err::OpenOptions;
+use mos_core::formatting::format;
 use mos_core::parser::parse_or_err;
 use mos_core::parser::source::FileSystemParsingSource;
 use mos_core::LINE_ENDING;

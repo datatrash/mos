@@ -7,10 +7,11 @@ use std::path::{Path, PathBuf};
 use clap::{App, AppSettings, Arg, ArgMatches};
 use fs_err as fs;
 
+use mos_core::errors::ErrorFormattingOptions;
+
 use crate::commands::*;
 use crate::config::Config;
 use crate::errors::*;
-use mos_core::errors::ErrorFormattingOptions;
 
 /// Contains the available CLI commands and their associated logic
 mod commands;
@@ -20,8 +21,6 @@ mod config;
 mod debugger;
 /// Error handling
 mod errors;
-/// Source code formatting
-mod formatting;
 /// Language Server Protocol implementation
 mod lsp;
 /// Some testing helpers

@@ -1,9 +1,9 @@
 use crate::errors::MosResult;
-use crate::formatting::{format, FormattingOptions};
 use crate::impl_request_handler;
 use crate::lsp::{LspContext, RequestHandler};
 use dissimilar::{diff, Chunk};
 use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit, Url};
+use mos_core::formatting::{format, FormattingOptions};
 
 pub struct FormattingRequestHandler;
 pub struct OnTypeFormattingRequestHandler;

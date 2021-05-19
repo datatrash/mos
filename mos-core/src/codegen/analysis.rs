@@ -146,12 +146,13 @@ impl Analysis {
 mod tests {
     use crate::codegen::tests::{test_codegen, test_codegen_parsing_source};
     use crate::errors::CoreResult;
+    use crate::parser::code_map::LineCol;
     use crate::parser::source::InMemoryParsingSource;
 
     #[test]
     fn can_find_basic_token() -> CoreResult<()> {
         let ctx = test_codegen("lda foo\nfoo: nop")?;
-        let defs = ctx.analysis().find("test.asm", (0, 4));
+        let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
                 .look_up(defs.first().unwrap().location.unwrap())
@@ -164,7 +165,7 @@ mod tests {
     #[test]
     fn can_find_complex_token() -> CoreResult<()> {
         let ctx = test_codegen("lda a.super.b.foo\na: {foo: nop}\nb: {foo: nop}")?;
-        let defs = ctx.analysis().find("test.asm", (0, 4));
+        let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
                 .look_up(defs.first().unwrap().location.unwrap())
@@ -182,7 +183,7 @@ mod tests {
                 .add("bar", "foo: nop")
                 .into(),
         )?;
-        let defs = ctx.analysis().find("test.asm", (0, 4));
+        let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
                 .look_up(defs.first().unwrap().location.unwrap())
@@ -203,7 +204,7 @@ mod tests {
                 .add("bar", ".if defined(ENABLE) {\nfoo: nop\n}")
                 .into(),
         )?;
-        let defs = ctx.analysis().find("test.asm", (0, 4));
+        let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
                 .look_up(defs.first().unwrap().location.unwrap())
@@ -222,7 +223,7 @@ mod tests {
                 .into(),
         )?;
         // Click on the 'bar' filename in the import
-        let defs = ctx.analysis().find("test.asm", (0, 20));
+        let defs = ctx.analysis().find("test.asm", line_col(0, 20));
         assert_eq!(
             ctx.analysis()
                 .look_up(defs.first().unwrap().location.unwrap())
@@ -230,5 +231,9 @@ mod tests {
             "bar:1:1: 1:9"
         );
         Ok(())
+    }
+
+    fn line_col(line: usize, column: usize) -> LineCol {
+        LineCol { line, column }
     }
 }

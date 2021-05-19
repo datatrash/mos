@@ -1,4 +1,4 @@
-use mos_core::parser::{
+use crate::parser::{
     AddressModifier, AddressingMode, ArgItem, BinaryOp, Block, Expression, ExpressionFactor,
     Identifier, IdentifierPath, ImportArgs, ImportAs, Located, Number, NumberType, Operand,
     ParseTree, RegisterSuffix, SpecificImportArg, TextEncoding, Token, Trivia,
@@ -843,16 +843,15 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format, FormattingOptions};
-    use crate::errors::MosResult;
-    use crate::formatting::{join_chunks, Chunk, ChunkType};
+    use super::*;
+    use crate::errors::CoreResult;
+    use crate::parser::parse_or_err;
+    use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::testing::xplat_eq;
-    use mos_core::parser::parse_or_err;
-    use mos_core::parser::source::{InMemoryParsingSource, ParsingSource};
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn default_formatting() -> MosResult<()> {
+    fn default_formatting() -> CoreResult<()> {
         let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
@@ -862,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_formatting() -> MosResult<()> {
+    fn roundtrip_formatting() -> CoreResult<()> {
         let source = include_str!("../../../test/cli/format/valid-formatted.asm");
         let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;

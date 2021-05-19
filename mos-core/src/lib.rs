@@ -16,6 +16,8 @@ pub mod testing;
 
 /// The main error and result types
 pub mod errors;
+/// Source code formatting
+pub mod formatting;
 
 #[cfg(windows)]
 /// A platform-specific newline.

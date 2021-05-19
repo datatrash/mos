@@ -1,6 +1,6 @@
 use crate::commands::BuildOptions;
 use crate::errors::{MosError, MosResult};
-use crate::formatting::FormattingOptions;
+use mos_core::formatting::FormattingOptions;
 use serde::Deserialize;
 
 #[derive(Default, Deserialize)]
