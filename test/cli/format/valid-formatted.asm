@@ -29,11 +29,11 @@
                             nop
                         }
 
-                        rts
+                   foo: rts
                     }
 
                     .segment default {
-                        nop                           /* nice*/
+                        lda #<data                    /* nice*/
                     }
 
                     .align 8

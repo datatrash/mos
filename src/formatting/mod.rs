@@ -167,9 +167,8 @@ impl CodeFormatter {
                 None
             } {
                 let (newline_if_same, newline_if_diff) = match token {
-                    Token::Align { .. } => (false, true),
                     Token::Braces { .. } => (true, true),
-                    Token::File { .. } => (false, true),
+                    Token::Definition { .. } => (true, true),
                     Token::If { .. } => (true, true),
                     Token::Instruction(_) | Token::MacroInvocation { .. } => (
                         false,
@@ -178,10 +177,14 @@ impl CodeFormatter {
                             Token::Instruction(_) | Token::MacroInvocation { .. }
                         ),
                     ),
-                    Token::Label { block, .. } => (block.is_some(), block.is_some()),
+                    Token::Label { block, .. } => (
+                        block.is_some(),
+                        block.is_some()
+                            || matches!(prev_token, Token::Braces { .. } | Token::If { .. }),
+                    ),
                     Token::Loop { .. } => (true, true),
-                    Token::VariableDefinition { .. } => (false, true),
-                    _ => (false, false),
+                    Token::Segment { .. } => (true, true),
+                    _ => (false, true),
                 };
 
                 let token_type = std::mem::discriminant(token);
@@ -409,15 +412,19 @@ impl CodeFormatter {
         self.format_tokens(&inner, true);
         self.indent -= self.options.whitespace.indent;
 
-        // If the inner chunks did not end with a new-line, we'll add one here.
-        let need_nl = self
-            .chunks
-            .last()
-            .map(|chunk| !chunk.str.ends_with('\n'))
-            .unwrap_or_default();
-        if need_nl {
-            self.push("\n");
+        // Make sure the inner chunk ends with exactly one new-line.
+        loop {
+            if let Some(last_chunk) = self.chunks.last() {
+                if last_chunk.str == "\n" {
+                    self.chunks.pop();
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
         }
+        self.push("\n");
 
         // Now, in order to prevent the rparen trivia to be handled twice, we don't use rparen's trivia.
         self.push(&block.rparen.data);
@@ -464,7 +471,7 @@ impl CodeFormatter {
                 self.fmt(name).fmt(lparen).fmt(args).fmt(rparen);
             }
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                self.fmt(path).fmt(modifier);
+                self.fmt(modifier).fmt(path);
             }
             ExpressionFactor::Number { ty, value } => {
                 self.fmt(ty).fmt(value);
@@ -707,6 +714,8 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
         }
 
         for str in chunk.str.split_inclusive("\n") {
+            let mut ignore = false;
+
             match chunk.ty {
                 Some(ChunkType::Label) => {
                     if line.len() > options.whitespace.label_margin {
@@ -721,12 +730,21 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
                     }
                 }
                 None => {
-                    line = format!(
-                        "{:<width$}{}",
-                        line,
-                        str,
-                        width = options.whitespace.label_margin
-                    );
+                    if str == "\n"
+                        && !line.is_empty()
+                        && line.len() <= options.whitespace.label_margin
+                    {
+                        // If we just have a label so far, let's ignore the new-line so we can maybe put the code on the same line as
+                        // the label
+                        ignore = true;
+                    } else {
+                        line = format!(
+                            "{:<width$}{}",
+                            line,
+                            str,
+                            width = options.whitespace.label_margin
+                        );
+                    }
                 }
                 Some(ChunkType::Comment) => {
                     let mut is_eol = false;
@@ -762,7 +780,7 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
                 }
             }
 
-            if str.contains('\n') || idx == num_chunks - 1 {
+            if (!ignore && str.contains('\n')) || idx == num_chunks - 1 {
                 let should_add;
 
                 if line.trim().is_empty() {
@@ -834,7 +852,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn default_formatting_options() -> MosResult<()> {
+    fn default_formatting() -> MosResult<()> {
         let source = include_str!("../../test/cli/format/valid-unformatted.asm");
         let expected = include_str!("../../test/cli/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;

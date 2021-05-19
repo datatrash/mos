@@ -19,11 +19,12 @@ start=$2000 + 4 -%00100}
            .if test { nop  }
             .if test { sta             $d020 ,  x
              asl}    else {  nop       }
+foo:
         rts
 }
 
 
-.segment default     {nop /* nice*/}
+.segment default     {lda #<data /* nice*/}
   .align   8
 
   // here is some data
