@@ -57,7 +57,7 @@ mod tests {
     #[test]
     fn rename() -> MosResult<()> {
         let mut server = LspServer::new(LspContext::new());
-        server.did_open_text_document(test_root().join("main.asm"), "foo: nop\nlda foo")?;
+        server.did_open_text_document(test_root().join("main.asm"), "foo: {\nlda foo\n}")?;
         server.rename(test_root().join("main.asm"), Position::new(1, 4), "bar")?;
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();

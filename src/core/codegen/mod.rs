@@ -978,7 +978,7 @@ impl CodegenContext {
                 _ => self.error(name.span, format!("unknown function: {}", &name.data)),
             },
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                if let Some(symbol_nx) = self.symbols.try_index(self.current_scope_nx, &path.data) {
+                if let Some((symbol_nx, _)) = self.get_symbol(self.current_scope_nx, &path.data) {
                     log::trace!(
                         "Adding usage for definition '{}' ({:?})",
                         &path.data,
