@@ -149,7 +149,7 @@ mod tests {
         );
         assert_eq!(location.target_range, range(0, 14, 0, 20));
         assert_eq!(location.target_selection_range, range(0, 14, 0, 20));
-        assert_eq!(location.origin_selection_range, Some(range(1, 4, 1, 14)));
+        assert_eq!(location.origin_selection_range, Some(range(1, 8, 1, 14)));
         Ok(())
     }
 
@@ -177,7 +177,7 @@ mod tests {
         );
         assert_eq!(location.target_range, range(0, 14, 0, 20));
         assert_eq!(location.target_selection_range, range(0, 14, 0, 20));
-        assert_eq!(location.origin_selection_range, Some(range(0, 4, 0, 14)));
+        assert_eq!(location.origin_selection_range, Some(range(0, 8, 0, 14)));
         Ok(())
     }
 

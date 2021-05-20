@@ -660,6 +660,7 @@ impl CodegenContext {
                         self.symbols.try_index(self.current_scope_nx, import_scope)
                     {
                         let mut to_export = vec![];
+                        let mut add_symbol_usages = false;
 
                         match args {
                             ImportArgs::All(star, as_) => {
@@ -692,6 +693,7 @@ impl CodegenContext {
                                 }
                             }
                             ImportArgs::Specific(specific) => {
+                                add_symbol_usages = true;
                                 for (arg, _) in specific {
                                     let original_path = &arg.data.path.data;
                                     let target_path = match &arg.data.as_ {
@@ -717,17 +719,19 @@ impl CodegenContext {
 
                         for (to_export_nx, new_parent_nx, new_path, span) in to_export {
                             if self.symbols.export(to_export_nx, new_parent_nx, &new_path) {
-                                log::trace!(
-                                    "Adding usage for import '{}' ({:?})",
-                                    &new_path,
-                                    to_export_nx
-                                );
-                                self.symbol_definition(to_export_nx).add_usage(
-                                    DefinitionLocation {
-                                        parent_scope: new_parent_nx,
-                                        span,
-                                    },
-                                );
+                                if add_symbol_usages {
+                                    log::trace!(
+                                        "Adding usage for import '{}' ({:?})",
+                                        &new_path,
+                                        to_export_nx
+                                    );
+                                    self.symbol_definition(to_export_nx).add_usage(
+                                        DefinitionLocation {
+                                            parent_scope: new_parent_nx,
+                                            span,
+                                        },
+                                    );
+                                }
                             } else {
                                 return self.error(
                                     span,
@@ -998,19 +1002,12 @@ impl CodegenContext {
                 _ => self.error(name.span, format!("unknown function: {}", &name.data)),
             },
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                if let Some((symbol_nx, _)) = self.get_symbol(self.current_scope_nx, &path.data) {
-                    log::trace!(
-                        "Adding usage for definition '{}' ({:?})",
-                        &path.data,
-                        symbol_nx
-                    );
-                    let parent_scope = self.current_scope_nx;
-                    self.symbol_definition(symbol_nx)
-                        .add_usage(DefinitionLocation {
-                            parent_scope,
-                            span: path.span,
-                        });
-                }
+                self.analysis.add_symbol_usage(
+                    &self.symbols,
+                    self.current_scope_nx,
+                    &path.data,
+                    path.span,
+                );
 
                 let val = self
                     .get_symbol_data(path.span, &path.data)

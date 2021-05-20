@@ -31,5 +31,4 @@ toml = "0.5"
 
 [dev-dependencies]
 mos-testing = { path = "../mos-testing" }
-simple_logger = "1"
 tempfile = "3"

@@ -4,7 +4,7 @@ use crate::lsp::{to_location, LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::Rename;
 use lsp_types::{RenameParams, TextEdit, WorkspaceEdit};
-use mos_core::codegen::DefinitionType;
+use mos_core::codegen::{DefinitionType, QueryTraversalStep};
 use mos_core::parser::{Identifier, IdentifierPath};
 use std::collections::HashMap;
 
@@ -35,7 +35,7 @@ impl RequestHandler<Rename> for RenameHandler {
                     let codegen = ctx.codegen_mut().unwrap();
 
                     // First, determine all the query_indices for every usage
-                    let query_indices = def
+                    let steps = def
                         .usages()
                         .into_iter()
                         .map(|dl| {
@@ -60,8 +60,20 @@ impl RequestHandler<Rename> for RenameHandler {
                         Identifier::from(params.new_name.as_str()),
                     );
 
+                    // And rename it across all other paths by which it may be reached
+                    // (other paths may exist due to imports)
+                    for (dl, (steps, _)) in steps.iter() {
+                        if let Some(QueryTraversalStep::Symbol(nx)) = steps.last() {
+                            codegen.symbols_mut().rename(
+                                dl.parent_scope,
+                                *nx,
+                                Identifier::from(params.new_name.as_str()),
+                            );
+                        }
+                    }
+
                     // And reconstruct the identifiers
-                    let new_paths = query_indices
+                    let new_paths = steps
                         .into_iter()
                         .filter_map(|(dl, (query_traversal_steps, old_path))| {
                             let include_super = old_path.contains_super();
@@ -135,10 +147,86 @@ mod tests {
                     new_text: "baz".to_string(),
                 },
                 TextEdit {
-                    range: Range::new(Position::new(2, 4), Position::new(2, 11)),
-                    new_text: "foo.baz".to_string(),
+                    range: Range::new(Position::new(2, 8), Position::new(2, 11)),
+                    new_text: "baz".to_string(),
                 },
             ],
+        );
+
+        assert_eq!(
+            server.lock_context().responses().pop().unwrap().result,
+            response::<Rename>(Some(WorkspaceEdit {
+                changes: Some(expected_changes),
+                document_changes: None,
+                change_annotations: None
+            }))
+            .result
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn rename_start_of_path() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "foo: { .const bar = 1 }\n{\nlda foo.bar\n}",
+        )?;
+        server.rename(test_root().join("main.asm"), Position::new(2, 4), "foz")?;
+
+        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        expected_changes.insert(
+            Url::from_file_path(test_root().join("main.asm"))?,
+            vec![
+                TextEdit {
+                    range: Range::new(Position::new(0, 0), Position::new(0, 3)),
+                    new_text: "foz".to_string(),
+                },
+                TextEdit {
+                    range: Range::new(Position::new(2, 4), Position::new(2, 7)),
+                    new_text: "foz".to_string(),
+                },
+            ],
+        );
+
+        assert_eq!(
+            server.lock_context().responses().pop().unwrap().result,
+            response::<Rename>(Some(WorkspaceEdit {
+                changes: Some(expected_changes),
+                document_changes: None,
+                change_annotations: None
+            }))
+            .result
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn rename_start_of_path_in_other_file() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            ".import * from \"other.asm\"\n{\nlda foo.bar\n}",
+        )?;
+        server.did_open_text_document(test_root().join("other.asm"), "foo: { .const bar = 1 }")?;
+        server.rename(test_root().join("main.asm"), Position::new(2, 4), "foz")?;
+
+        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        expected_changes.insert(
+            Url::from_file_path(test_root().join("main.asm"))?,
+            vec![TextEdit {
+                range: Range::new(Position::new(2, 4), Position::new(2, 7)),
+                new_text: "foz".to_string(),
+            }],
+        );
+        expected_changes.insert(
+            Url::from_file_path(test_root().join("other.asm"))?,
+            vec![TextEdit {
+                range: Range::new(Position::new(0, 0), Position::new(0, 3)),
+                new_text: "foz".to_string(),
+            }],
         );
 
         assert_eq!(

@@ -292,10 +292,10 @@ impl LspContext {
         analysis: &'a Analysis,
         pos: &'a TextDocumentPositionParams,
     ) -> Vec<(&'a DefinitionType, &'a Definition)> {
-        return analysis.find(
+        analysis.find(
             pos.text_document.uri.to_file_path().unwrap(),
             to_line_col(&pos.position),
-        );
+        )
     }
 }
 

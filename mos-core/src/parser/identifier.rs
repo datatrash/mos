@@ -52,6 +52,10 @@ impl Identifier {
     pub fn is_special(&self) -> bool {
         self.0 == "-" || self.0 == "+" || self.0.starts_with('$')
     }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
 }
 
 impl PartialEq<str> for Identifier {

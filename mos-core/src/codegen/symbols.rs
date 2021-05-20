@@ -1,4 +1,5 @@
 use crate::parser::{Identifier, IdentifierPath};
+use itertools::Itertools;
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::{Direction, Graph};
@@ -16,7 +17,7 @@ pub type SymbolIndex = NodeIndex;
 #[derive(Clone, Debug, PartialEq)]
 pub enum QueryTraversalStep {
     Symbol(SymbolIndex),
-    Super,
+    Super(SymbolIndex),
 }
 
 #[derive(Debug)]
@@ -172,14 +173,25 @@ impl<S: Debug> SymbolTable<S> {
     }
 
     pub fn rename(&mut self, nx: SymbolIndex, child_nx: SymbolIndex, new_id: Identifier) {
-        if let Some(edge) = self
+        let edge_ids = self
             .graph
             .edges_directed(nx, Direction::Outgoing)
-            .find(|edge| edge.target() == child_nx)
-        {
-            let id = edge.id();
+            .filter(|edge| edge.target() == child_nx)
+            .map(|edge| {
+                log::trace!(
+                    "About to rename symbol (edge from {:?} -> {:?}) from '{}' to '{}'",
+                    edge.source(),
+                    edge.target(),
+                    edge.weight(),
+                    new_id
+                );
+                edge.id()
+            })
+            .collect_vec();
+
+        for id in edge_ids {
             if let Some(weight) = self.graph.edge_weight_mut(id) {
-                *weight = new_id;
+                *weight = new_id.clone();
             }
         }
     }
@@ -205,12 +217,14 @@ impl<S: Debug> SymbolTable<S> {
         let mut traversal = vec![];
         while let Some(id) = ids.pop_front() {
             if let Some(c) = cur_nx {
-                if c != self.root {
-                    // Don't add 'root' to traversal since that's always implied
-                    traversal.push(QueryTraversalStep::Symbol(c));
-                }
+                traversal.push(QueryTraversalStep::Symbol(c));
                 cur_nx = self.try_index(c, id);
             }
+        }
+
+        // Remove the first element since that was our starting point
+        if let Some((_, rest)) = traversal.split_first() {
+            traversal = rest.to_vec();
         }
 
         match cur_nx {
@@ -221,13 +235,14 @@ impl<S: Debug> SymbolTable<S> {
             None if path.contains_super() => vec![],
             None => {
                 // If path is not explicitly referring to 'super', we can bubble up and try again
-                let mut traversal = vec![QueryTraversalStep::Super];
-                traversal.extend(
-                    self.parent(nx)
-                        .map(|nx| self.query_traversal_steps(nx, path))
-                        .unwrap_or_default(),
-                );
-                traversal
+                match self.parent(nx) {
+                    Some(parent_nx) => {
+                        let mut traversal = vec![QueryTraversalStep::Super(parent_nx)];
+                        traversal.extend(self.query_traversal_steps(parent_nx, path));
+                        traversal
+                    }
+                    None => traversal,
+                }
             }
         }
     }
@@ -258,16 +273,11 @@ impl<S: Debug> SymbolTable<S> {
                         }
                     }
                 }
-                QueryTraversalStep::Super => {
+                QueryTraversalStep::Super(parent_nx) => {
                     if include_super {
                         ids.push(Identifier::sup());
                     }
-                    match self.parent(nx) {
-                        Some(parent_nx) => {
-                            nx = parent_nx;
-                        }
-                        None => return None,
-                    }
+                    nx = *parent_nx;
                 }
             }
         }
@@ -398,8 +408,8 @@ mod tests {
         assert_eq!(
             steps,
             vec![
-                QueryTraversalStep::Super,
-                QueryTraversalStep::Super,
+                QueryTraversalStep::Super(t.s),
+                QueryTraversalStep::Super(t.table.root),
                 QueryTraversalStep::Symbol(t.t),
                 QueryTraversalStep::Symbol(t.t_u),
                 QueryTraversalStep::Symbol(t.t_u_a),

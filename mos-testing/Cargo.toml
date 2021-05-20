@@ -8,3 +8,7 @@ license = "MIT"
 keywords = ["retro", "6502", "assembler"]
 
 [lib]
+
+[dependencies]
+log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
+simple_logger = "1"
