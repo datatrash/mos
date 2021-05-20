@@ -24,7 +24,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
         params: GotoDefinitionParams,
     ) -> MosResult<Option<GotoDefinitionResponse>> {
         let def = ctx.find_definitions(&params.text_document_position_params);
-        if let Some(def) = def.first() {
+        if let Some((_, def)) = def.first() {
             if let Some(location) = &def.location {
                 let tree = ctx.tree.as_ref().unwrap();
                 let origin = def.try_get_usage_containing(
@@ -36,14 +36,14 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                         .to_file_path()?,
                     to_line_col(&params.text_document_position_params.position),
                 );
-                let origin = origin.map(|span| tree.code_map.look_up_span(*span));
+                let origin = origin.map(|dl| tree.code_map.look_up_span(dl.span));
 
-                let l = ctx.analysis().unwrap().look_up(*location);
+                let l = ctx.analysis().unwrap().look_up(location.span);
                 let link = LocationLink {
                     origin_selection_range: origin.map(to_range),
                     target_uri: Url::from_file_path(l.file.name())?,
-                    target_range: to_range(tree.code_map.look_up_span(*location)),
-                    target_selection_range: to_range(tree.code_map.look_up_span(*location)),
+                    target_range: to_range(tree.code_map.look_up_span(location.span)),
+                    target_selection_range: to_range(tree.code_map.look_up_span(location.span)),
                 };
                 return Ok(Some(vec![link].into()));
             }
@@ -72,12 +72,12 @@ impl RequestHandler<References> for FindReferencesHandler {
 
             let locations = defs
                 .into_iter()
-                .map(|def| match params.context.include_declaration {
+                .map(|(_, def)| match params.context.include_declaration {
                     true => def.definition_and_usages(),
                     false => def.usages(),
                 })
                 .flatten()
-                .map(|span| to_location(ctx.analysis().unwrap().look_up(*span)))
+                .map(|dl| to_location(ctx.analysis().unwrap().look_up(dl.span)))
                 .collect_vec();
 
             Ok(Some(locations))
@@ -96,11 +96,11 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
         let highlights = ctx
             .find_definitions(&params.text_document_position_params)
             .into_iter()
-            .map(|def| {
+            .map(|(_, def)| {
                 def.definition_and_usages()
                     .into_iter()
-                    .map(|i| {
-                        let loc = to_location(ctx.analysis().unwrap().look_up(*i));
+                    .map(|dl| {
+                        let loc = to_location(ctx.analysis().unwrap().look_up(dl.span));
                         DocumentHighlight {
                             range: loc.range,
                             kind: None,

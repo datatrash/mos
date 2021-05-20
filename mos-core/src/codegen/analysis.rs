@@ -8,10 +8,16 @@ use std::fmt::{Debug, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Definition {
-    pub location: Option<Span>,
-    pub usages: HashSet<Span>,
+    pub location: Option<DefinitionLocation>,
+    pub usages: HashSet<DefinitionLocation>,
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct DefinitionLocation {
+    pub parent_scope: SymbolIndex,
+    pub span: Span,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -21,11 +27,11 @@ pub enum DefinitionType {
 }
 
 impl Definition {
-    pub fn usages(&self) -> Vec<&Span> {
+    pub fn usages(&self) -> Vec<&DefinitionLocation> {
         self.usages.iter().collect_vec()
     }
 
-    pub fn definition_and_usages(&self) -> Vec<&Span> {
+    pub fn definition_and_usages(&self) -> Vec<&DefinitionLocation> {
         let mut result = vec![];
         if let Some(l) = &self.location {
             result.push(l);
@@ -34,26 +40,24 @@ impl Definition {
         result
     }
 
-    pub fn set_location<DI: Into<Span>>(&mut self, location: DI) {
-        let location = location.into();
+    pub fn set_location(&mut self, location: DefinitionLocation) {
         self.location = Some(location);
     }
 
-    pub fn add_usage<DI: Into<Span>>(&mut self, location: DI) {
-        let location = location.into();
+    pub fn add_usage(&mut self, location: DefinitionLocation) {
         self.usages.insert(location);
     }
 
     pub fn contains(&self, tree: &ParseTree, path: &Path, pos: LineCol) -> bool {
         if let Some(loc) = &self.location {
-            if span_contains(*loc, tree, path, pos) {
+            if span_contains(loc.span, tree, path, pos) {
                 return true;
             }
         }
 
         self.usages
             .iter()
-            .any(|u| span_contains(*u, tree, path, pos))
+            .any(|usage| span_contains(usage.span, tree, path, pos))
     }
 
     pub fn try_get_usage_containing(
@@ -61,10 +65,10 @@ impl Definition {
         tree: &ParseTree,
         path: &Path,
         pos: LineCol,
-    ) -> Option<&Span> {
+    ) -> Option<&DefinitionLocation> {
         self.usages
             .iter()
-            .find(|u| span_contains(**u, tree, path, pos))
+            .find(|usage| span_contains(usage.span, tree, path, pos))
     }
 }
 
@@ -108,12 +112,19 @@ impl Analysis {
             }
             Entry::Vacant(e) => {
                 log::trace!("Creating new definition: {:?}", e.key());
-                e.insert(Definition::default())
+                e.insert(Definition {
+                    location: None,
+                    usages: Default::default(),
+                })
             }
         }
     }
 
-    pub fn find<P: Into<PathBuf>>(&self, path: P, pos: LineCol) -> Vec<&Definition> {
+    pub fn find<P: Into<PathBuf>>(
+        &self,
+        path: P,
+        pos: LineCol,
+    ) -> Vec<(&DefinitionType, &Definition)> {
         self.find_filter(path, pos, |_| true)
     }
 
@@ -122,18 +133,11 @@ impl Analysis {
         path: P,
         pos: LineCol,
         filter: F,
-    ) -> Vec<&Definition> {
+    ) -> Vec<(&DefinitionType, &Definition)> {
         let path = path.into();
         self.definitions
             .iter()
-            .filter(|(ty, _)| filter(ty))
-            .filter_map(|(_, definition)| {
-                if definition.contains(&self.tree, &path, pos) {
-                    Some(definition)
-                } else {
-                    None
-                }
-            })
+            .filter(|(ty, definition)| filter(ty) && definition.contains(&self.tree, &path, pos))
             .collect()
     }
 
@@ -155,7 +159,7 @@ mod tests {
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
-                .look_up(defs.first().unwrap().location.unwrap())
+                .look_up(defs.first().unwrap().1.location.as_ref().unwrap().span)
                 .to_string(),
             "test.asm:2:1: 2:4"
         );
@@ -168,7 +172,7 @@ mod tests {
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
-                .look_up(defs.first().unwrap().location.unwrap())
+                .look_up(defs.first().unwrap().1.location.as_ref().unwrap().span)
                 .to_string(),
             "test.asm:3:5: 3:8"
         );
@@ -186,7 +190,7 @@ mod tests {
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
-                .look_up(defs.first().unwrap().location.unwrap())
+                .look_up(defs.first().unwrap().1.location.as_ref().unwrap().span)
                 .to_string(),
             "bar:1:1: 1:4"
         );
@@ -207,7 +211,7 @@ mod tests {
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
             ctx.analysis()
-                .look_up(defs.first().unwrap().location.unwrap())
+                .look_up(defs.first().unwrap().1.location.as_ref().unwrap().span)
                 .to_string(),
             "bar:2:1: 2:4"
         );
@@ -226,7 +230,7 @@ mod tests {
         let defs = ctx.analysis().find("test.asm", line_col(0, 20));
         assert_eq!(
             ctx.analysis()
-                .look_up(defs.first().unwrap().location.unwrap())
+                .look_up(defs.first().unwrap().1.location.as_ref().unwrap().span)
                 .to_string(),
             "bar:1:1: 1:9"
         );

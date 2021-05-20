@@ -27,7 +27,7 @@ use lsp_types::{
     CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf,
     ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
 };
-use mos_core::codegen::{Analysis, CodegenContext, Definition};
+use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
 use mos_core::errors::{CoreError, CoreResult};
 use mos_core::parser::code_map::{LineCol, SpanLoc};
 use mos_core::parser::source::ParsingSource;
@@ -283,7 +283,10 @@ impl LspContext {
         Ok(())
     }
 
-    fn find_definitions<'a>(&'a self, pos: &'a TextDocumentPositionParams) -> Vec<&'a Definition> {
+    fn find_definitions<'a>(
+        &'a self,
+        pos: &'a TextDocumentPositionParams,
+    ) -> Vec<(&'a DefinitionType, &'a Definition)> {
         if let Some(analysis) = self.analysis() {
             return analysis.find(
                 pos.text_document.uri.to_file_path().unwrap(),

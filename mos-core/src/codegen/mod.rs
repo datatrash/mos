@@ -434,7 +434,9 @@ impl CodegenContext {
                 &path,
                 symbol_nx
             );
-            self.symbol_definition(symbol_nx).set_location(span);
+            let parent_scope = self.current_scope_nx;
+            self.symbol_definition(symbol_nx)
+                .set_location(DefinitionLocation { parent_scope, span });
         }
 
         Ok(symbol_nx)
@@ -633,8 +635,14 @@ impl CodegenContext {
                         .get_or_create_definition_mut(DefinitionType::Filename(
                             resolved_path.clone(),
                         ));
-                    def.set_location(imported_file.file.span);
-                    def.add_usage(filename.span);
+                    def.set_location(DefinitionLocation {
+                        parent_scope: self.current_scope_nx,
+                        span: imported_file.file.span,
+                    });
+                    def.add_usage(DefinitionLocation {
+                        parent_scope: self.current_scope_nx,
+                        span: filename.span,
+                    });
 
                     self.with_scope(import_scope, |s| {
                         if let Some(block) = block {
@@ -710,7 +718,12 @@ impl CodegenContext {
                                     &new_path,
                                     to_export_nx
                                 );
-                                self.symbol_definition(to_export_nx).add_usage(span);
+                                self.symbol_definition(to_export_nx).add_usage(
+                                    DefinitionLocation {
+                                        parent_scope: new_parent_nx,
+                                        span,
+                                    },
+                                );
                             } else {
                                 return self.error(
                                     span,
@@ -987,7 +1000,12 @@ impl CodegenContext {
                         &path.data,
                         symbol_nx
                     );
-                    self.symbol_definition(symbol_nx).add_usage(path.span);
+                    let parent_scope = self.current_scope_nx;
+                    self.symbol_definition(symbol_nx)
+                        .add_usage(DefinitionLocation {
+                            parent_scope,
+                            span: path.span,
+                        });
                 }
 
                 let val = self
