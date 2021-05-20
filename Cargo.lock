@@ -379,6 +379,7 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "mos-core",
+ "mos-testing",
  "once_cell",
  "path-absolutize",
  "serde",
@@ -402,6 +403,7 @@ dependencies = [
  "itertools",
  "log",
  "loggerv",
+ "mos-testing",
  "nom",
  "nom_locate",
  "once_cell",
@@ -416,6 +418,10 @@ dependencies = [
  "thiserror",
  "toml",
 ]
+
+[[package]]
+name = "mos-testing"
+version = "0.0.0"
 
 [[package]]
 name = "nom"

@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "mos",
-    "mos-core"
+    "mos-core",
+    "mos-testing"
 ]
 
 [profile.dev]

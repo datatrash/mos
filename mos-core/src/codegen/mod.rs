@@ -1524,13 +1524,13 @@ mod tests {
     #[test]
     fn file() -> CoreResult<()> {
         let root = env!("CARGO_MANIFEST_DIR");
-        let input = &format!("{}/../test/cli/build/include.bin", root);
+        let input = &format!("{}/test-data/build/include.bin", root);
         let source = format!(".file \"{}\"", input);
 
         let ctx = test_codegen(&source)?;
         assert_eq!(
             ctx.current_segment().range_data(),
-            include_bytes!("../../../test/cli/build/include.bin")
+            include_bytes!("../../test-data/build/include.bin")
         );
         Ok(())
     }

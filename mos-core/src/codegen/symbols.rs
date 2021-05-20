@@ -266,9 +266,9 @@ impl<S: Debug> SymbolTable<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::assert_unordered_eq;
     use crate::{id, idpath};
     use itertools::Itertools;
+    use mos_testing::assert_unordered_eq;
 
     #[test]
     fn navigation() {

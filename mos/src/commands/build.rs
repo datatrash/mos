@@ -189,10 +189,8 @@ mod tests {
     }
 
     fn test_cli_build() -> PathBuf {
-        root().join(
-            PathBuf::from("test")
-                .join(PathBuf::from("cli"))
-                .join(PathBuf::from("build")),
-        )
+        root()
+            .join(PathBuf::from("mos"))
+            .join(PathBuf::from("test-data").join(PathBuf::from("build")))
     }
 }

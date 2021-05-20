@@ -105,8 +105,8 @@ mod tests {
     use super::*;
     use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
-    use crate::testing::assert_unordered_eq;
     use lsp_types::Position;
+    use mos_testing::assert_unordered_eq;
 
     #[test]
     fn basic_completion() -> MosResult<()> {

@@ -23,9 +23,6 @@ mod debugger;
 mod errors;
 /// Language Server Protocol implementation
 mod lsp;
-/// Some testing helpers
-#[cfg(test)]
-mod testing;
 
 fn get_app() -> App<'static> {
     App::new("mos")

@@ -4,7 +4,7 @@ use crate::debugger::protocol::ProtocolMessage;
 use crossbeam_channel::{RecvError, SendError};
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
-use mos_core::errors::{CoreError, ErrorFormattingOptions};
+use mos_core::errors::{format_error, CoreError, ErrorFormattingOptions};
 use std::num::ParseIntError;
 use std::str::ParseBoolError;
 
@@ -66,20 +66,6 @@ impl MosError {
     pub fn format(&self, options: &ErrorFormattingOptions) -> String {
         let use_color = options.use_color;
         let use_prefix = options.use_prefix;
-
-        fn format_error<M: ToString>(use_color: bool, use_prefix: bool, message: M) -> String {
-            use ansi_term::Colour::Red;
-            let err = if use_prefix {
-                if use_color {
-                    Red.paint("error: ")
-                } else {
-                    "error: ".into()
-                }
-            } else {
-                "".into()
-            };
-            format!("{}{}", err, message.to_string())
-        }
 
         match self {
             MosError::Clap(err) => format_error(use_color, use_prefix, err),

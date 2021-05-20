@@ -852,8 +852,8 @@ mod tests {
 
     #[test]
     fn default_formatting() -> CoreResult<()> {
-        let source = include_str!("../../../test/cli/format/valid-unformatted.asm");
-        let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
+        let source = include_str!("../../test-data/format/valid-unformatted.asm");
+        let expected = include_str!("../../test-data/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format("test.asm", ast, FormattingOptions::default());
         xplat_eq(actual, expected);
@@ -862,8 +862,8 @@ mod tests {
 
     #[test]
     fn roundtrip_formatting() -> CoreResult<()> {
-        let source = include_str!("../../../test/cli/format/valid-formatted.asm");
-        let expected = include_str!("../../../test/cli/format/valid-formatted.asm");
+        let source = include_str!("../../test-data/format/valid-formatted.asm");
+        let expected = include_str!("../../test-data/format/valid-formatted.asm");
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format("test.asm", ast, FormattingOptions::default());
         xplat_eq(actual, expected);

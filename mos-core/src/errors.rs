@@ -96,20 +96,6 @@ impl CoreError {
         let use_color = options.use_color;
         let use_prefix = options.use_prefix;
 
-        fn format_error<M: ToString>(use_color: bool, use_prefix: bool, message: M) -> String {
-            use ansi_term::Colour::Red;
-            let err = if use_prefix {
-                if use_color {
-                    Red.paint("error: ")
-                } else {
-                    "error: ".into()
-                }
-            } else {
-                "".into()
-            };
-            format!("{}{}", err, message.to_string())
-        }
-
         match self {
             CoreError::Codegen { location, message } | CoreError::Parser { location, message } => {
                 let mut filename: PathBuf = location.file.name().into();
@@ -143,4 +129,18 @@ impl CoreError {
                 .join("\n"),
         }
     }
+}
+
+pub fn format_error<M: ToString>(use_color: bool, use_prefix: bool, message: M) -> String {
+    use ansi_term::Colour::Red;
+    let err = if use_prefix {
+        if use_color {
+            Red.paint("error: ")
+        } else {
+            "error: ".into()
+        }
+    } else {
+        "".into()
+    };
+    format!("{}{}", err, message.to_string())
 }
