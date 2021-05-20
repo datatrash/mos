@@ -144,6 +144,18 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn scoped_completion_with_address_modifier() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "outer: { vic: { .const border = $d020 } }\n lda #outer.vic.",
+        )?;
+        let response = server.completion(test_root().join("main.asm"), Position::new(1, 16))?;
+        assert_unordered_eq(&unwrap(&response), &vec!["border"]);
+        Ok(())
+    }
+
     fn unwrap(response: &Option<CompletionResponse>) -> Vec<&str> {
         match response {
             Some(r) => match r {
