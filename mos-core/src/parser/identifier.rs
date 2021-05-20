@@ -193,9 +193,8 @@ impl IdentifierPath {
         self.0.len()
     }
 
-    pub fn single(&self) -> &Identifier {
-        assert_eq!(self.len(), 1);
-        self.0.first().unwrap()
+    pub fn first(&self) -> Option<&Identifier> {
+        self.0.first()
     }
 
     pub fn contains_super(&self) -> bool {

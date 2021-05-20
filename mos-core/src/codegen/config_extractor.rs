@@ -20,7 +20,7 @@ impl<'a> ConfigExtractor<'a> {
     pub fn get_identifier(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<Identifier> {
         let path = self.get_path(ctx, key)?;
         match path.len() {
-            1 => Ok(path.single().clone()),
+            1 => Ok(path.first().unwrap().clone()),
             _ => Err(CoreError::Codegen {
                 location: ctx
                     .tree

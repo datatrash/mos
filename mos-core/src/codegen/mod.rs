@@ -818,8 +818,8 @@ impl CodegenContext {
                         self.emit(span, &bytes)?
                     }
                     Err(()) => {
-                        // Emit some dummy bytes so at least the code map gets updated
-                        self.emit(i.mnemonic.span, &[0, 0, 0])?;
+                        // Emit 'nothing' so at least the code map gets updated
+                        self.emit(i.mnemonic.span, &[])?;
                         return self.error(i.mnemonic.span, "operand size mismatch");
                     }
                 }
