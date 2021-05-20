@@ -25,7 +25,11 @@ pub enum CoreError {
 
 impl Display for CoreError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.format(&ErrorFormattingOptions::default()))
+        write!(
+            f,
+            "{}",
+            format_error(self, &ErrorFormattingOptions::default())
+        )
     }
 }
 
@@ -91,56 +95,101 @@ impl Default for ErrorFormattingOptions {
     }
 }
 
-impl CoreError {
-    pub fn format(&self, options: &ErrorFormattingOptions) -> String {
-        let use_color = options.use_color;
-        let use_prefix = options.use_prefix;
+#[derive(Ord, PartialOrd, Eq, PartialEq)]
+pub struct ErrorMessageLine {
+    location: Option<SpanLoc>,
+    message: String,
+}
 
-        match self {
-            CoreError::Codegen { location, message } | CoreError::Parser { location, message } => {
-                let mut filename: PathBuf = location.file.name().into();
-                if let Some(relative_from) = &options.paths_relative_from {
-                    filename = diff_paths(filename, relative_from).unwrap();
-                }
-                let location = format!(
-                    "{}:{}:{}: ",
-                    filename.to_string_lossy(),
-                    location.begin.line + 1,
-                    location.begin.column + 1
-                );
-                format!(
-                    "{}{}",
-                    location,
-                    format_error(use_color, use_prefix, message)
-                )
-            }
-            CoreError::Io(err) => format_error(use_color, use_prefix, err),
-            CoreError::Json(err) => format_error(use_color, use_prefix, err),
-            CoreError::Toml(err) => format_error(use_color, use_prefix, err),
-            CoreError::BuildError(message) => format_error(use_color, use_prefix, message),
-            CoreError::ParseBoolError(err) => format_error(use_color, use_prefix, err),
-            CoreError::ParseIntError(err) => format_error(use_color, use_prefix, err),
-            CoreError::Unknown => format_error(use_color, use_prefix, "unknown error"),
-            CoreError::Multiple(errors) => errors
-                .iter()
-                .map(|e| e.format(&options))
-                .sorted()
-                .collect_vec()
-                .join("\n"),
+pub struct ErrorMessage {
+    pub lines: Vec<ErrorMessageLine>,
+}
+
+impl From<String> for ErrorMessage {
+    fn from(message: String) -> Self {
+        ErrorMessage {
+            lines: vec![ErrorMessageLine {
+                location: None,
+                message,
+            }],
         }
     }
 }
 
-pub fn format_error<M: ToString>(use_color: bool, use_prefix: bool, message: M) -> String {
-    use ansi_term::Colour::Red;
-    let err = if use_prefix {
-        if use_color {
-            Red.paint("error: ")
-        } else {
-            "error: ".into()
+impl From<CoreError> for ErrorMessage {
+    fn from(e: CoreError) -> Self {
+        e.message()
+    }
+}
+
+impl From<&CoreError> for ErrorMessage {
+    fn from(e: &CoreError) -> Self {
+        e.message()
+    }
+}
+
+impl CoreError {
+    fn message(&self) -> ErrorMessage {
+        match self {
+            CoreError::Codegen { location, message } | CoreError::Parser { location, message } => {
+                ErrorMessage {
+                    lines: vec![ErrorMessageLine {
+                        location: Some(location.clone()),
+                        message: message.clone(),
+                    }],
+                }
+            }
+            CoreError::Io(err) => err.to_string().into(),
+            CoreError::Json(err) => err.to_string().into(),
+            CoreError::Toml(err) => err.to_string().into(),
+            CoreError::BuildError(message) => message.to_string().into(),
+            CoreError::ParseBoolError(err) => err.to_string().into(),
+            CoreError::ParseIntError(err) => err.to_string().into(),
+            CoreError::Unknown => "unknown error".to_string().into(),
+            CoreError::Multiple(errors) => {
+                let lines = errors
+                    .iter()
+                    .map(|e| e.message().lines)
+                    .sorted()
+                    .flatten()
+                    .collect_vec();
+                ErrorMessage { lines }
+            }
         }
-    } else {
-        "".into()
-    };
-    format!("{}{}", err, message.to_string())
+    }
+}
+
+pub fn format_error<M: Into<ErrorMessage>>(message: M, options: &ErrorFormattingOptions) -> String {
+    let message = message.into();
+
+    message
+        .lines
+        .into_iter()
+        .map(|line| {
+            let location = line.location.map(|location| {
+                let mut filename: PathBuf = location.file.name().into();
+                if let Some(relative_from) = &options.paths_relative_from {
+                    filename = diff_paths(filename, relative_from).unwrap();
+                }
+                format!(
+                    "{}:{}:{}: ",
+                    filename.to_string_lossy(),
+                    location.begin.line + 1,
+                    location.begin.column + 1
+                )
+            });
+
+            use ansi_term::Colour::Red;
+            let err = if options.use_prefix {
+                if options.use_color {
+                    Red.paint("error: ")
+                } else {
+                    "error: ".into()
+                }
+            } else {
+                "".into()
+            };
+            format!("{}{}{}", location.unwrap_or_default(), err, line.message)
+        })
+        .join("\n")
 }

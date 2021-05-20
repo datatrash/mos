@@ -15,7 +15,7 @@ use crate::lsp::LspContext;
 use crossbeam_channel::Select;
 use itertools::Itertools;
 use mos_core::codegen::{CodegenContext, ProgramCounter, SymbolIndex};
-use mos_core::errors::ErrorFormattingOptions;
+use mos_core::errors::{format_error, ErrorFormattingOptions};
 use mos_core::parser::IdentifierPath;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -610,10 +610,13 @@ impl DebugSession {
                     Err(e) => self.send_error(
                         seq,
                         &command,
-                        &e.format(&ErrorFormattingOptions {
-                            use_prefix: false,
-                            ..Default::default()
-                        }),
+                        &format_error(
+                            e,
+                            &ErrorFormattingOptions {
+                                use_prefix: false,
+                                ..Default::default()
+                            },
+                        ),
                     )?,
                 }
             }

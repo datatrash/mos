@@ -4,7 +4,7 @@ use crate::debugger::protocol::ProtocolMessage;
 use crossbeam_channel::{RecvError, SendError};
 use itertools::Itertools;
 use lsp_server::{Message, ProtocolError};
-use mos_core::errors::{format_error, CoreError, ErrorFormattingOptions};
+use mos_core::errors::{format_error, CoreError, ErrorFormattingOptions, ErrorMessage};
 use std::num::ParseIntError;
 use std::str::ParseBoolError;
 
@@ -58,40 +58,56 @@ impl<T: Into<MosError>> From<Vec<T>> for MosError {
 
 impl std::fmt::Display for MosError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.format(&ErrorFormattingOptions::default()))
+        write!(
+            f,
+            "{}",
+            format_error(self, &ErrorFormattingOptions::default())
+        )
+    }
+}
+
+impl From<MosError> for ErrorMessage {
+    fn from(e: MosError) -> Self {
+        e.message()
+    }
+}
+
+impl From<&MosError> for ErrorMessage {
+    fn from(e: &MosError) -> Self {
+        e.message()
     }
 }
 
 impl MosError {
-    pub fn format(&self, options: &ErrorFormattingOptions) -> String {
-        let use_color = options.use_color;
-        let use_prefix = options.use_prefix;
-
+    fn message(&self) -> ErrorMessage {
         match self {
-            MosError::Clap(err) => format_error(use_color, use_prefix, err),
-            MosError::Cli(err) => format_error(use_color, use_prefix, err),
-            MosError::Core(err) => format_error(use_color, use_prefix, err),
-            MosError::Io(err) => format_error(use_color, use_prefix, err),
-            MosError::Json(err) => format_error(use_color, use_prefix, err),
-            MosError::Toml(err) => format_error(use_color, use_prefix, err),
-            MosError::Protocol(err) => format_error(use_color, use_prefix, err),
-            MosError::CrossbeamLsp(err) => format_error(use_color, use_prefix, err),
-            MosError::CrossbeamDap(err) => format_error(use_color, use_prefix, err),
-            MosError::CrossbeamViceRequest(err) => format_error(use_color, use_prefix, err),
-            MosError::CrossbeamRecv(err) => format_error(use_color, use_prefix, err),
-            MosError::CrossbeamSend(err) => format_error(use_color, use_prefix, err),
-            MosError::CrossbeamSendMachineEvent(err) => format_error(use_color, use_prefix, err),
-            MosError::DebugAdapter(message) => format_error(use_color, use_prefix, message),
-            MosError::Vice(message) => format_error(use_color, use_prefix, message),
-            MosError::ParseBoolError(err) => format_error(use_color, use_prefix, err),
-            MosError::ParseIntError(err) => format_error(use_color, use_prefix, err),
-            MosError::Unknown => format_error(use_color, use_prefix, "unknown error"),
-            MosError::Multiple(errors) => errors
-                .iter()
-                .map(|e| e.format(&options))
-                .sorted()
-                .collect_vec()
-                .join("\n"),
+            MosError::Clap(err) => err.to_string().into(),
+            MosError::Cli(err) => err.to_string().into(),
+            MosError::Core(err) => err.to_string().into(),
+            MosError::Io(err) => err.to_string().into(),
+            MosError::Json(err) => err.to_string().into(),
+            MosError::Toml(err) => err.to_string().into(),
+            MosError::Protocol(err) => err.to_string().into(),
+            MosError::CrossbeamLsp(err) => err.to_string().into(),
+            MosError::CrossbeamDap(err) => err.to_string().into(),
+            MosError::CrossbeamViceRequest(err) => err.to_string().into(),
+            MosError::CrossbeamRecv(err) => err.to_string().into(),
+            MosError::CrossbeamSend(err) => err.to_string().into(),
+            MosError::CrossbeamSendMachineEvent(err) => err.to_string().into(),
+            MosError::DebugAdapter(message) => message.to_string().into(),
+            MosError::Vice(message) => message.to_string().into(),
+            MosError::ParseBoolError(err) => err.to_string().into(),
+            MosError::ParseIntError(err) => err.to_string().into(),
+            MosError::Unknown => "unknown error".to_string().into(),
+            MosError::Multiple(errors) => {
+                let lines = errors
+                    .iter()
+                    .map(|e| e.message().lines)
+                    .sorted()
+                    .flatten()
+                    .collect_vec();
+                ErrorMessage { lines }
+            }
         }
     }
 }

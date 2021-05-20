@@ -1389,7 +1389,7 @@ mod tests {
         let err = test_codegen(".define segment { foo = bar }").err().unwrap();
         assert_eq!(
             err.to_string(),
-            "test.asm:1:19: error: field not allowed: foo\ntest.asm:1:9: error: missing required fields: name, start"
+            "test.asm:1:9: error: missing required fields: name, start\ntest.asm:1:19: error: field not allowed: foo"
         );
     }
 

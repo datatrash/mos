@@ -27,7 +27,7 @@ impl Sub<Pos> for Pos {
 }
 
 /// A range of text within a CodeMap.
-#[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct Span {
     /// The position in the codemap representing the first byte of the span.
     low: Pos,
@@ -200,6 +200,7 @@ impl CodeMap {
 }
 
 /// A `CodeMap`'s record of a source file.
+#[derive(Ord, PartialOrd)]
 pub struct File {
     /// The span representing the entire file.
     pub span: Span,
@@ -324,7 +325,7 @@ impl Hash for File {
 }
 
 /// A line and column.
-#[derive(Copy, Clone, Hash, Eq, PartialEq, PartialOrd, Debug, Serialize)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug, Serialize)]
 pub struct LineCol {
     /// The line number within the file (0-indexed).
     pub line: usize,
@@ -364,7 +365,7 @@ impl fmt::Display for Loc {
 }
 
 /// A file, and a line and column range within it.
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Ord, PartialOrd, Eq, PartialEq, Debug)]
 pub struct SpanLoc {
     pub file: Arc<File>,
     pub begin: LineCol,

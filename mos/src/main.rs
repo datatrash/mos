@@ -1,13 +1,11 @@
 //! MOS is a toolkit for building applications that target the MOS 6502 CPU.
 
-//#![deny(missing_docs)]
-
 use std::path::{Path, PathBuf};
 
 use clap::{App, AppSettings, Arg, ArgMatches};
 use fs_err as fs;
 
-use mos_core::errors::ErrorFormattingOptions;
+use mos_core::errors::{format_error, ErrorFormattingOptions};
 
 use crate::commands::*;
 use crate::config::Config;
@@ -124,7 +122,7 @@ fn main() {
             paths_relative_from: Some(std::env::current_dir().unwrap()),
             use_prefix: true,
         };
-        log::error!("{}", e.format(&options));
+        log::error!("{}", format_error(e, &options));
         std::process::exit(1);
     }
 }
