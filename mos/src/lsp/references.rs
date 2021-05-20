@@ -105,11 +105,15 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
             .map(|(_, def)| {
                 def.definition_and_usages()
                     .into_iter()
-                    .map(|dl| {
+                    .filter_map(|dl| {
                         let loc = to_location(ctx.analysis().unwrap().look_up(dl.span));
-                        DocumentHighlight {
-                            range: loc.range,
-                            kind: None,
+                        if loc.uri == params.text_document_position_params.text_document.uri {
+                            Some(DocumentHighlight {
+                                range: loc.range,
+                                kind: None,
+                            })
+                        } else {
+                            None
                         }
                     })
                     .collect_vec()
