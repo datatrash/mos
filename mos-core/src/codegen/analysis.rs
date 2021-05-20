@@ -8,19 +8,19 @@ use std::fmt::{Debug, Formatter};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Definition {
     pub location: Option<DefinitionLocation>,
     pub usages: HashSet<DefinitionLocation>,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DefinitionLocation {
     pub parent_scope: SymbolIndex,
     pub span: Span,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DefinitionType {
     Filename(PathBuf),
     Symbol(SymbolIndex),

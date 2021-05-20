@@ -225,6 +225,10 @@ impl LspContext {
         self.codegen.as_ref()
     }
 
+    pub fn codegen_mut(&mut self) -> Option<&mut CodegenContext> {
+        self.codegen.as_mut()
+    }
+
     pub fn analysis(&self) -> Option<&Analysis> {
         self.codegen.as_ref().map(|c| c.analysis())
     }
@@ -285,16 +289,13 @@ impl LspContext {
 
     fn find_definitions<'a>(
         &'a self,
+        analysis: &'a Analysis,
         pos: &'a TextDocumentPositionParams,
     ) -> Vec<(&'a DefinitionType, &'a Definition)> {
-        if let Some(analysis) = self.analysis() {
-            return analysis.find(
-                pos.text_document.uri.to_file_path().unwrap(),
-                to_line_col(&pos.position),
-            );
-        }
-
-        vec![]
+        return analysis.find(
+            pos.text_document.uri.to_file_path().unwrap(),
+            to_line_col(&pos.position),
+        );
     }
 }
 

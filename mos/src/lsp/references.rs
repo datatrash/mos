@@ -23,8 +23,11 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
         ctx: &mut LspContext,
         params: GotoDefinitionParams,
     ) -> MosResult<Option<GotoDefinitionResponse>> {
-        let def = ctx.find_definitions(&params.text_document_position_params);
-        if let Some((_, def)) = def.first() {
+        let defs = ctx
+            .analysis()
+            .map(|a| ctx.find_definitions(a, &params.text_document_position_params))
+            .unwrap_or_default();
+        if let Some((_, def)) = defs.first() {
             if let Some(location) = &def.location {
                 let tree = ctx.tree.as_ref().unwrap();
                 let origin = def.try_get_usage_containing(
@@ -93,8 +96,11 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
         ctx: &mut LspContext,
         params: DocumentHighlightParams,
     ) -> MosResult<Option<Vec<DocumentHighlight>>> {
-        let highlights = ctx
-            .find_definitions(&params.text_document_position_params)
+        let defs = ctx
+            .analysis()
+            .map(|a| ctx.find_definitions(a, &params.text_document_position_params))
+            .unwrap_or_default();
+        let highlights = defs
             .into_iter()
             .map(|(_, def)| {
                 def.definition_and_usages()

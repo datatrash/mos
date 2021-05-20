@@ -171,8 +171,21 @@ impl<S: Debug> SymbolTable<S> {
             .collect()
     }
 
+    pub fn rename(&mut self, nx: SymbolIndex, child_nx: SymbolIndex, new_id: Identifier) {
+        if let Some(edge) = self
+            .graph
+            .edges_directed(nx, Direction::Outgoing)
+            .find(|edge| edge.target() == child_nx)
+        {
+            let id = edge.id();
+            if let Some(weight) = self.graph.edge_weight_mut(id) {
+                *weight = new_id;
+            }
+        }
+    }
+
     pub fn query<I: Into<IdentifierPath>>(&self, nx: SymbolIndex, path: I) -> Option<SymbolIndex> {
-        self.query_indices(nx, path)
+        self.query_traversal_steps(nx, path)
             .last()
             .map(|tx| match tx {
                 QueryTraversalStep::Symbol(nx) => Some(*nx),
@@ -181,7 +194,7 @@ impl<S: Debug> SymbolTable<S> {
             .flatten()
     }
 
-    pub fn query_indices<I: Into<IdentifierPath>>(
+    pub fn query_traversal_steps<I: Into<IdentifierPath>>(
         &self,
         nx: SymbolIndex,
         path: I,
@@ -211,7 +224,7 @@ impl<S: Debug> SymbolTable<S> {
                 let mut traversal = vec![QueryTraversalStep::Super];
                 traversal.extend(
                     self.parent(nx)
-                        .map(|nx| self.query_indices(nx, path))
+                        .map(|nx| self.query_traversal_steps(nx, path))
                         .unwrap_or_default(),
                 );
                 traversal
@@ -379,9 +392,9 @@ mod tests {
     }
 
     #[test]
-    fn query_indices() {
+    fn query_traversal_steps() {
         let t = table();
-        let steps = t.table.query_indices(t.s_ss, &idpath!("T.U.a"));
+        let steps = t.table.query_traversal_steps(t.s_ss, &idpath!("T.U.a"));
         assert_eq!(
             steps,
             vec![

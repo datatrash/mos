@@ -295,6 +295,10 @@ impl CodegenContext {
         &self.symbols
     }
 
+    pub fn symbols_mut(&mut self) -> &mut SymbolTable<Symbol> {
+        &mut self.symbols
+    }
+
     pub fn tree(&self) -> &Arc<ParseTree> {
         &self.tree
     }
