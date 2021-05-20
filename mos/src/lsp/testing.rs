@@ -1,7 +1,9 @@
 use crate::errors::MosResult;
 use crate::lsp::{LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
-use lsp_types::request::{Completion, GotoDefinition, References, Rename, Request};
+use lsp_types::request::{
+    Completion, GotoDefinition, PrepareRenameRequest, References, Rename, Request,
+};
 use lsp_types::{
     CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
     GotoDefinitionResponse, Position, ReferenceContext, ReferenceParams, RenameParams,
@@ -38,6 +40,17 @@ impl LspServer {
                     version: 0,
                     text: source.to_string(),
                 },
+            },
+        ))
+    }
+
+    pub fn prepare_rename<P: AsRef<Path>>(&mut self, path: P, position: Position) -> MosResult<()> {
+        self.handle_message(request::<PrepareRenameRequest>(
+            TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Url::from_file_path(path)?,
+                },
+                position,
             },
         ))
     }

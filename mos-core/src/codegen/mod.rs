@@ -9,6 +9,7 @@ mod text_encoding;
 
 pub use analysis::*;
 pub use program_counter::*;
+pub use source_map::*;
 pub use symbols::*;
 
 use crate::codegen::config_validator::ConfigValidator;

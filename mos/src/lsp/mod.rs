@@ -18,13 +18,13 @@ use crate::lsp::formatting::{FormattingRequestHandler, OnTypeFormattingRequestHa
 use crate::lsp::references::{
     DocumentHighlightRequestHandler, FindReferencesHandler, GoToDefinitionHandler,
 };
-use crate::lsp::rename::RenameHandler;
+use crate::lsp::rename::*;
 use crate::lsp::semantic_highlighting::SemanticTokensFullRequestHandler;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf,
+    CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf, RenameOptions,
     ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
 };
 use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
@@ -322,6 +322,7 @@ impl LspServer {
         lsp.register_request_handler(GoToDefinitionHandler {});
         lsp.register_request_handler(FindReferencesHandler {});
         lsp.register_request_handler(DocumentHighlightRequestHandler {});
+        lsp.register_request_handler(PrepareRenameRequestHandler {});
         lsp.register_request_handler(RenameHandler {});
         lsp.register_request_handler(CompletionHandler {});
         lsp.register_notification_handler(DidOpenTextDocumentHandler {});
@@ -352,7 +353,10 @@ impl LspServer {
                 more_trigger_character: None,
             }),
             document_highlight_provider: Some(OneOf::Left(true)),
-            rename_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: Default::default(),
+            })),
             definition_provider: Some(OneOf::Left(true)),
             completion_provider: Some(CompletionOptions {
                 trigger_characters: Some(vec![".".into(), "#".into()]),
