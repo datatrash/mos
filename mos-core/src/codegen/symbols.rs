@@ -13,6 +13,12 @@ pub struct SymbolTable<S: Debug> {
 
 pub type SymbolIndex = NodeIndex;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueryTraversalStep {
+    Symbol(SymbolIndex),
+    Super,
+}
+
 #[derive(Debug)]
 pub struct Item<S: Debug> {
     data: Option<S>,
@@ -166,33 +172,93 @@ impl<S: Debug> SymbolTable<S> {
     }
 
     pub fn query<I: Into<IdentifierPath>>(&self, nx: SymbolIndex, path: I) -> Option<SymbolIndex> {
-        let path = path.into();
-        let (path, id) = path.split();
-        let refers_to_super = path.contains_super();
+        self.query_indices(nx, path)
+            .last()
+            .map(|tx| match tx {
+                QueryTraversalStep::Symbol(nx) => Some(*nx),
+                _ => None,
+            })
+            .flatten()
+    }
 
-        let mut nx = Some(nx);
-        while nx.is_some() {
-            let mut path_nx = self.try_index(nx.unwrap(), &path);
-            while path_nx.is_some() {
-                let child = self.child(path_nx.unwrap(), &id);
-                match child {
-                    Some(child_nx) => {
-                        return Some(child_nx);
+    pub fn query_indices<I: Into<IdentifierPath>>(
+        &self,
+        nx: SymbolIndex,
+        path: I,
+    ) -> Vec<QueryTraversalStep> {
+        let path = path.into();
+        let mut ids = path.clone();
+        let mut cur_nx = Some(nx);
+        let mut traversal = vec![];
+        while let Some(id) = ids.pop_front() {
+            if let Some(c) = cur_nx {
+                if c != self.root {
+                    // Don't add 'root' to traversal since that's always implied
+                    traversal.push(QueryTraversalStep::Symbol(c));
+                }
+                cur_nx = self.try_index(c, id);
+            }
+        }
+
+        match cur_nx {
+            Some(nx) => {
+                traversal.push(QueryTraversalStep::Symbol(nx));
+                traversal
+            }
+            None if path.contains_super() => vec![],
+            None => {
+                // If path is not explicitly referring to 'super', we can bubble up and try again
+                let mut traversal = vec![QueryTraversalStep::Super];
+                traversal.extend(
+                    self.parent(nx)
+                        .map(|nx| self.query_indices(nx, path))
+                        .unwrap_or_default(),
+                );
+                traversal
+            }
+        }
+    }
+
+    pub fn query_steps_to_path(
+        &self,
+        mut nx: SymbolIndex,
+        steps: &[QueryTraversalStep],
+        include_super: bool,
+    ) -> Option<IdentifierPath> {
+        let mut ids = vec![];
+        for step in steps {
+            match step {
+                QueryTraversalStep::Symbol(child_nx) => {
+                    let edge = self
+                        .graph
+                        .edges_directed(nx, Direction::Outgoing)
+                        .find(|edge| edge.target() == *child_nx);
+
+                    match edge {
+                        Some(edge) => {
+                            ids.push(edge.weight().clone());
+                            nx = edge.target();
+                        }
+                        None => {
+                            // Bail entirely, because this query traversal isn't valid
+                            return None;
+                        }
                     }
-                    None => {
-                        path_nx = self.parent(path_nx.unwrap());
+                }
+                QueryTraversalStep::Super => {
+                    if include_super {
+                        ids.push(Identifier::sup());
+                    }
+                    match self.parent(nx) {
+                        Some(parent_nx) => {
+                            nx = parent_nx;
+                        }
+                        None => return None,
                     }
                 }
             }
-
-            // If path is not explicitly referring to 'super', we can bubble up and try again
-            if refers_to_super {
-                break;
-            } else {
-                nx = self.parent(nx.unwrap());
-            }
         }
-        None
+        Some(IdentifierPath::new(&ids))
     }
 
     pub fn visible_symbols(
@@ -310,6 +376,31 @@ mod tests {
         // Can also query symbols that exist on a higher level
         let nx_c = t.table.insert(t.table.root, "c", 50);
         assert_eq!(t.table.query(t.s_ss, &id!("c")), Some(nx_c));
+    }
+
+    #[test]
+    fn query_indices() {
+        let t = table();
+        let steps = t.table.query_indices(t.s_ss, &idpath!("T.U.a"));
+        assert_eq!(
+            steps,
+            vec![
+                QueryTraversalStep::Super,
+                QueryTraversalStep::Super,
+                QueryTraversalStep::Symbol(t.t),
+                QueryTraversalStep::Symbol(t.t_u),
+                QueryTraversalStep::Symbol(t.t_u_a),
+            ]
+        );
+
+        assert_eq!(
+            t.table.query_steps_to_path(t.s_ss, &steps, false),
+            Some(idpath!("T.U.a"))
+        );
+        assert_eq!(
+            t.table.query_steps_to_path(t.s_ss, &steps, true),
+            Some(idpath!("super.super.T.U.a"))
+        );
     }
 
     #[test]

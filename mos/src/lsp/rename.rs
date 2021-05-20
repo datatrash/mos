@@ -22,25 +22,28 @@ impl RequestHandler<Rename> for RenameHandler {
             .map(|(def_ty, def)| match def_ty {
                 DefinitionType::Filename(_) => None,
                 DefinitionType::Symbol(_def_symbol_nx) => ctx.analysis().as_ref().map(|a| {
-                    let changes = def
-                        .definition_and_usages()
-                        .into_iter()
-                        .map(|dl| {
-                            let loc = to_location(a.look_up(dl.span));
-                            let edit = TextEdit {
-                                range: loc.range,
-                                new_text: params.new_name.clone(),
-                            };
-                            (loc.uri, edit)
-                        })
-                        .into_group_map();
-                    WorkspaceEdit {
-                        changes: Some(changes),
-                        document_changes: None,
-                        change_annotations: None,
-                    }
+                    ctx.codegen().map(|codegen| {
+                        let changes = def
+                            .definition_and_usages()
+                            .into_iter()
+                            .map(|dl| {
+                                let loc = to_location(a.look_up(dl.span));
+                                let edit = TextEdit {
+                                    range: loc.range,
+                                    new_text: params.new_name.clone(),
+                                };
+                                (loc.uri, edit)
+                            })
+                            .into_group_map();
+                        WorkspaceEdit {
+                            changes: Some(changes),
+                            document_changes: None,
+                            change_annotations: None,
+                        }
+                    })
                 }),
             })
+            .flatten()
             .flatten();
         Ok(edit)
     }
