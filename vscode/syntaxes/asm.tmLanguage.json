@@ -6,7 +6,22 @@
       "include": "#comment"
     },
     {
-      "include": "#single-line-comment-consuming-line-ending"
+      "include": "#mnemonic"
+    },
+    {
+      "include": "#directive"
+    },
+    {
+      "include": "#label"
+    },
+    {
+      "include": "#hex-literal"
+    },
+    {
+      "include": "#dec-literal"
+    },
+    {
+      "include": "#bin-literal"
     }
   ],
   "repository": {
@@ -14,16 +29,10 @@
       "patterns": [
         {
           "name": "comment.block.asm",
-          "begin": "(/\\*)(?:\\s*((@)internal)(?=\\s|(\\*/)))?",
+          "begin": "/\\*",
           "beginCaptures": {
-            "1": {
+            "0": {
               "name": "punctuation.definition.comment.asm"
-            },
-            "2": {
-              "name": "storage.type.internaldeclaration.asm"
-            },
-            "3": {
-              "name": "punctuation.decorator.internaldeclaration.asm"
             }
           },
           "end": "\\*/",
@@ -34,22 +43,10 @@
           }
         },
         {
-          "begin": "(^[ \\t]+)?((//)(?:\\s*((@)internal)(?=\\s|$))?)",
+          "begin": "//",
           "beginCaptures": {
-            "1": {
-              "name": "punctuation.whitespace.comment.leading.asm"
-            },
-            "2": {
+            "0": {
               "name": "comment.line.double-slash.asm"
-            },
-            "3": {
-              "name": "punctuation.definition.comment.asm"
-            },
-            "4": {
-              "name": "storage.type.internaldeclaration.asm"
-            },
-            "5": {
-              "name": "punctuation.decorator.internaldeclaration.asm"
             }
           },
           "end": "(?=$)",
@@ -57,27 +54,53 @@
         }
       ]
     },
-    "single-line-comment-consuming-line-ending": {
-      "begin": "(^[ \\t]+)?((//)(?:\\s*((@)internal)(?=\\s|$))?)",
-      "beginCaptures": {
-        "1": {
-          "name": "punctuation.whitespace.comment.leading.asm"
-        },
-        "2": {
-          "name": "comment.line.double-slash.asm"
-        },
-        "3": {
-          "name": "punctuation.definition.comment.asm"
-        },
-        "4": {
-          "name": "storage.type.internaldeclaration.asm"
-        },
-        "5": {
-          "name": "punctuation.decorator.internaldeclaration.asm"
+    "mnemonic": {
+      "patterns": [
+        {
+          "name": "keyword.mnemonic.asm",
+          "match": "adc|and|asl|bcc|bcs|beq|bit|bmi|bne|bpl|brk|bvc|bvs|clc|cld|cli|clv|cmp|cpx|cpy|dec|dex|dey|eor|inc|inx|iny|jmp|jsr|lda|ldx|ldy|lsr|nop|ora|pha|php|pla|plp|rol|ror|rti|rts|sbc|sec|sed|sei|sta|stx|sty|tax|tay|tsx|txa|txs|tya"
         }
-      },
-      "end": "(?=^)",
-      "contentName": "comment.line.double-slash.asm"
+      ]
+    },
+    "directive": {
+      "patterns": [
+        {
+          "name": "entity.name.function.preprocessor.asm",
+          "match": "(\\W+|\\s|\\A)(.const|.var|.byte|.word|.dword|.macro|.define|.segment|.loop|.align|.if|else|as|.import|from|.text|ascii|petscii|petscreen|.file)(\\s|\\z)"
+        }
+      ]
+    },
+    "label": {
+      "patterns": [
+        {
+          "name": "support.type.asm",
+          "match": "\\s*(\\w+)\\:"
+        }
+      ]
+    },
+    "hex-literal": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hexadecimal.asm",
+          "match": "#?\\$[0-9A-Fa-f]+"
+        }
+      ]
+    },
+    "dec-literal": {
+      "patterns": [
+        {
+          "name": "constant.numeric.decimal.asm",
+          "match": "\\b#?[0-9]+"
+        }
+      ]
+    },
+    "bin-literal": {
+      "patterns": [
+        {
+          "name": "constant.numeric.binary.asm",
+          "match": "#?\\%[0-1]+"
+        }
+      ]
     }
   }
 }

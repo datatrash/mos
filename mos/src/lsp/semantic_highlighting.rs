@@ -194,16 +194,8 @@ impl SemTokBuilder {
         self
     }
 
-    fn keyword<T: Into<Span>>(self, val: T) -> Self {
-        self.push(val, TokenType::Keyword)
-    }
-
     fn identifier<T: Into<Span>>(self, val: T) -> Self {
         self.push(val, TokenType::Identifier)
-    }
-
-    fn number<T: Into<Span>>(self, val: T) -> Self {
-        self.push(val, TokenType::Number)
     }
 
     fn token(mut self, val: &Token) -> Self {
@@ -236,7 +228,7 @@ impl SemTokBuilder {
     }
 
     fn import_as(self, as_: &ImportAs) -> Self {
-        self.keyword(&as_.tag).identifier(&as_.path)
+        self.identifier(&as_.path)
     }
 
     fn specific_import_args(mut self, args: &[ArgItem<SpecificImportArg>]) -> Self {
@@ -263,12 +255,12 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
     let b = SemTokBuilder::new();
 
     match &token {
-        Token::Align { tag, value } => b.keyword(tag).expression(&value.data),
+        Token::Align { tag: _, value } => b.expression(&value.data),
         Token::Braces { block, .. } | Token::Config(block) => b.block(block),
         Token::ConfigPair { key, value, .. } => b.push(key, TokenType::Keyword).token(&value.data),
-        Token::Data { values, size } => b.push(size, TokenType::Keyword).expression_args(values),
-        Token::Definition { tag, id, value } => {
-            let b = b.keyword(tag).identifier(id);
+        Token::Data { values, size: _ } => b.expression_args(values),
+        Token::Definition { tag: _, id, value } => {
+            let b = b.identifier(id);
             match value {
                 Some(v) => b.token(v),
                 None => b,
@@ -277,9 +269,9 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         Token::Eof(_) => b,
         Token::Error(_) => b,
         Token::Expression(expr) => b.expression(&expr),
-        Token::File { tag, filename, .. } => b
-            .push(tag, TokenType::Keyword)
-            .push(filename, TokenType::Constant),
+        Token::File {
+            tag: _, filename, ..
+        } => b.push(filename, TokenType::Constant),
         Token::Label { id, block, .. } => {
             let b = b.identifier(id);
             match block {
@@ -288,16 +280,14 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             }
         }
         Token::Import {
-            tag,
+            tag: _,
             args,
-            from,
+            from: _,
             lquote: _,
             filename,
             block,
             ..
         } => {
-            let b = b.keyword(tag);
-
             let b = match args {
                 ImportArgs::All(_, as_) => match as_ {
                     Some(a) => b.import_as(a),
@@ -305,72 +295,63 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 },
                 ImportArgs::Specific(args) => b.specific_import_args(args),
             };
-            let b = b.keyword(from).push(filename, TokenType::Constant);
+            let b = b.push(filename, TokenType::Constant);
             match block {
                 Some(block) => b.block(block),
                 None => b,
             }
         }
         Token::If {
-            tag_if,
+            tag_if: _,
             if_,
             value,
-            tag_else,
+            tag_else: _,
             else_,
             ..
         } => {
-            let b = b.keyword(tag_if).block(&if_).expression(&value.data);
+            let b = b.block(&if_).expression(&value.data);
             match else_ {
-                Some(e) => b.keyword(tag_else.as_ref().unwrap()).block(e),
+                Some(e) => b.block(e),
                 None => b,
             }
         }
-        Token::Instruction(i) => {
-            let b = b.push(&i.mnemonic, TokenType::Mnemonic);
-            match &i.operand {
-                Some(op) => b.expression(&op.expr.data),
-                None => b,
-            }
-        }
+        Token::Instruction(i) => match &i.operand {
+            Some(op) => b.expression(&op.expr.data),
+            None => b,
+        },
         Token::Loop {
-            tag,
+            tag: _,
             loop_scope: _,
             expr,
             block,
-        } => b.keyword(tag).expression(&expr.data).block(block),
+        } => b.expression(&expr.data).block(block),
         Token::MacroDefinition {
-            tag,
+            tag: _,
             id,
             args,
             block,
             ..
-        } => b
-            .keyword(tag)
-            .identifier(id)
-            .identifier_args(args)
-            .block(block),
+        } => b.identifier(id).identifier_args(args).block(block),
         Token::MacroInvocation { id: name, args, .. } => {
             SemTokBuilder::new().identifier(name).expression_args(args)
         }
         Token::ProgramCounterDefinition { star, value, .. } => {
             b.push(star, TokenType::Keyword).expression(&value.data)
         }
-        Token::Segment { tag, id, block } => {
-            let b = b.push(tag, TokenType::Keyword).identifier(id);
+        Token::Segment { tag: _, id, block } => {
+            let b = b.identifier(id);
             match block {
                 Some(block) => b.block(block),
                 None => b,
             }
         }
-        Token::Text { tag, text, .. } => b
-            .push(tag, TokenType::Keyword)
-            .push(text, TokenType::Constant),
+        Token::Text { tag: _, text, .. } => b.push(text, TokenType::Constant),
         Token::VariableDefinition { ty, id, value, .. } => {
             let token_type = match &ty.data {
                 VariableType::Constant => TokenType::Constant,
                 VariableType::Variable => TokenType::Variable,
             };
-            b.keyword(ty).identifier(id).push(value, token_type)
+            b.identifier(id).push(value, token_type)
         }
     }
 }
@@ -382,7 +363,7 @@ fn emit_expression_semantic(expression: &Expression) -> SemTokBuilder {
             .expression(&bin.rhs.data),
         Expression::Factor { factor, .. } => match &factor.data {
             ExpressionFactor::ExprParens { inner, .. } => emit_expression_semantic(&inner.data),
-            ExpressionFactor::Number { value, .. } => SemTokBuilder::new().number(value),
+            ExpressionFactor::Number { .. } => SemTokBuilder::new(),
             ExpressionFactor::IdentifierValue { path, .. } => SemTokBuilder::new().identifier(path),
             ExpressionFactor::CurrentProgramCounter(pc) => {
                 SemTokBuilder::new().push(pc, TokenType::Constant)
