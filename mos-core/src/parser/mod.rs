@@ -1034,6 +1034,7 @@ fn expression_term(input: LocatedSpan) -> IResult<Located<Expression>> {
         ws(alt((
             map(tag("*"), |_| BinaryOp::Mul),
             map(tag("/"), |_| BinaryOp::Div),
+            map(tag("%"), |_| BinaryOp::Mod),
             map(tag("<<"), |_| BinaryOp::Shl),
             map(tag(">>"), |_| BinaryOp::Shr),
             map(tag("^"), |_| BinaryOp::Xor),
@@ -1188,6 +1189,7 @@ mod test {
         check("lda #[1   +   2   ]", "LDA #[1   +   2   ]");
         check("lda #[   1   +   2   ]", "LDA #[   1   +   2   ]");
         check("lda #1 ^ 4", "LDA #1 ^ 4");
+        check("lda #1 % 4", "LDA #1 % 4");
         check("lda #1 << 4", "LDA #1 << 4");
         check("lda #1 >> 4", "LDA #1 >> 4");
         check("lda #1 || 2", "LDA #1 || 2");

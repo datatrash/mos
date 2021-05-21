@@ -252,6 +252,8 @@ pub enum BinaryOp {
     Mul,
     /// Division
     Div,
+    /// Modulo
+    Mod,
     /// Shift left
     Shl,
     /// Shift right
@@ -286,6 +288,10 @@ impl BinaryOp {
                 0 => 0,
                 _ => lhs / rhs,
             },
+            BinaryOp::Mod => match rhs {
+                0 => 0,
+                _ => lhs % rhs,
+            },
             BinaryOp::Shl => lhs << rhs,
             BinaryOp::Shr => lhs >> rhs,
             BinaryOp::Xor => lhs ^ rhs,
@@ -308,6 +314,7 @@ impl Display for BinaryOp {
             BinaryOp::Sub => write!(f, "-"),
             BinaryOp::Mul => write!(f, "*"),
             BinaryOp::Div => write!(f, "/"),
+            BinaryOp::Mod => write!(f, "%"),
             BinaryOp::Shl => write!(f, "<<"),
             BinaryOp::Shr => write!(f, ">>"),
             BinaryOp::Xor => write!(f, "^"),
