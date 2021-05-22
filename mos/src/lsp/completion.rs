@@ -41,12 +41,12 @@ impl RequestHandler<Completion> for CompletionHandler {
                         // Are we autocompleting a dot?
                         if suffix.starts_with('.') {
                             // Go back until the first non-identifer or dot character to determine the scope prefix
-                            if let Some(scope_at) =
-                                line.rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
-                            {
-                                let (_, scope) = line.split_at(scope_at + 1);
-                                nested_scope = Some(IdentifierPath::from(scope));
-                            }
+                            let scope_at = line
+                                .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
+                                .map(|pos| pos + 1)
+                                .unwrap_or_default();
+                            let (_, scope) = line.split_at(scope_at);
+                            nested_scope = Some(IdentifierPath::from(scope));
                         }
                     }
                 }

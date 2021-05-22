@@ -35,88 +35,61 @@ impl RequestHandler<PrepareRenameRequest> for PrepareRenameRequestHandler {
                     let line = source_file.file.source_line(source_line);
 
                     // Find the beginning of the full identifier path under the cursor
-                    if let Some(mut path_start) = line[..source_column]
+                    let path_start = line[..source_column]
                         .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
-                    {
-                        // Move ahead to start of path
-                        path_start += 1;
+                        .map(|pos| pos + 1)
+                        .unwrap_or_default();
 
-                        // Now, also try to find the identifier under the cursor
-                        if let Some(mut start) =
-                            line[..source_column].rfind(|c: char| !c.is_alphanumeric() && c != '_')
-                        {
-                            // Move ahead to start of path
-                            start += 1;
+                    // Now, also try to find the identifier under the cursor
+                    let start = line[..source_column]
+                        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+                        .map(|pos| pos + 1)
+                        .unwrap_or_default();
 
-                            // Find the end of the identifier under the cursor
-                            let end = line[source_column..]
-                                .find(|c: char| !c.is_alphanumeric() && c != '_')
-                                .unwrap_or_else(|| line[source_column..].len());
+                    // Find the end of the identifier under the cursor
+                    let end = line[source_column..]
+                        .find(|c: char| !c.is_alphanumeric() && c != '_')
+                        .unwrap_or_else(|| line[source_column..].len());
 
-                            // Adjust the offset to match the full line, not just the substring
-                            let end = source_column + end;
+                    // Adjust the offset to match the full line, not just the substring
+                    let end = source_column + end;
 
-                            // This is now the identifier under the cursor
-                            let id = Identifier::from(&line[start..end]);
+                    // This is now the identifier under the cursor
+                    let id = Identifier::from(&line[start..end]);
 
-                            if id.is_super() {
-                                // We don't want to allow renaming 'super'
-                                return Ok(None);
-                            }
+                    if id.is_super() {
+                        // We don't want to allow renaming 'super'
+                        return Ok(None);
+                    }
 
-                            // This is now the full identifier path that is under the cursor
-                            let path = IdentifierPath::from(&line[path_start..end]);
+                    // This is now the full identifier path that is under the cursor
+                    let path = IdentifierPath::from(&line[path_start..end]);
 
-                            for offset in codegen.source_map().line_col_to_offsets(
-                                &tree.code_map,
-                                file_path.to_str().unwrap(),
-                                source_line,
-                                source_column,
-                            ) {
-                                if codegen.symbols().query(offset.scope, &path).is_some() {
-                                    // We're referring to an existing symbol here!
-                                    let range = lsp_types::Range {
-                                        start: lsp_types::Position {
-                                            line: source_line as u32,
-                                            character: start as u32,
-                                        },
-                                        end: lsp_types::Position {
-                                            line: source_line as u32,
-                                            character: end as u32,
-                                        },
-                                    };
-                                    return Ok(Some(PrepareRenameResponse::Range(range)));
-                                }
-                            }
+                    for offset in codegen.source_map().line_col_to_offsets(
+                        &tree.code_map,
+                        file_path.to_str().unwrap(),
+                        source_line,
+                        source_column,
+                    ) {
+                        if codegen.symbols().query(offset.scope, &path).is_some() {
+                            // We're referring to an existing symbol here!
+                            let range = lsp_types::Range {
+                                start: lsp_types::Position {
+                                    line: source_line as u32,
+                                    character: start as u32,
+                                },
+                                end: lsp_types::Position {
+                                    line: source_line as u32,
+                                    character: end as u32,
+                                },
+                            };
+                            return Ok(Some(PrepareRenameResponse::Range(range)));
                         }
                     }
                 }
             }
         }
 
-        /*let (nested_scope, path, offsets) = find_offsets_from_text_document_position(ctx, &params);
-        if let Some(codegen) = ctx.codegen() {
-            if let Some(path) = path {
-                // We don't want to allow renaming of 'super'
-                if path.first().map(|id| id.is_super()).unwrap_or_default() {
-                    return Ok(None);
-                }
-
-                let full_path = match nested_scope {
-                    Some(ns) => ns.join(path),
-                    None => path,
-                };
-                for offset in offsets {
-                    let nx = codegen.symbols().query(offset.scope, &full_path);
-                    if nx.is_some() {
-                        // Ok, the text document position is referring to a symbol
-                        return Ok(Some(PrepareRenameResponse::DefaultBehavior {
-                            default_behavior: true,
-                        }));
-                    }
-                }
-            }
-        }*/
         Ok(None)
     }
 }
@@ -242,31 +215,6 @@ mod tests {
     fn prepare_rename() -> MosResult<()> {
         let mut server = LspServer::new(LspContext::new());
 
-        let assert_can_rename =
-            |server: &LspServer, can_rename: bool, line: u32, columns: std::ops::Range<u32>| {
-                let range = lsp_types::Range {
-                    start: lsp_types::Position {
-                        line,
-                        character: columns.start,
-                    },
-                    end: lsp_types::Position {
-                        line,
-                        character: columns.end,
-                    },
-                };
-                let expected = if can_rename {
-                    response::<PrepareRenameRequest>(Some(PrepareRenameResponse::Range(range)))
-                        .result
-                } else {
-                    response::<PrepareRenameRequest>(None).result
-                };
-
-                assert_eq!(
-                    server.lock_context().responses().pop().unwrap().result,
-                    expected
-                );
-            };
-
         server.did_open_text_document(
             test_root().join("main.asm"),
             "foo: { .const bar = 1 }\n{\nlda foo.bar\nlda foo.bar.super\n}",
@@ -302,6 +250,8 @@ mod tests {
             test_root().join("main.asm"),
             "foo: { .const bar = 1 }\n{\nlda foo.bar\n}",
         )?;
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 8))?;
+        assert_can_rename(&server, true, 2, 8..11);
         server.rename(test_root().join("main.asm"), Position::new(2, 8), "baz")?;
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
@@ -339,6 +289,8 @@ mod tests {
             test_root().join("main.asm"),
             "foo: { .const bar = 1 }\n{\nlda foo.bar\n}",
         )?;
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 4))?;
+        assert_can_rename(&server, true, 2, 4..7);
         server.rename(test_root().join("main.asm"), Position::new(2, 4), "foz")?;
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
@@ -377,6 +329,8 @@ mod tests {
             ".import * from \"other.asm\"\n{\nlda foo.bar\n}",
         )?;
         server.did_open_text_document(test_root().join("other.asm"), "foo: { .const bar = 1 }")?;
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 4))?;
+        assert_can_rename(&server, true, 2, 4..7);
         server.rename(test_root().join("main.asm"), Position::new(2, 4), "foz")?;
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
@@ -406,5 +360,72 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn rename_definition() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "foo: { .const bar = 1 }\n{\nlda foo.bar\n}",
+        )?;
+        server.prepare_rename(test_root().join("main.asm"), Position::new(0, 0))?;
+        assert_can_rename(&server, true, 0, 0..3);
+        server.rename(test_root().join("main.asm"), Position::new(0, 0), "foz")?;
+
+        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        expected_changes.insert(
+            Url::from_file_path(test_root().join("main.asm"))?,
+            vec![
+                TextEdit {
+                    range: Range::new(Position::new(0, 0), Position::new(0, 3)),
+                    new_text: "foz".to_string(),
+                },
+                TextEdit {
+                    range: Range::new(Position::new(2, 4), Position::new(2, 7)),
+                    new_text: "foz".to_string(),
+                },
+            ],
+        );
+
+        assert_eq!(
+            server.lock_context().responses().pop().unwrap().result,
+            response::<Rename>(Some(WorkspaceEdit {
+                changes: Some(expected_changes),
+                document_changes: None,
+                change_annotations: None
+            }))
+            .result
+        );
+
+        Ok(())
+    }
+
+    fn assert_can_rename(
+        server: &LspServer,
+        can_rename: bool,
+        line: u32,
+        columns: std::ops::Range<u32>,
+    ) {
+        let range = lsp_types::Range {
+            start: lsp_types::Position {
+                line,
+                character: columns.start,
+            },
+            end: lsp_types::Position {
+                line,
+                character: columns.end,
+            },
+        };
+        let expected = if can_rename {
+            response::<PrepareRenameRequest>(Some(PrepareRenameResponse::Range(range))).result
+        } else {
+            response::<PrepareRenameRequest>(None).result
+        };
+
+        assert_eq!(
+            server.lock_context().responses().pop().unwrap().result,
+            expected
+        );
     }
 }
