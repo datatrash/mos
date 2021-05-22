@@ -68,6 +68,5 @@
 
               text: {
                         .text petscreen "mos says hello!      "
-
                         .byte $ff
                     }

@@ -168,6 +168,10 @@ impl CodeFormatter {
             } {
                 let (newline_if_same, newline_if_diff) = match token {
                     Token::Braces { .. } => (true, true),
+                    Token::Data { .. } | Token::Text { .. } => (
+                        false,
+                        !matches!(prev_token, Token::Data { .. } | Token::Text { .. }),
+                    ),
                     Token::Definition { .. } => (true, true),
                     Token::If { .. } => (true, true),
                     Token::Import { block, .. } => (block.is_some(), true),
