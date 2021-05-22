@@ -1,0 +1,2 @@
+[build]
+entry = "main.asm"
