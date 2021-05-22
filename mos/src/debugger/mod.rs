@@ -266,9 +266,10 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
                                         continue;
                                     }
 
-                                    let symbol = codegen.symbols().try_get(symbol_nx).unwrap();
-                                    if let Some(val) = symbol.data.try_as_i64() {
-                                        result.insert(id.to_string(), val);
+                                    if let Some(symbol) = codegen.symbols().try_get(symbol_nx) {
+                                        if let Some(val) = symbol.data.try_as_i64() {
+                                            result.insert(id.to_string(), val);
+                                        }
                                     }
                                 }
                             }
