@@ -831,6 +831,7 @@ impl CodegenContext {
                         id.data.clone(),
                         Symbol::label(self.pass_idx, pc.as_i64()),
                     )?;
+                    self.source_map.add(self.current_scope_nx, id.span, pc, 0);
                 }
 
                 if let Some(b) = block {
