@@ -809,6 +809,7 @@ fn file(input: LocatedSpan) -> IResult<Token> {
 fn statement(input: LocatedSpan) -> IResult<Token> {
     alt((
         braces,
+        label,
         instruction,
         variable_definition,
         const_definition,
@@ -816,7 +817,6 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         config_definition,
         macro_definition,
         macro_invocation,
-        label,
         data,
         segment,
         loop_,
@@ -1368,6 +1368,7 @@ mod test {
             "foo: {\nrol\nbar: {\nnop\n}\n}",
             "foo: {\nROL\nbar: {\nNOP\n}\n}",
         );
+        check("   nopnop:   {nop }", "   nopnop:   {NOP }");
     }
 
     #[test]
