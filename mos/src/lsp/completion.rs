@@ -71,7 +71,7 @@ impl RequestHandler<Completion> for CompletionHandler {
                 let mut symbols = HashMap::new();
                 offsets.into_iter().for_each(|offset| {
                     let scope_nx = match &nested_scope {
-                        Some(ns) => codegen.symbols().try_index(offset.scope, ns),
+                        Some(ns) => codegen.symbols().query(offset.scope, ns),
                         None => Some(offset.scope),
                     };
 
@@ -137,9 +137,9 @@ mod tests {
         let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(
             test_root().join("main.asm"),
-            "outer: { vic: { .const border = $d020 } }\n lda outer.vic.",
+            "outer: { vic: { .const border = $d020 } }\nfoo: {\nlda outer.vic.\n}",
         )?;
-        let response = server.completion(test_root().join("main.asm"), Position::new(1, 15))?;
+        let response = server.completion(test_root().join("main.asm"), Position::new(2, 14))?;
         assert_unordered_eq(&unwrap(&response), &vec!["border"]);
         Ok(())
     }
