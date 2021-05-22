@@ -440,7 +440,7 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
         if let Some(codegen) = conn.lock_lsp().codegen() {
             if let Some(scope) = current_scope(&conn, codegen)? {
                 let expr_path = IdentifierPath::from(args.expression.as_str());
-                if let Some(symbol_nx) = codegen.symbols().try_index(scope, expr_path) {
+                if let Some(symbol_nx) = codegen.symbols().query(scope, expr_path) {
                     if let Some(symbol) = codegen.symbols().try_get(symbol_nx) {
                         if let Some(val) = symbol.data.try_as_i64() {
                             return Ok(EvaluateResponse {
