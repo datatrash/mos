@@ -1212,7 +1212,9 @@ mod tests {
             lda #1 - 1
             lda #2 * 4
             lda #8 / 2
+            lda #7 % 2
             lda #1 + 5 * 4 + 3
+            lda #(1 + 5) * (4 + 3)
             lda #7 == 7
             lda #7 != 7
             lda #7 == 8
@@ -1229,8 +1231,8 @@ mod tests {
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![
-                0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 24, 0xa9, 1, 0xa9, 0, 0xa9, 0, 0xa9, 1,
-                0xa9, 4, 0xa9, 2, 0xa9, 255, 0xa9, 0, 0xa9, 1, 0xa9, 0, 0xa9, 1
+                0xa9, 2, 0xa9, 0, 0xa9, 8, 0xa9, 4, 0xa9, 1, 0xa9, 24, 0xa9, 42, 0xa9, 1, 0xa9, 0,
+                0xa9, 0, 0xa9, 1, 0xa9, 4, 0xa9, 2, 0xa9, 255, 0xa9, 0, 0xa9, 1, 0xa9, 0, 0xa9, 1
             ]
         );
         Ok(())

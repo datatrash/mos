@@ -354,17 +354,6 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
 
     let optional_suffix = || opt(alt((register_x_suffix, register_y_suffix)));
 
-    let am_abs = map(
-        tuple((expression, optional_suffix())),
-        move |(expr, suffix)| Operand {
-            expr,
-            lchar: None,
-            rchar: None,
-            addressing_mode: AddressingMode::AbsoluteOrZp,
-            suffix,
-        },
-    );
-
     let am_ind = map(
         tuple((
             ws(char('(')),
@@ -397,7 +386,18 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
         },
     );
 
-    alt((am_imm, am_abs, am_ind, am_outer_ind))(input)
+    let am_abs = map(
+        tuple((expression, optional_suffix())),
+        move |(expr, suffix)| Operand {
+            expr,
+            lchar: None,
+            rchar: None,
+            addressing_mode: AddressingMode::AbsoluteOrZp,
+            suffix,
+        },
+    );
+
+    alt((am_imm, am_ind, am_outer_ind, am_abs))(input)
 }
 
 /// Tries to parse a bare block
@@ -880,7 +880,7 @@ fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
 fn expression_parens(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     located(|input| {
         map_once(
-            tuple((ws(char('[')), ws(expression), ws(char(']')))),
+            tuple((ws(char('(')), ws(expression), ws(char(')')))),
             move |(lparen, inner, rparen)| {
                 let inner = Box::new(inner.flatten());
                 ExpressionFactor::ExprParens {
@@ -1185,9 +1185,9 @@ mod test {
     fn parse_expression() {
         check("lda #1 + 2", "LDA #1 + 2");
         check("lda #1     +    2", "LDA #1     +    2");
-        check("lda #[1   +   2]", "LDA #[1   +   2]");
-        check("lda #[1   +   2   ]", "LDA #[1   +   2   ]");
-        check("lda #[   1   +   2   ]", "LDA #[   1   +   2   ]");
+        check("lda #(1   +   2)", "LDA #(1   +   2)");
+        check("lda #(1   +   2   )", "LDA #(1   +   2   )");
+        check("lda #(   1   +   2   )", "LDA #(   1   +   2   )");
         check("lda #1 ^ 4", "LDA #1 ^ 4");
         check("lda #1 % 4", "LDA #1 % 4");
         check("lda #1 << 4", "LDA #1 << 4");
@@ -1196,8 +1196,8 @@ mod test {
         check("lda #1 && 2", "LDA #1 && 2");
         check("lda  %11101", "LDA  %11101");
         check(
-            "lda  %11101   +   [  $ff  * -12367 ] / foo",
-            "LDA  %11101   +   [  $ff  * -12367 ] / foo",
+            "lda  %11101   +   (  $ff  * -12367 ) / foo",
+            "LDA  %11101   +   (  $ff  * -12367 ) / foo",
         );
     }
 
