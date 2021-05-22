@@ -238,7 +238,9 @@ impl CodeFormatter {
             Token::Definition { tag, id, value } => {
                 self.push(&tag.data).push(" ").fmt(id).push(" ").fmt(value);
             }
-            Token::Error(_) => panic!("Should have been filtered out"),
+            Token::Error(e) => {
+                self.push(&e.data);
+            }
             Token::Eof(_) => (),
             Token::Expression(expr) => self.format_expression(expr),
             Token::File {
