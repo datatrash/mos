@@ -626,6 +626,12 @@ pub enum Token {
         id: Located<Identifier>,
         block: Option<Block>,
     },
+    Test {
+        tag: Located<String>,
+        lquote: Located<char>,
+        name: Located<String>,
+        block: Box<Block>,
+    },
     Text {
         tag: Located<String>,
         encoding: Option<Located<TextEncoding>>,
@@ -665,6 +671,7 @@ impl Token {
             Token::MacroInvocation { id: name, .. } => &name.trivia,
             Token::ProgramCounterDefinition { star, .. } => &star.trivia,
             Token::Segment { tag, .. } => &tag.trivia,
+            Token::Test { tag, .. } => &tag.trivia,
             Token::Text { tag, .. } => &tag.trivia,
             Token::VariableDefinition { ty, .. } => &ty.trivia,
         };
@@ -900,6 +907,19 @@ impl Display for Token {
                 write!(f, "{}", str)
             }
             Token::Expression(e) => write!(f, "{}", e),
+            Token::File {
+                tag,
+                lquote,
+                filename,
+            } => {
+                write!(
+                    f,
+                    "{}{}{}\"",
+                    tag.map(|t| t.to_uppercase()),
+                    lquote,
+                    filename,
+                )
+            }
             Token::If {
                 tag_if,
                 value,
@@ -952,19 +972,6 @@ impl Display for Token {
                     lquote,
                     format!("{}\"", filename),
                     block
-                )
-            }
-            Token::File {
-                tag,
-                lquote,
-                filename,
-            } => {
-                write!(
-                    f,
-                    "{}{}{}\"",
-                    tag.map(|t| t.to_uppercase()),
-                    lquote,
-                    filename,
                 )
             }
             Token::Instruction(i) => match &i.operand {
@@ -1057,6 +1064,21 @@ impl Display for Token {
                     None => "".to_string(),
                 };
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, block)
+            }
+            Token::Test {
+                tag,
+                lquote,
+                name,
+                block,
+            } => {
+                write!(
+                    f,
+                    "{}{}{}\"{}",
+                    tag.map(|t| t.to_uppercase()),
+                    lquote,
+                    name,
+                    block
+                )
             }
             Token::Text {
                 tag,

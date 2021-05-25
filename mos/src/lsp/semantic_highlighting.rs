@@ -345,6 +345,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 None => b,
             }
         }
+        Token::Test { tag: _, name, .. } => b.push(name, TokenType::Constant),
         Token::Text { tag: _, text, .. } => b.push(text, TokenType::Constant),
         Token::VariableDefinition { ty, id, value, .. } => {
             let token_type = match &ty.data {

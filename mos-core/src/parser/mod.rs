@@ -805,6 +805,28 @@ fn file(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+/// Tries to parse a test directive, of the form `.test "name of my test" {}`
+fn test(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            mws(tag_no_case(".test")),
+            ws(char('"')),
+            located(string),
+            char('"'),
+            block,
+        )),
+        move |(tag, lquote, name, _, block)| {
+            let tag = tag.map_into(|_| ".test".to_string());
+            Token::Test {
+                tag,
+                lquote,
+                name,
+                block: Box::new(block),
+            }
+        },
+    )(input)
+}
+
 /// Tries to parse all valid statement types
 fn statement(input: LocatedSpan) -> IResult<Token> {
     alt((
@@ -825,6 +847,7 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         import,
         text,
         file,
+        test,
     ))(input)
 }
 
@@ -1374,6 +1397,14 @@ mod test {
     #[test]
     fn parse_file() {
         check("   .file    \"foo.bin\"", "   .FILE    \"foo.bin\"");
+    }
+
+    #[test]
+    fn parse_test() {
+        check(
+            "   .test    \"my test\" { nop }",
+            "   .TEST    \"my test\" { NOP }",
+        );
     }
 
     #[test]

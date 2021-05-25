@@ -43,6 +43,7 @@ fn get_app() -> App<'static> {
         .subcommand(format_app())
         .subcommand(init_app())
         .subcommand(lsp_app())
+        .subcommand(test_app())
 }
 
 fn mos_toml_path<P: Into<PathBuf>>(
@@ -95,6 +96,7 @@ fn run(args: ArgMatches) -> MosResult<()> {
         Some(("format", _)) => format_command(&cfg),
         Some(("init", _)) => init_command(&root, &cfg),
         Some(("lsp", args)) => lsp_command(args),
+        Some(("test", args)) => test_command(!args.is_present("no-color"), &root, &cfg),
         _ => {
             let _ = get_app().print_help()?;
             Ok(())
@@ -110,7 +112,7 @@ fn main() {
     let no_color = args.is_present("no-color");
 
     loggerv::Logger::new()
-        .verbosity(args.occurrences_of("verbose"))
+        .verbosity(1 + args.occurrences_of("verbose")) // show 'info' by default
         .colors(!no_color)
         .module_path(false)
         .init()

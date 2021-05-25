@@ -191,6 +191,7 @@ impl Analysis {
 #[cfg(test)]
 mod tests {
     use crate::codegen::tests::{test_codegen, test_codegen_parsing_source};
+    use crate::codegen::CodegenOptions;
     use crate::errors::CoreResult;
     use crate::parser::code_map::LineCol;
     use crate::parser::source::InMemoryParsingSource;
@@ -253,6 +254,7 @@ mod tests {
                 .add("test.asm", "lda foo\n.import foo from \"bar\"")
                 .add("bar", "foo: nop")
                 .into(),
+            CodegenOptions::default(),
         )?;
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
@@ -274,6 +276,7 @@ mod tests {
                 )
                 .add("bar", ".if defined(ENABLE) {\nfoo: nop\n}")
                 .into(),
+            CodegenOptions::default(),
         )?;
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
         assert_eq!(
@@ -292,6 +295,7 @@ mod tests {
                 .add("test.asm", ".import foo from \"bar\"")
                 .add("bar", "foo: nop")
                 .into(),
+            CodegenOptions::default(),
         )?;
         // Click on the 'bar' filename in the import
         let defs = ctx.analysis().find("test.asm", line_col(0, 20));

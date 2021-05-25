@@ -384,6 +384,19 @@ impl CodeFormatter {
                     .push(" ")
                     .fmt(block);
             }
+            Token::Test {
+                tag,
+                lquote,
+                name,
+                block,
+            } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(lquote)
+                    .fmt(name)
+                    .push("\"")
+                    .fmt(block.as_ref());
+            }
             Token::Text {
                 tag,
                 encoding,

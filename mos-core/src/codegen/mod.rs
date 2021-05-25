@@ -26,19 +26,23 @@ use crate::parser::{
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+#[derive(Clone)]
 pub struct CodegenOptions {
     pub pc: ProgramCounter,
+    pub test_name: Option<String>,
 }
 
 impl Default for CodegenOptions {
     fn default() -> Self {
         Self {
             pc: ProgramCounter::new(0xc000),
+            test_name: None,
         }
     }
 }
@@ -241,6 +245,7 @@ pub struct MacroDefinition {
 
 pub struct CodegenContext {
     tree: Arc<ParseTree>,
+    options: CodegenOptions,
 
     analysis: Analysis,
 
@@ -255,7 +260,14 @@ pub struct CodegenContext {
     current_scope: IdentifierPath,
     current_scope_nx: SymbolIndex,
 
+    test_cases: HashMap<String, TestCase>,
+
     source_map: SourceMap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestCase {
+    emitted_at: Option<ProgramCounter>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -266,11 +278,12 @@ pub struct UndefinedSymbol {
 }
 
 impl CodegenContext {
-    fn new(tree: Arc<ParseTree>) -> Self {
+    fn new(tree: Arc<ParseTree>, options: CodegenOptions) -> Self {
         let analysis = Analysis::new(tree.clone());
 
         Self {
             tree,
+            options,
             analysis,
             pass_idx: 0,
             segments: HashMap::new(),
@@ -280,6 +293,7 @@ impl CodegenContext {
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
             current_scope_nx: SymbolIndex::new(0),
+            test_cases: HashMap::new(),
             source_map: SourceMap::default(),
         }
     }
@@ -298,6 +312,10 @@ impl CodegenContext {
 
     pub fn symbols_mut(&mut self) -> &mut SymbolTable<Symbol> {
         &mut self.symbols
+    }
+
+    pub fn test_cases(&self) -> &HashMap<String, TestCase> {
+        &self.test_cases
     }
 
     pub fn tree(&self) -> &Arc<ParseTree> {
@@ -336,6 +354,7 @@ impl CodegenContext {
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.lock().unwrap().clear();
+        self.test_cases.clear();
         self.source_map.clear();
     }
 
@@ -613,6 +632,25 @@ impl CodegenContext {
                     }
                 }
             }
+            Token::File { filename, .. } => {
+                let span = filename.span;
+                let source_file: PathBuf = self.tree.code_map.look_up_span(span).file.name().into();
+                let filename = match source_file.parent() {
+                    Some(parent) => parent.join(&filename.data),
+                    None => PathBuf::from(&filename.data),
+                };
+                match fs::read(&filename) {
+                    Ok(bytes) => {
+                        self.emit(span, &bytes)?;
+                    }
+                    Err(_) => {
+                        return self.error(
+                            span,
+                            &format!("file not found: {}", filename.to_string_lossy()),
+                        );
+                    }
+                }
+            }
             Token::If {
                 value, if_, else_, ..
             } => {
@@ -743,25 +781,6 @@ impl CodegenContext {
                                 );
                             }
                         }
-                    }
-                }
-            }
-            Token::File { filename, .. } => {
-                let span = filename.span;
-                let source_file: PathBuf = self.tree.code_map.look_up_span(span).file.name().into();
-                let filename = match source_file.parent() {
-                    Some(parent) => parent.join(&filename.data),
-                    None => PathBuf::from(&filename.data),
-                };
-                match fs::read(&filename) {
-                    Ok(bytes) => {
-                        self.emit(span, &bytes)?;
-                    }
-                    Err(_) => {
-                        return self.error(
-                            span,
-                            &format!("file not found: {}", filename.to_string_lossy()),
-                        );
                     }
                 }
             }
@@ -918,6 +937,20 @@ impl CodegenContext {
                     }
                     None => {
                         self.current_segment = Some(id.data.clone());
+                    }
+                }
+            }
+            Token::Test { name, block, .. } => {
+                if let Some(pc) = self.try_current_target_pc() {
+                    let case = match self.test_cases.entry(name.data.clone()) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(e) => e.insert(TestCase { emitted_at: None }),
+                    };
+                    if let Some(active_test_name) = &self.options.test_name {
+                        if &name.data == active_test_name {
+                            case.emitted_at = Some(pc);
+                            self.emit_tokens(&block.inner)?;
+                        }
                     }
                 }
             }
@@ -1079,7 +1112,7 @@ pub fn codegen(
     ast: Arc<ParseTree>,
     options: CodegenOptions,
 ) -> (Option<CodegenContext>, Option<CoreError>) {
-    let mut ctx = CodegenContext::new(ast.clone());
+    let mut ctx = CodegenContext::new(ast.clone(), options.clone());
 
     #[cfg(test)]
     const MAX_ITERATIONS: usize = 50;
@@ -1149,10 +1182,12 @@ pub fn codegen(
 #[cfg(test)]
 mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
-    use crate::codegen::{Segment, SegmentOptions};
+    use crate::codegen::{ProgramCounter, Segment, SegmentOptions, TestCase};
     use crate::errors::CoreResult;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
+    use itertools::Itertools;
+    use mos_testing::assert_unordered_eq;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -1767,7 +1802,7 @@ mod tests {
             .add("bar", "foo: nop\nbar: nop")
             .into();
 
-        let ctx = test_codegen_parsing_source(src)?;
+        let ctx = test_codegen_parsing_source(src, CodegenOptions::default())?;
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xea, 0xa9, 1, 0xa9, 1]
@@ -1785,7 +1820,7 @@ mod tests {
             .add("bar", "foo: nop\nbar: nop")
             .into();
 
-        let ctx = test_codegen_parsing_source(src)?;
+        let ctx = test_codegen_parsing_source(src, CodegenOptions::default())?;
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xea, 0xa9, 1, 0xa9, 1]
@@ -1803,7 +1838,7 @@ mod tests {
             .add("bar", "foo: nop\nbar: nop")
             .into();
 
-        let ctx = test_codegen_parsing_source(src)?;
+        let ctx = test_codegen_parsing_source(src, CodegenOptions::default())?;
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xea, 0xa9, 0, 0xa9, 1]
@@ -1821,7 +1856,7 @@ mod tests {
             .add("bar", "foo: nop\nbar: nop")
             .into();
 
-        let ctx = test_codegen_parsing_source(src)?;
+        let ctx = test_codegen_parsing_source(src, CodegenOptions::default())?;
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xad, 4, 0xc0, 0xea, 0xea, 0xa9, 0, 0xa9, 0, 0xa9, 1]
@@ -1836,7 +1871,7 @@ mod tests {
             .add("bar", "foo: lda #CONST")
             .into();
 
-        let ctx = test_codegen_parsing_source(src)?;
+        let ctx = test_codegen_parsing_source(src, CodegenOptions::default())?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 1]);
         Ok(())
     }
@@ -1848,7 +1883,9 @@ mod tests {
             .add("bar", "nop")
             .into();
 
-        let err = test_codegen_parsing_source(src).err().unwrap();
+        let err = test_codegen_parsing_source(src, CodegenOptions::default())
+            .err()
+            .unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:1:9: error: unknown identifier: foo"
@@ -1865,7 +1902,9 @@ mod tests {
             .add("bar", "foo: nop")
             .into();
 
-        let err = test_codegen_parsing_source(src).err().unwrap();
+        let err = test_codegen_parsing_source(src, CodegenOptions::default())
+            .err()
+            .unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:3:9: error: cannot import an already defined symbol: foo"
@@ -1879,7 +1918,9 @@ mod tests {
             .add("bar", "foo: nop")
             .into();
 
-        let err = test_codegen_parsing_source(src).err().unwrap();
+        let err = test_codegen_parsing_source(src, CodegenOptions::default())
+            .err()
+            .unwrap();
         assert_eq!(
             err.to_string(),
             "test.asm:2:9: error: cannot import an already defined symbol: foo"
@@ -1913,15 +1954,74 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn can_enumerate_tests() -> CoreResult<()> {
+        let ctx = test_codegen(".test \"a\" { nop }\n.test \"b\" { asl }")?;
+        assert_unordered_eq(
+            &ctx.test_cases.keys().into_iter().cloned().collect_vec(),
+            &["a".into(), "b".into()],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_compile_specified_test() -> CoreResult<()> {
+        let src = ".test \"a\" { nop }\n.test \"b\" { asl }";
+        let ctx = test_codegen_with_options(
+            src,
+            CodegenOptions {
+                test_name: Some("a".into()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xea]);
+
+        assert_eq!(
+            ctx.test_cases.get("a"),
+            Some(&TestCase {
+                emitted_at: Some(ProgramCounter::new(0xc000)),
+            })
+        );
+        assert_eq!(
+            ctx.test_cases.get("b"),
+            Some(&TestCase { emitted_at: None })
+        );
+
+        let ctx = test_codegen_with_options(
+            src,
+            CodegenOptions {
+                test_name: Some("b".into()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0x0a]);
+
+        Ok(())
+    }
+
     pub(super) fn test_codegen(code: &str) -> CoreResult<CodegenContext> {
-        test_codegen_parsing_source(InMemoryParsingSource::new().add("test.asm", &code).into())
+        test_codegen_parsing_source(
+            InMemoryParsingSource::new().add("test.asm", &code).into(),
+            CodegenOptions::default(),
+        )
+    }
+
+    pub(super) fn test_codegen_with_options(
+        code: &str,
+        options: CodegenOptions,
+    ) -> CoreResult<CodegenContext> {
+        test_codegen_parsing_source(
+            InMemoryParsingSource::new().add("test.asm", &code).into(),
+            options,
+        )
     }
 
     pub(super) fn test_codegen_parsing_source(
         src: Arc<Mutex<dyn ParsingSource>>,
+        options: CodegenOptions,
     ) -> CoreResult<CodegenContext> {
         let ast = parse_or_err(&Path::new("test.asm"), src)?;
-        let (ctx, err) = codegen(ast, CodegenOptions::default());
+        let (ctx, err) = codegen(ast, options);
         match err {
             Some(e) => Err(e),
             None => Ok(ctx.unwrap()),
