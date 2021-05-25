@@ -41,6 +41,8 @@ mnemonics.casing = 'lowercase'
 mnemonics.register-casing = 'lowercase'
 braces.position = 'same-line'
 whitespace.indent = 4
+whitespace.label-margin = 20
+whitespace.code-margin = 30
 ```
 
 | Key | Type | Description |
@@ -49,3 +51,5 @@ whitespace.indent = 4
 | mnemonics.register-casing | `uppercase`, `lowercase` | The casing of register suffixes (e.g. the `x` in `lda $fb,x`) |
 | braces.position | `same_line`, `new_line` | Where to place the braces in things like if statements |
 | whitespace.indent | number | How many spaces (no tabs yet... :innocent:) to indent in block statements |
+| whitespace.label-margin | number | How many characters to reserve for labels |
+| whitespace.code-margin | number | How many characters to reserve for code (the rest is reserved for comments) |

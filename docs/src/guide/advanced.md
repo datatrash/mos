@@ -1,10 +1,10 @@
 # Advanced features
 
 ## Imports
-The way MOS deals with importing other source files is a bit different from other assemblers. When creating a source file you need to explicitly tell MOS which symbols you want to export, and which name you want to give them.
+When your source file grows too large to manage, you may consider splitting it up into multiple files.
 
 ### The basics
-For example, let's look at a file called `border.asm`:
+Let's look at a file called `border.asm`:
 ```asm6502
 set_black:
     lda #0
@@ -20,23 +20,6 @@ set_white:
 You can import it into your `main.asm` like so:
 ```asm6502
 .import * from "border.asm"
-```
-
-However, no symbols would be visible because no symbols were *exported* from `border.asm`. We can fix that by changing `border.asm` to look like this:
-
-```asm6502
-set_black:
-    lda #0
-    sta $d020
-    rts
-
-set_white:
-    lda #1
-    sta $d020
-    rts
-    
-.export set_black
-.export set_white       
 ```
 
 Now, `main.asm` can use these symbols:
@@ -70,27 +53,6 @@ rts
 .import set_white as sw from "border.asm"
 ```
 
-Conversely, it is possible to change the names of symbols during export with an `as` directive, like so:
-
-```asm6502
-.export set_black as foo
-```
-
-This can be handy if you want to export deeply nested symbols, for instance:
-
-```asm6502
-a: {
-    b: {
-        c: {
-            inc $d020
-            rts
-        }
-    }
-}
-
-.export a.b.c as inc_border
-```
-
 ### Importing with scope
 When importing, you can also choose to add a scope to your `.import` directive, allowing you to pass some data to the imported file.
 
@@ -114,8 +76,6 @@ set_white:
     lda #1
     sta ADDRESS
     rts
-    
-.export set_white
 ```
 
 ### Conditional inclusion
@@ -128,8 +88,6 @@ For instance, `border.asm` can do something like:
         lda #0
         sta ADDRESS
         rts
-    
-    .export set_black
 }
 
 .if defined(include_set_white) {
@@ -137,9 +95,6 @@ For instance, `border.asm` can do something like:
         lda #1
         sta ADDRESS
         rts
-
-    
-    .export set_white
 }
 ```
 

@@ -93,11 +93,18 @@ lda #15
 Supported operators are:
 - `*` Multiplication
 - `/` Division
+- `%` Modulo
 - `<<` Shift left
 - `>>` Shift right
 - `^` Exclusive or (XOR)
 - `+` Addition
 - `-` Subtraction
+
+You can also use parentheses, for example:
+
+```asm6502
+lda #(3 + 4) * 5
+```
  
 ### Equality tests 
 Equality tests may also be performed. They will evaluate to `0` when false and `1` when true:
@@ -142,6 +149,19 @@ You may include data inline like so:
 ```
 
 Supported data types are `.byte`, `.word` and `.dword`.
+
+## Text definition
+You may include text inline like so:
+
+```asm6502
+.text "hello"
+```
+
+The default encoding is `ascii`. You may also use the encodings `petscii` or `petscreen`. The latter emits Commodore-compatible screen codes. For example:
+
+```asm6502
+.text petscreen "abc"    // This emits $01, $02, $03
+```
 
 ### Including from files
 It is also possible to include data from files, like so:
