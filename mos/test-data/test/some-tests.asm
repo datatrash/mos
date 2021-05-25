@@ -1,10 +1,7 @@
-    lda data
-    sta $d020
-    rts
+.test "ok" {
+ 	rts
+}
 
-data:
-    .byte 1
-
-.test "test a" {
-    nop
+.test "fail" {
+ 	brk
 }

@@ -2,6 +2,7 @@ use crate::commands::generate_code;
 use crate::config::Config;
 use crate::errors::MosResult;
 use clap::App;
+use emulator_6502::{Interface6502, MOS6502};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -33,21 +34,87 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<()>
     // TODO: Shortcut when running a single test
     let ctx = generate_code(root, &cfg)?;
 
-    use ansi_term::Colour::Green;
     let msg_ok = if use_color {
-        Green.paint("ok")
+        ansi_term::Colour::Green.paint("ok")
     } else {
         "ok".into()
     };
+    let msg_failed = if use_color {
+        ansi_term::Colour::Red.paint("failed")
+    } else {
+        "failed".into()
+    };
 
-    #[allow(clippy::for_kv_map)]
-    for (test_name, _data) in ctx.test_cases() {
+    for test_name in ctx.test_cases().keys() {
         cfg.test.name = Some(test_name.clone());
-        let _ctx = generate_code(root, &cfg)?;
-        log::info!("test '{}' ... {}", test_name, msg_ok);
+        let ctx = generate_code(root, &cfg)?;
+        let case = ctx.test_cases().get(test_name).unwrap();
+
+        let mut ram = BasicRam::new();
+        for segment in ctx.segments().values() {
+            ram.load_program(segment.range().start, segment.range_data());
+        }
+        let mut cpu = MOS6502::new();
+        cpu.set_program_counter(case.emitted_at.unwrap().as_u16());
+
+        // Execute until RTS
+        let mut num_cycles = 0;
+        let mut result = false;
+        loop {
+            if cpu.get_program_counter() == 0 {
+                // BRK caused the PC to jump to zero, so let's bail
+                num_cycles -= 1; // ignore the BRK
+                break;
+            }
+
+            if cpu.get_remaining_cycles() == 0
+                && ram.ram[cpu.get_program_counter() as usize] == 0x60
+            {
+                // RTS, test succeeded
+                result = true;
+                break;
+            }
+
+            cpu.cycle(&mut ram);
+            num_cycles += 1;
+        }
+
+        let cycles = if use_color {
+            ansi_term::Colour::Yellow.paint(format!(" ({} cycles)", num_cycles))
+        } else {
+            format!(" ({} cycles)", num_cycles).into()
+        };
+        let msg = if result { &msg_ok } else { &msg_failed };
+        log::info!("test '{}' ... {}{}", test_name, msg, cycles);
     }
 
     Ok(())
+}
+
+struct BasicRam {
+    ram: Vec<u8>,
+}
+
+impl BasicRam {
+    fn new() -> Self {
+        Self {
+            ram: vec![0; 65536],
+        }
+    }
+
+    fn load_program(&mut self, start: usize, data: &[u8]) {
+        self.ram[start..start + data.len()].clone_from_slice(data);
+    }
+}
+
+impl Interface6502 for BasicRam {
+    fn read(&mut self, address: u16) -> u8 {
+        self.ram[address as usize]
+    }
+
+    fn write(&mut self, address: u16, data: u8) {
+        self.ram[address as usize] = data
+    }
 }
 
 #[cfg(test)]
@@ -67,7 +134,7 @@ mod tests {
                 ..Default::default()
             },
             test: TestOptions {
-                name: Some("test a".into()),
+                name: Some("ok".into()),
             },
             ..Default::default()
         };

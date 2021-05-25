@@ -11,4 +11,5 @@
  	tsx
 
  	// TODO: add assertions
+ 	rts
 }

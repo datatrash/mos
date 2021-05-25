@@ -267,7 +267,7 @@ pub struct CodegenContext {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestCase {
-    emitted_at: Option<ProgramCounter>,
+    pub emitted_at: Option<ProgramCounter>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
