@@ -152,14 +152,17 @@ jobs:
           mkdir -p "$staging"
 
           cp {LICENSE,README.md} "$staging/"
+          cp -R examples "$staging/"
 
           if [ "${{ matrix.os }}" = "windows-2019" ]; then
             cp "${{ env.TARGET_DIR }}/release/mos.exe" "$staging/"
-            7z a "$staging.zip" "$staging"
+            7z a "$staging.zip" .\\"$staging"\\*
             echo "ASSET=$staging.zip" >> $GITHUB_ENV
           else
             cp "${{ env.TARGET_DIR }}/release/mos" "$staging/"
-            tar czf "$staging.tar.gz" "$staging"
+            cd "$staging"
+            tar czf "../$staging.tar.gz" .
+            cd ..
             echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
           fi
 

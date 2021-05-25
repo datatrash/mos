@@ -86,13 +86,7 @@ export async function getMosBinary(ctx: vscode.ExtensionContext): Promise<string
     });
 
     await fs.mkdir(bin_extract_path, { recursive: true });
-    await decompress(full_archive_path, bin_extract_path, {
-        filter: file => file.type === "file",
-        map: file => {
-            file.path = path.basename(file.path);
-            return file;
-        }
-    });
+    await decompress(full_archive_path, bin_extract_path);
     await fs.unlink(full_archive_path);
 
     // Binary path can be removed, and extracted binary path can be swapped
