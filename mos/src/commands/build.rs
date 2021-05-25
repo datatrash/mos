@@ -7,7 +7,7 @@ use std::str::FromStr;
 
 use crate::config::Config;
 use crate::errors::MosResult;
-use mos_core::codegen::{codegen, CodegenContext, CodegenOptions};
+use mos_core::codegen::{codegen, CodegenOptions};
 use mos_core::errors::CoreError;
 use mos_core::io::{to_vice_symbols, SegmentMerger};
 use mos_core::parser;
@@ -53,14 +53,32 @@ pub fn build_app() -> App<'static> {
 }
 
 pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
-    let generated_code = generate_code(root, cfg)?;
-
     let target_dir = root.join(&cfg.build.target_directory);
+    fs::create_dir_all(&target_dir)?;
+
     let input_path = root.join(PathBuf::from(&cfg.build.entry));
     let output_path = target_dir.join(format!(
         "{}.prg",
         input_path.file_stem().unwrap().to_string_lossy()
     ));
+
+    let source = FileSystemParsingSource::new();
+    let (tree, error) = parser::parse(&input_path, source.into());
+    if let Some(e) = error {
+        return Err(e.into());
+    }
+    let tree = tree.unwrap();
+    let (generated_code, error) = codegen(
+        tree,
+        CodegenOptions {
+            pc: 0x2000.into(),
+            ..Default::default()
+        },
+    );
+    if let Some(error) = error {
+        return Err(error.into());
+    }
+    let generated_code = generated_code.unwrap();
 
     let mut merger = SegmentMerger::new(output_path);
     for (segment_name, segment) in generated_code.segments() {
@@ -97,32 +115,6 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     }
 
     Ok(())
-}
-
-pub fn generate_code(root: &Path, cfg: &Config) -> MosResult<CodegenContext> {
-    let target_dir = root.join(&cfg.build.target_directory);
-    fs::create_dir_all(&target_dir)?;
-
-    let input_path = root.join(PathBuf::from(&cfg.build.entry));
-
-    let source = FileSystemParsingSource::new();
-    let (tree, error) = parser::parse(&input_path, source.into());
-    if let Some(e) = error {
-        return Err(e.into());
-    }
-    let tree = tree.unwrap();
-    let (generated_code, error) = codegen(
-        tree,
-        CodegenOptions {
-            pc: 0x2000.into(),
-            test_name: cfg.test.name.clone(),
-        },
-    );
-    if let Some(error) = error {
-        return Err(error.into());
-    }
-
-    Ok(generated_code.unwrap())
 }
 
 #[cfg(test)]

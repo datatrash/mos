@@ -21,6 +21,8 @@ mod debugger;
 mod errors;
 /// Language Server Protocol implementation
 mod lsp;
+/// Unit Test runner
+mod test_runner;
 
 fn get_app() -> App<'static> {
     App::new("mos")

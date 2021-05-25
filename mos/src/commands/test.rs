@@ -1,8 +1,7 @@
-use crate::commands::generate_code;
 use crate::config::Config;
 use crate::errors::MosResult;
+use crate::test_runner::{enumerate_test_cases, CycleResult, TestRunner};
 use clap::App;
-use emulator_6502::{Interface6502, MOS6502};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -23,16 +22,8 @@ pub fn test_app() -> App<'static> {
 }
 
 pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<()> {
-    let mut cfg = cfg.clone();
-    cfg.build.target_directory = PathBuf::from(&cfg.build.target_directory)
-        .join("tests")
-        .to_str()
-        .unwrap()
-        .into();
-
-    // Run a build to enumerate all test cases
-    // TODO: Shortcut when running a single test
-    let ctx = generate_code(root, &cfg)?;
+    let input_path = root.join(PathBuf::from(&cfg.build.entry));
+    let test_cases = enumerate_test_cases(&input_path)?;
 
     let msg_ok = if use_color {
         ansi_term::Colour::Green.paint("ok")
@@ -45,76 +36,23 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<()>
         "failed".into()
     };
 
-    for test_name in ctx.test_cases().keys() {
-        cfg.test.name = Some(test_name.clone());
-        let ctx = generate_code(root, &cfg)?;
-        let case = ctx.test_cases().get(test_name).unwrap();
-
-        let mut ram = BasicRam::new();
-        for segment in ctx.segments().values() {
-            ram.load_program(segment.range().start, segment.range_data());
-        }
-        let mut cpu = MOS6502::new();
-        cpu.set_program_counter(case.emitted_at.unwrap().as_u16());
-
-        // Execute until RTS
-        let mut num_cycles = 0;
-        let mut result = false;
-        loop {
-            if cpu.get_program_counter() == 0 {
-                // BRK caused the PC to jump to zero, so let's bail
-                num_cycles -= 1; // ignore the BRK
-                break;
-            }
-
-            if cpu.get_remaining_cycles() == 0
-                && ram.ram[cpu.get_program_counter() as usize] == 0x60
-            {
-                // RTS, test succeeded
-                result = true;
-                break;
-            }
-
-            cpu.cycle(&mut ram);
-            num_cycles += 1;
-        }
-
+    for test_case in test_cases {
+        let mut runner = TestRunner::new(&input_path, &test_case)?;
+        let (num_cycles, success) = match runner.run()? {
+            CycleResult::Running => panic!(),
+            CycleResult::TestFailed(num_cycles, _) => (num_cycles, false),
+            CycleResult::TestSuccess(num_cycles) => (num_cycles, true),
+        };
         let cycles = if use_color {
             ansi_term::Colour::Yellow.paint(format!(" ({} cycles)", num_cycles))
         } else {
             format!(" ({} cycles)", num_cycles).into()
         };
-        let msg = if result { &msg_ok } else { &msg_failed };
-        log::info!("test '{}' ... {}{}", test_name, msg, cycles);
+        let msg = if success { &msg_ok } else { &msg_failed };
+        log::info!("test '{}' ... {}{}", test_case, msg, cycles);
     }
 
     Ok(())
-}
-
-struct BasicRam {
-    ram: Vec<u8>,
-}
-
-impl BasicRam {
-    fn new() -> Self {
-        Self {
-            ram: vec![0; 65536],
-        }
-    }
-
-    fn load_program(&mut self, start: usize, data: &[u8]) {
-        self.ram[start..start + data.len()].clone_from_slice(data);
-    }
-}
-
-impl Interface6502 for BasicRam {
-    fn read(&mut self, address: u16) -> u8 {
-        self.ram[address as usize]
-    }
-
-    fn write(&mut self, address: u16, data: u8) {
-        self.ram[address as usize] = data
-    }
 }
 
 #[cfg(test)]

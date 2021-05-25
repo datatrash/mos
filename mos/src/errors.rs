@@ -31,6 +31,7 @@ pub enum MosError {
     ParseBoolError(#[from] ParseBoolError),
     ParseIntError(#[from] ParseIntError),
     Multiple(Vec<MosError>),
+    UnitTest(String),
     Unknown,
 }
 
@@ -98,6 +99,7 @@ impl MosError {
             MosError::Vice(message) => message.to_string().into(),
             MosError::ParseBoolError(err) => err.to_string().into(),
             MosError::ParseIntError(err) => err.to_string().into(),
+            MosError::UnitTest(message) => message.to_string().into(),
             MosError::Unknown => "unknown error".to_string().into(),
             MosError::Multiple(errors) => {
                 let lines = errors
