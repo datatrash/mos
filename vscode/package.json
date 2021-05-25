@@ -131,7 +131,7 @@
     "compile": "node bundle",
     "publish": "vsce publish",
     "mos-version": "node mos-version",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "vscode:prepublish": "npm run mos-version && node bundle"
   },
   "dependencies": {
