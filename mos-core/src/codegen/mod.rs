@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 pub struct CodegenOptions {
     pub pc: ProgramCounter,
     pub active_test: Option<IdentifierPath>,
+    pub predefined_constants: HashMap<String, i64>,
 }
 
 impl Default for CodegenOptions {
@@ -42,6 +43,7 @@ impl Default for CodegenOptions {
         Self {
             pc: ProgramCounter::new(0xc000),
             active_test: None,
+            predefined_constants: HashMap::new(),
         }
     }
 }
@@ -1174,6 +1176,10 @@ pub fn codegen(
 ) -> (Option<CodegenContext>, Option<CoreError>) {
     let mut ctx = CodegenContext::new(ast.clone(), options.clone());
     ctx.register_default_fns();
+    for (name, val) in &options.predefined_constants {
+        ctx.symbols
+            .insert(ctx.symbols.root, name.as_str(), Symbol::constant(0, *val));
+    }
 
     #[cfg(test)]
     const MAX_ITERATIONS: usize = 50;

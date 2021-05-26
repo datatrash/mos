@@ -10,6 +10,7 @@ use mos_core::parser;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
 use mos_core::parser::{Expression, IdentifierPath, Located};
+use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -87,12 +88,16 @@ impl TestRunner {
         input_path: &Path,
         test_path: &IdentifierPath,
     ) -> MosResult<Self> {
+        let mut predefined_constants = HashMap::new();
+        predefined_constants.insert("TEST".into(), 1);
+
         let mut ctx = generate(
             src,
             input_path,
             CodegenOptions {
                 pc: 0x2000.into(),
                 active_test: Some(test_path.clone()),
+                predefined_constants,
             },
         )?;
 
@@ -160,7 +165,6 @@ impl TestRunner {
         );
 
         let root = ctx.symbols().root;
-
         let cpu_nx = ctx.symbols_mut().ensure_index(root, "cpu");
         let cpu_pc_nx = ctx.symbols_mut().insert(cpu_nx, "pc", Symbol::label(0, 0));
         let cpu_a_nx = ctx
@@ -465,6 +469,21 @@ mod tests {
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, CycleResult::TestSuccess(12));
+        Ok(())
+    }
+
+    #[test]
+    fn can_determine_code_is_in_test_mode() -> MosResult<()> {
+        let runner = get_runner(
+            r"
+            .test a {
+                .if defined(TEST) { nop } else { asl }
+                rts
+             }",
+            idpath!("a"),
+        )?;
+        let segment = runner.ctx.segments().values().next().unwrap();
+        assert_eq!(segment.range_data(), vec![0xea, 0x60]);
         Ok(())
     }
 
