@@ -252,6 +252,11 @@ pub struct MacroDefinition {
     block: Vec<Token>,
 }
 
+pub trait FunctionCallback {
+    fn expected_args(&self) -> usize;
+    fn apply(&self, ctx: &mut CodegenContext, args: &[&Located<Expression>]) -> CoreResult<i64>;
+}
+
 pub struct CodegenContext {
     tree: Arc<ParseTree>,
     options: CodegenOptions,
@@ -262,6 +267,8 @@ pub struct CodegenContext {
 
     segments: HashMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
+
+    functions: HashMap<String, Arc<dyn FunctionCallback + Send + Sync>>,
 
     symbols: SymbolTable<Symbol>,
     undefined: Arc<Mutex<HashSet<UndefinedSymbol>>>,
@@ -299,6 +306,7 @@ impl CodegenContext {
             pass_idx: 0,
             segments: HashMap::new(),
             current_segment: None,
+            functions: HashMap::new(),
             symbols: SymbolTable::default(),
             undefined: Arc::new(Mutex::new(HashSet::new())),
             suppress_undefined_symbol_registration: false,
@@ -1046,25 +1054,16 @@ impl CodegenContext {
                 Ok(self.try_current_target_pc().unwrap_or_default().as_i64())
             }
             ExpressionFactor::ExprParens { inner, .. } => self.evaluate_expression(inner),
-            ExpressionFactor::FunctionCall { name, args, .. } => match name.data.as_str() {
-                "defined" => {
-                    self.expect_args(name.span, args.len(), 1)?;
-                    let (expr, _) = args.first().unwrap();
-                    let val = self
-                        .with_suppressed_undefined_registration(|s| s.evaluate_expression(expr));
-                    match val {
-                        Ok(result) => {
-                            if result != 0 {
-                                Ok(1)
-                            } else {
-                                Ok(0)
-                            }
-                        }
-                        Err(_) => Ok(0),
+            ExpressionFactor::FunctionCall { name, args, .. } => {
+                match self.functions.get(name.data.as_str()) {
+                    Some(callback) => {
+                        let callback = callback.clone();
+                        self.expect_args(name.span, args.len(), callback.expected_args())?;
+                        callback.apply(self, &args.iter().map(|(expr, _)| expr).collect_vec())
                     }
+                    None => self.error(name.span, format!("unknown function: {}", &name.data)),
                 }
-                _ => self.error(name.span, format!("unknown function: {}", &name.data)),
-            },
+            }
             ExpressionFactor::IdentifierValue { path, modifier } => {
                 self.analysis.add_symbol_usage(
                     &self.symbols,
@@ -1131,6 +1130,42 @@ impl CodegenContext {
         self.current_scope.pop();
         result
     }
+
+    pub fn register_fn<F: 'static + FunctionCallback + Send + Sync>(
+        &mut self,
+        name: &str,
+        function: F,
+    ) {
+        self.functions.insert(name.into(), Arc::new(function));
+    }
+
+    fn register_default_fns(&mut self) {
+        struct DefinedFn;
+        impl FunctionCallback for DefinedFn {
+            fn expected_args(&self) -> usize {
+                1
+            }
+
+            fn apply(
+                &self,
+                ctx: &mut CodegenContext,
+                args: &[&Located<Expression>],
+            ) -> CoreResult<i64> {
+                let expr = args.first().unwrap();
+                match ctx.with_suppressed_undefined_registration(|s| s.evaluate_expression(expr)) {
+                    Ok(result) => {
+                        if result != 0 {
+                            Ok(1)
+                        } else {
+                            Ok(0)
+                        }
+                    }
+                    Err(_) => Ok(0),
+                }
+            }
+        }
+        self.register_fn("defined", DefinedFn {});
+    }
 }
 
 pub fn codegen(
@@ -1138,6 +1173,7 @@ pub fn codegen(
     options: CodegenOptions,
 ) -> (Option<CodegenContext>, Option<CoreError>) {
     let mut ctx = CodegenContext::new(ast.clone(), options.clone());
+    ctx.register_default_fns();
 
     #[cfg(test)]
     const MAX_ITERATIONS: usize = 50;

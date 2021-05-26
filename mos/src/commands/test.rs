@@ -1,6 +1,8 @@
+use crate::commands::paint;
 use crate::config::Config;
 use crate::errors::MosResult;
 use crate::test_runner::{enumerate_test_cases, CycleResult, TestRunner};
+use ansi_term::Colour;
 use clap::App;
 use mos_core::errors::span_loc_to_error_string;
 use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
@@ -46,12 +48,6 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
             .collect();
     }
 
-    let msg_ok = if use_color {
-        ansi_term::Colour::Green.paint("ok")
-    } else {
-        "ok".into()
-    };
-
     let mut failed = vec![];
     let mut num_passed = 0;
     for test_case in test_cases {
@@ -62,7 +58,11 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
             CycleResult::TestSuccess(num_cycles) => (num_cycles, None),
         };
         let cycles = if use_color {
-            ansi_term::Colour::Yellow.paint(format!(" ({} cycles)", num_cycles))
+            paint(
+                use_color,
+                Colour::Yellow,
+                format!(" ({} cycles)", num_cycles),
+            )
         } else {
             format!(" ({} cycles)", num_cycles).into()
         };
@@ -70,34 +70,20 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
         let msg = match failure {
             Some(failure) => {
                 failed.push((test_case.to_string(), failure));
-                if use_color {
-                    ansi_term::Colour::Red.paint("failed")
-                } else {
-                    "failed".into()
-                }
+                paint(use_color, Colour::Red, "failed")
             }
             None => {
                 num_passed += 1;
-                msg_ok.clone()
+                paint(use_color, Colour::Green, "ok")
             }
         };
         log::info!("test '{}' ... {}{}", test_case, msg, cycles);
     }
 
     let test_result = if !failed.is_empty() {
-        let msg = "FAILED";
-        if use_color {
-            ansi_term::Colour::Red.paint(msg)
-        } else {
-            msg.into()
-        }
+        paint(use_color, Colour::Red, "FAILED")
     } else {
-        let msg = "ok";
-        if use_color {
-            ansi_term::Colour::Green.paint(msg)
-        } else {
-            msg.into()
-        }
+        paint(use_color, Colour::Green, "ok")
     };
 
     log::info!("");
@@ -128,15 +114,42 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
                 .unwrap_or_default();
 
             log::info!("---- {} ----", failed_test_name);
-            log::info!("{}assertion failed: '{}'", location, failure.message);
             log::info!(
-                "PC = ${:04X}, SP = ${:04X}, flags = {}, A = ${:02X}, X = ${:02X}, Y = ${:02X}",
-                failure.cpu.get_program_counter(),
-                failure.cpu.get_stack_pointer(),
-                flags,
-                failure.cpu.get_accumulator(),
-                failure.cpu.get_x_register(),
-                failure.cpu.get_y_register()
+                "{}",
+                paint(
+                    use_color,
+                    Colour::Red,
+                    format!("{}assertion failed: '{}'", location, failure.message)
+                )
+            );
+            log::info!(
+                "PC = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
+                paint(
+                    use_color,
+                    Colour::Yellow,
+                    format!("${:04X}", failure.cpu.get_program_counter())
+                ),
+                paint(
+                    use_color,
+                    Colour::Yellow,
+                    format!("${:04X}", failure.cpu.get_stack_pointer())
+                ),
+                paint(use_color, Colour::Yellow, flags),
+                paint(
+                    use_color,
+                    Colour::Yellow,
+                    format!("${:02X}", failure.cpu.get_accumulator())
+                ),
+                paint(
+                    use_color,
+                    Colour::Yellow,
+                    format!("${:02X}", failure.cpu.get_x_register())
+                ),
+                paint(
+                    use_color,
+                    Colour::Yellow,
+                    format!("${:02X}", failure.cpu.get_y_register())
+                )
             );
         }
         log::info!("");

@@ -93,13 +93,14 @@ fn run(args: ArgMatches) -> MosResult<()> {
         }
     };
 
+    let no_color = args.is_present("no-color");
     match args.subcommand() {
         Some(("build", _)) => build_command(&root, &cfg),
         Some(("format", _)) => format_command(&cfg),
         Some(("init", _)) => init_command(&root, &cfg),
         Some(("lsp", args)) => lsp_command(args),
-        Some(("test", args)) => {
-            let exit_code = test_command(!args.is_present("no-color"), &root, &cfg)?;
+        Some(("test", _)) => {
+            let exit_code = test_command(!no_color, &root, &cfg)?;
             if exit_code > 0 {
                 std::process::exit(exit_code);
             } else {

@@ -2,18 +2,21 @@ use crate::errors::MosResult;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
-    codegen, Assertion, CodegenContext, CodegenOptions, Symbol, SymbolIndex, SymbolType,
+    codegen, Assertion, CodegenContext, CodegenOptions, FunctionCallback, Symbol, SymbolIndex,
+    SymbolType,
 };
+use mos_core::errors::CoreResult;
 use mos_core::parser;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
-use mos_core::parser::IdentifierPath;
+use mos_core::parser::{Expression, IdentifierPath, Located};
+use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub struct TestRunner {
     ctx: CodegenContext,
-    ram: BasicRam,
+    ram: Arc<Mutex<BasicRam>>,
     cpu: MOS6502,
     cpu_pc_nx: SymbolIndex,
     cpu_a_nx: SymbolIndex,
@@ -47,7 +50,7 @@ pub fn enumerate_test_cases(
     src: Arc<Mutex<dyn ParsingSource>>,
     input_path: &Path,
 ) -> MosResult<Vec<IdentifierPath>> {
-    let ctx = generate(
+    let mut ctx = generate(
         src,
         input_path,
         CodegenOptions {
@@ -55,6 +58,18 @@ pub fn enumerate_test_cases(
             ..Default::default()
         },
     )?;
+    struct DummyFn;
+    impl FunctionCallback for DummyFn {
+        fn expected_args(&self) -> usize {
+            1
+        }
+
+        fn apply(&self, _: &mut CodegenContext, _: &[&Located<Expression>]) -> CoreResult<i64> {
+            Ok(0)
+        }
+    }
+    ctx.register_fn("ram", DummyFn {});
+    ctx.register_fn("ram16", DummyFn {});
     let test_cases = ctx
         .symbols()
         .all()
@@ -89,12 +104,60 @@ impl TestRunner {
             .map(|symbol| symbol.data.as_i64())
             .unwrap();
 
-        let mut ram = BasicRam::new();
+        let ram = Arc::new(Mutex::new(BasicRam::new()));
         for segment in ctx.segments().values() {
-            ram.load_program(segment.range().start, segment.range_data());
+            ram.lock()
+                .unwrap()
+                .load_program(segment.range().start, segment.range_data());
         }
         let mut cpu = MOS6502::new();
         cpu.set_program_counter(test_pc as u16);
+
+        struct RamFn {
+            ram: Arc<Mutex<BasicRam>>,
+            word: bool,
+        }
+        impl FunctionCallback for RamFn {
+            fn expected_args(&self) -> usize {
+                1
+            }
+
+            fn apply(
+                &self,
+                ctx: &mut CodegenContext,
+                args: &[&Located<Expression>],
+            ) -> CoreResult<i64> {
+                let expr = args.first().unwrap();
+                match ctx.evaluate_expression(expr) {
+                    Ok(result) => {
+                        let address = result as usize;
+                        let ram = &self.ram.lock().unwrap().ram;
+                        if self.word {
+                            let lo = ram.get(address).cloned().unwrap_or_default() as i64;
+                            let hi = ram.get(address + 1).cloned().unwrap_or_default() as i64;
+                            Ok(hi * 256 + lo)
+                        } else {
+                            Ok(ram.get(address).cloned().unwrap_or_default() as i64)
+                        }
+                    }
+                    Err(_) => Ok(0),
+                }
+            }
+        }
+        ctx.register_fn(
+            "ram",
+            RamFn {
+                ram: ram.clone(),
+                word: false,
+            },
+        );
+        ctx.register_fn(
+            "ram16",
+            RamFn {
+                ram: ram.clone(),
+                word: true,
+            },
+        );
 
         let root = ctx.symbols().root;
 
@@ -162,7 +225,7 @@ impl TestRunner {
         log::trace!(
             "PC: {} (ram: ${:02X})",
             self.cpu.get_program_counter(),
-            self.ram.ram[self.cpu.get_program_counter() as usize]
+            self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize]
         );
 
         // Check assertions
@@ -246,13 +309,13 @@ impl TestRunner {
         }
 
         if self.cpu.get_remaining_cycles() == 0
-            && self.ram.ram[self.cpu.get_program_counter() as usize] == 0x60
+            && self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize] == 0x60
         {
             // RTS, test succeeded
             return Ok(CycleResult::TestSuccess(self.num_cycles));
         }
 
-        self.cpu.cycle(&mut self.ram);
+        self.cpu.cycle(self.ram.lock().unwrap().deref_mut());
         self.num_cycles += 1;
 
         Ok(CycleResult::Running)
@@ -382,6 +445,26 @@ mod tests {
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, CycleResult::TestSuccess(24));
+        Ok(())
+    }
+
+    #[test]
+    fn use_ram_in_assertions() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                lda #1
+                sta foo
+                lda #2
+                sta foo + 1
+                .assert ram(foo) == 1
+                .assert ram16(foo) == 513
+                rts
+                foo: .word 0
+             }",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?, CycleResult::TestSuccess(12));
         Ok(())
     }
 
