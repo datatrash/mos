@@ -16,6 +16,15 @@ pub struct TestRunner {
     ram: BasicRam,
     cpu: MOS6502,
     cpu_pc_nx: SymbolIndex,
+    cpu_a_nx: SymbolIndex,
+    cpu_x_nx: SymbolIndex,
+    cpu_y_nx: SymbolIndex,
+    cpu_flags_carry_nx: SymbolIndex,
+    cpu_flags_zero_nx: SymbolIndex,
+    cpu_flags_interrupt_disable_nx: SymbolIndex,
+    cpu_flags_decimal_nx: SymbolIndex,
+    cpu_flags_overflow_nx: SymbolIndex,
+    cpu_flags_negative_nx: SymbolIndex,
     num_cycles: usize,
 }
 
@@ -88,14 +97,53 @@ impl TestRunner {
         cpu.set_program_counter(test_pc as u16);
 
         let root = ctx.symbols().root;
+
         let cpu_nx = ctx.symbols_mut().ensure_index(root, "cpu");
         let cpu_pc_nx = ctx.symbols_mut().insert(cpu_nx, "pc", Symbol::label(0, 0));
+        let cpu_a_nx = ctx
+            .symbols_mut()
+            .insert(cpu_nx, "a", Symbol::constant(0, 0));
+        let cpu_x_nx = ctx
+            .symbols_mut()
+            .insert(cpu_nx, "x", Symbol::constant(0, 0));
+        let cpu_y_nx = ctx
+            .symbols_mut()
+            .insert(cpu_nx, "y", Symbol::constant(0, 0));
+
+        let cpu_flags_nx = ctx.symbols_mut().ensure_index(cpu_nx, "flags");
+        let cpu_flags_carry_nx =
+            ctx.symbols_mut()
+                .insert(cpu_flags_nx, "carry", Symbol::constant(0, 0));
+        let cpu_flags_zero_nx =
+            ctx.symbols_mut()
+                .insert(cpu_flags_nx, "zero", Symbol::constant(0, 0));
+        let cpu_flags_interrupt_disable_nx =
+            ctx.symbols_mut()
+                .insert(cpu_flags_nx, "interrupt_disable", Symbol::constant(0, 0));
+        let cpu_flags_decimal_nx =
+            ctx.symbols_mut()
+                .insert(cpu_flags_nx, "decimal", Symbol::constant(0, 0));
+        let cpu_flags_overflow_nx =
+            ctx.symbols_mut()
+                .insert(cpu_flags_nx, "overflow", Symbol::constant(0, 0));
+        let cpu_flags_negative_nx =
+            ctx.symbols_mut()
+                .insert(cpu_flags_nx, "negative", Symbol::constant(0, 0));
 
         Ok(Self {
             ctx,
             ram,
             cpu,
             cpu_pc_nx,
+            cpu_a_nx,
+            cpu_x_nx,
+            cpu_y_nx,
+            cpu_flags_carry_nx,
+            cpu_flags_zero_nx,
+            cpu_flags_interrupt_disable_nx,
+            cpu_flags_decimal_nx,
+            cpu_flags_overflow_nx,
+            cpu_flags_negative_nx,
             num_cycles: 0,
         })
     }
@@ -128,10 +176,40 @@ impl TestRunner {
                 .collect_vec();
 
             if !active_assertions.is_empty() {
-                self.ctx.symbols_mut().update_data(
-                    self.cpu_pc_nx,
-                    Symbol::label(0, self.cpu.get_program_counter() as i64),
-                );
+                for (nx, value) in &[
+                    (self.cpu_pc_nx, self.cpu.get_program_counter() as i64),
+                    (self.cpu_a_nx, self.cpu.get_accumulator() as i64),
+                    (self.cpu_x_nx, self.cpu.get_x_register() as i64),
+                    (self.cpu_y_nx, self.cpu.get_y_register() as i64),
+                    (
+                        self.cpu_flags_carry_nx,
+                        (self.cpu.get_status_register() & 1) as i64,
+                    ),
+                    (
+                        self.cpu_flags_zero_nx,
+                        (self.cpu.get_status_register() & 2) as i64,
+                    ),
+                    (
+                        self.cpu_flags_interrupt_disable_nx,
+                        (self.cpu.get_status_register() & 4) as i64,
+                    ),
+                    (
+                        self.cpu_flags_decimal_nx,
+                        (self.cpu.get_status_register() & 8) as i64,
+                    ),
+                    (
+                        self.cpu_flags_overflow_nx,
+                        (self.cpu.get_status_register() & 64) as i64,
+                    ),
+                    (
+                        self.cpu_flags_negative_nx,
+                        (self.cpu.get_status_register() & 128) as i64,
+                    ),
+                ] {
+                    self.ctx
+                        .symbols_mut()
+                        .update_data(*nx, Symbol::label(0, *value));
+                }
             }
 
             for assertion in active_assertions {
@@ -248,6 +326,62 @@ mod tests {
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, CycleResult::TestSuccess(2));
+        Ok(())
+    }
+
+    #[test]
+    fn use_registers_in_assertions() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                lda #$1
+                ldx #$2
+                ldy #$3
+                .assert cpu.a == 1
+                .assert cpu.x == 2
+                .assert cpu.y == 3
+                rts
+             }",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?, CycleResult::TestSuccess(6));
+        Ok(())
+    }
+
+    #[test]
+    fn use_flags_in_assertions() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                cli
+                lda #1
+                .assert !cpu.flags.zero
+                .assert !cpu.flags.carry
+                .assert !cpu.flags.interrupt_disable
+                .assert !cpu.flags.decimal
+                .assert !cpu.flags.overflow
+                .assert !cpu.flags.negative
+                sec
+                .assert cpu.flags.carry
+                ldx #$01
+                dex
+                .assert cpu.flags.zero
+                sei
+                .assert cpu.flags.interrupt_disable
+                sed
+                .assert cpu.flags.decimal
+                lda #127
+                clc
+                adc #1
+                .assert cpu.flags.overflow
+                lda #0
+                sbc #1
+                .assert cpu.flags.negative
+                rts
+             }",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?, CycleResult::TestSuccess(24));
         Ok(())
     }
 

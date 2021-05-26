@@ -217,7 +217,7 @@ impl Symbol {
         }
     }
 
-    fn constant<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
+    pub fn constant<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
         Self {
             pass_idx,
             data: data.into(),
