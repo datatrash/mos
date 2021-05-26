@@ -2,8 +2,10 @@ use crate::config::Config;
 use crate::errors::MosResult;
 use crate::test_runner::{enumerate_test_cases, CycleResult, TestRunner};
 use clap::App;
+use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "snake_case")]
@@ -22,8 +24,9 @@ pub fn test_app() -> App<'static> {
 }
 
 pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<()> {
+    let src: Arc<Mutex<dyn ParsingSource>> = FileSystemParsingSource::new().into();
     let input_path = root.join(PathBuf::from(&cfg.build.entry));
-    let test_cases = enumerate_test_cases(&input_path)?;
+    let test_cases = enumerate_test_cases(src.clone(), &input_path)?;
 
     let msg_ok = if use_color {
         ansi_term::Colour::Green.paint("ok")
@@ -37,7 +40,7 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<()>
     };
 
     for test_case in test_cases {
-        let mut runner = TestRunner::new(&input_path, &test_case)?;
+        let mut runner = TestRunner::new(src.clone(), &input_path, &test_case)?;
         let (num_cycles, success) = match runner.run()? {
             CycleResult::Running => panic!(),
             CycleResult::TestFailed(num_cycles, _) => (num_cycles, false),
@@ -63,7 +66,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn can_invoke_single_test() -> Result<()> {
+    fn can_invoke_ok_test() -> Result<()> {
         let entry = test_cli_build().join("some-tests.asm");
         let cfg = Config {
             build: BuildOptions {
@@ -73,6 +76,24 @@ mod tests {
             },
             test: TestOptions {
                 name: Some("ok".into()),
+            },
+            ..Default::default()
+        };
+        test_command(true, root().as_path(), &cfg)?;
+        Ok(())
+    }
+
+    #[test]
+    fn can_invoke_failing_test() -> Result<()> {
+        let entry = test_cli_build().join("some-tests.asm");
+        let cfg = Config {
+            build: BuildOptions {
+                entry: entry.clone().to_string_lossy().into(),
+                target_directory: target().to_string_lossy().into(),
+                ..Default::default()
+            },
+            test: TestOptions {
+                name: Some("fail".into()),
             },
             ..Default::default()
         };

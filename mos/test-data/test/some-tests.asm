@@ -1,7 +1,8 @@
 .test ok {
+    .assert 1 == 1 "nice"
  	rts
 }
 
 .test fail {
- 	brk
+    .assert 1 == 2 "whoops"
 }

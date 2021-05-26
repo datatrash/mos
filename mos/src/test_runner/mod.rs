@@ -1,27 +1,33 @@
 use crate::errors::MosResult;
 use emulator_6502::{Interface6502, MOS6502};
+use itertools::Itertools;
 use mos_core::codegen::{codegen, CodegenContext, CodegenOptions, SymbolType};
 use mos_core::parser;
-use mos_core::parser::source::FileSystemParsingSource;
+use mos_core::parser::source::ParsingSource;
 use mos_core::parser::IdentifierPath;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 pub struct TestRunner {
-    #[allow(dead_code)]
     ctx: CodegenContext,
     ram: BasicRam,
     cpu: MOS6502,
     num_cycles: usize,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum CycleResult {
     Running,
     TestFailed(usize, String),
     TestSuccess(usize),
 }
 
-pub fn enumerate_test_cases(input_path: &Path) -> MosResult<Vec<IdentifierPath>> {
+pub fn enumerate_test_cases(
+    src: Arc<Mutex<dyn ParsingSource>>,
+    input_path: &Path,
+) -> MosResult<Vec<IdentifierPath>> {
     let ctx = generate(
+        src,
         input_path,
         CodegenOptions {
             pc: 0x2000.into(),
@@ -39,8 +45,13 @@ pub fn enumerate_test_cases(input_path: &Path) -> MosResult<Vec<IdentifierPath>>
 }
 
 impl TestRunner {
-    pub fn new(input_path: &Path, test_path: &IdentifierPath) -> MosResult<Self> {
+    pub fn new(
+        src: Arc<Mutex<dyn ParsingSource>>,
+        input_path: &Path,
+        test_path: &IdentifierPath,
+    ) -> MosResult<Self> {
         let ctx = generate(
+            src,
             input_path,
             CodegenOptions {
                 pc: 0x2000.into(),
@@ -82,10 +93,42 @@ impl TestRunner {
     }
 
     pub fn cycle(&mut self) -> MosResult<CycleResult> {
+        log::trace!(
+            "PC: {} (ram: ${:02X})",
+            self.cpu.get_program_counter(),
+            self.ram.ram[self.cpu.get_program_counter() as usize]
+        );
+
+        // Check assertions
+        if self.cpu.get_remaining_cycles() == 0 {
+            let active_assertions = self
+                .ctx
+                .assertions()
+                .iter()
+                .filter(|a| a.pc.as_u16() == self.cpu.get_program_counter())
+                .cloned()
+                .collect_vec();
+
+            for assertion in active_assertions {
+                if assertion.pc.as_u16() == self.cpu.get_program_counter() {
+                    let eval_result = self.ctx.evaluate_expression(&assertion.expression)?;
+                    if eval_result == 0 {
+                        let msg = assertion.failure_message.clone().unwrap_or_else(|| {
+                            format!("{}", &assertion.expression.data).trim().into()
+                        });
+                        return Ok(CycleResult::TestFailed(self.num_cycles, msg));
+                    }
+                }
+            }
+        }
+
         if self.cpu.get_program_counter() == 0 {
             // BRK caused the PC to jump to zero, so let's bail
             self.num_cycles -= 1; // ignore the BRK
-            return Ok(CycleResult::TestFailed(self.num_cycles, "oh no".into()));
+            return Ok(CycleResult::TestFailed(
+                self.num_cycles,
+                "encountered an invalid instruction".into(),
+            ));
         }
 
         if self.cpu.get_remaining_cycles() == 0
@@ -102,9 +145,12 @@ impl TestRunner {
     }
 }
 
-fn generate(input_path: &Path, options: CodegenOptions) -> MosResult<CodegenContext> {
-    let source = FileSystemParsingSource::new();
-    let (tree, error) = parser::parse(input_path, source.into());
+fn generate(
+    src: Arc<Mutex<dyn ParsingSource>>,
+    input_path: &Path,
+    options: CodegenOptions,
+) -> MosResult<CodegenContext> {
+    let (tree, error) = parser::parse(input_path, src);
     if let Some(e) = error {
         return Err(e.into());
     }
@@ -139,5 +185,46 @@ impl Interface6502 for BasicRam {
 
     fn write(&mut self, address: u16, data: u8) {
         self.ram[address as usize] = data
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mos_core::idpath;
+    use mos_core::parser::source::InMemoryParsingSource;
+    use mos_testing::assert_unordered_eq;
+
+    #[test]
+    fn can_enumerate_tests() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add("test.asm", ".test a {rts}\n.test b {rts}")
+            .into();
+        let cases = enumerate_test_cases(src, Path::new("test.asm"))?;
+        assert_unordered_eq(&cases, &[idpath!("a"), idpath!("b")]);
+        Ok(())
+    }
+
+    #[test]
+    fn failing_assertion_with_message() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nrts\n}",
+            )
+            .into();
+        let mut runner = TestRunner::new(src, Path::new("test.asm"), &idpath!("a"))?;
+        assert_eq!(runner.run()?, CycleResult::TestFailed(2, "oh no".into()));
+        Ok(())
+    }
+
+    #[test]
+    fn failing_assertion_without_message() -> MosResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add("test.asm", ".test a {\nnop\n.assert 1 == 2\nrts\n}")
+            .into();
+        let mut runner = TestRunner::new(src, Path::new("test.asm"), &idpath!("a"))?;
+        assert_eq!(runner.run()?, CycleResult::TestFailed(2, "1 == 2".into()));
+        Ok(())
     }
 }

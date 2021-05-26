@@ -269,6 +269,8 @@ pub struct CodegenContext {
     current_scope: IdentifierPath,
     current_scope_nx: SymbolIndex,
 
+    assertions: Vec<Assertion>,
+
     source_map: SourceMap,
 }
 
@@ -277,6 +279,13 @@ pub struct UndefinedSymbol {
     scope_nx: SymbolIndex,
     id: IdentifierPath,
     span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Assertion {
+    pub pc: ProgramCounter,
+    pub expression: Located<Expression>,
+    pub failure_message: Option<String>,
 }
 
 impl CodegenContext {
@@ -295,6 +304,7 @@ impl CodegenContext {
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
             current_scope_nx: SymbolIndex::new(0),
+            assertions: vec![],
             source_map: SourceMap::default(),
         }
     }
@@ -317,6 +327,10 @@ impl CodegenContext {
 
     pub fn tree(&self) -> &Arc<ParseTree> {
         &self.tree
+    }
+
+    pub fn assertions(&self) -> &[Assertion] {
+        &self.assertions
     }
 
     pub fn source_map(&self) -> &SourceMap {
@@ -351,6 +365,7 @@ impl CodegenContext {
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.lock().unwrap().clear();
+        self.assertions.clear();
         self.source_map.clear();
     }
 
@@ -566,6 +581,19 @@ impl CodegenContext {
                     let mut bytes = Vec::new();
                     bytes.resize(padding, 0u8);
                     self.emit(value.span, &bytes)?;
+                }
+            }
+            Token::Assert {
+                value,
+                failure_message,
+                ..
+            } => {
+                if let Some(pc) = self.try_current_target_pc() {
+                    self.assertions.push(Assertion {
+                        pc,
+                        expression: value.clone(),
+                        failure_message: failure_message.as_ref().map(|f| f.text.data.clone()),
+                    });
                 }
             }
             Token::Braces { block, scope } => {
@@ -941,7 +969,7 @@ impl CodegenContext {
                 if let Some(pc) = self.try_current_target_pc() {
                     self.add_symbol(
                         id.span,
-                        IdentifierPath::from("tests").join(&id.data),
+                        &id.data,
                         Symbol::test_case(self.pass_idx, pc.as_i64()),
                     )?;
                     if let Some(active_test) = &self.options.active_test {
@@ -974,7 +1002,7 @@ impl CodegenContext {
         Ok(())
     }
 
-    fn evaluate_expression(&mut self, expr: &Located<Expression>) -> CoreResult<i64> {
+    pub fn evaluate_expression(&mut self, expr: &Located<Expression>) -> CoreResult<i64> {
         match &expr.data {
             Expression::Factor { factor, flags, .. } => {
                 let mut value = self.evaluate_expression_factor(factor)?;
@@ -1946,14 +1974,6 @@ mod tests {
         assert_eq!(sl.end.line, 1);
         assert_eq!(sl.end.column, 9);
 
-        Ok(())
-    }
-
-    #[test]
-    fn can_enumerate_tests() -> CoreResult<()> {
-        let ctx = test_codegen(".test a { nop }\n.test b { asl }")?;
-        assert!(ctx.symbols.try_index(ctx.symbols.root, "tests.a").is_some());
-        assert!(ctx.symbols.try_index(ctx.symbols.root, "tests.b").is_some());
         Ok(())
     }
 
