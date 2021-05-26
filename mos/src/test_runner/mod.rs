@@ -379,10 +379,13 @@ mod tests {
     #[test]
     fn can_enumerate_tests() -> MosResult<()> {
         let src = InMemoryParsingSource::new()
-            .add("test.asm", ".test a {rts}\n.test b {rts}")
+            .add(
+                "test.asm",
+                ".test a {rts}\n.test b {rts}\nscope: {\n.test c {rts}\n}",
+            )
             .into();
         let cases = enumerate_test_cases(src, Path::new("test.asm"))?;
-        assert_unordered_eq(&cases, &[idpath!("a"), idpath!("b")]);
+        assert_unordered_eq(&cases, &[idpath!("a"), idpath!("b"), idpath!("scope.c")]);
         Ok(())
     }
 
