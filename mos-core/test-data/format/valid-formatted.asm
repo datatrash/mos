@@ -70,3 +70,6 @@
                     .test my_test {
                         nop
                     }
+
+                    .assert 1 == 2
+                    .assert 1 == 2 "oh snap"

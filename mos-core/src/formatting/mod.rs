@@ -1,7 +1,7 @@
 use crate::parser::{
     AddressModifier, AddressingMode, ArgItem, BinaryOp, Block, Expression, ExpressionFactor,
     Identifier, IdentifierPath, ImportArgs, ImportAs, Located, Number, NumberType, Operand,
-    ParseTree, RegisterSuffix, SpecificImportArg, TextEncoding, Token, Trivia,
+    ParseTree, QuotedString, RegisterSuffix, SpecificImportArg, TextEncoding, Token, Trivia,
 };
 use serde::Deserialize;
 use std::fmt::Display;
@@ -226,6 +226,17 @@ impl CodeFormatter {
             Token::Align { tag, value } => {
                 self.push(&tag.data).push(" ").fmt(value.as_ref());
             }
+            Token::Assert {
+                tag,
+                value,
+                failure_message,
+            } => {
+                self.push(&tag.data)
+                    .push(" ")
+                    .fmt(value.as_ref())
+                    .spc_if_next()
+                    .fmt(failure_message);
+            }
             Token::Braces { block, .. } | Token::Config(block) => {
                 self.format_block(block);
             }
@@ -247,16 +258,8 @@ impl CodeFormatter {
             }
             Token::Eof(_) => (),
             Token::Expression(expr) => self.format_expression(expr),
-            Token::File {
-                tag,
-                lquote,
-                filename,
-            } => {
-                self.push(&tag.data)
-                    .push(" ")
-                    .fmt(lquote)
-                    .fmt(filename)
-                    .push("\"");
+            Token::File { tag, filename } => {
+                self.push(&tag.data).push(" ").fmt(filename);
             }
             Token::If {
                 tag_if,
@@ -282,7 +285,6 @@ impl CodeFormatter {
                 tag,
                 args,
                 from,
-                lquote,
                 filename,
                 block,
                 ..
@@ -304,9 +306,7 @@ impl CodeFormatter {
                 self.push(" ")
                     .fmt(from.as_ref())
                     .push(" ")
-                    .fmt(lquote.as_ref())
-                    .fmt(filename.as_ref())
-                    .push("\"")
+                    .fmt(filename)
                     .spc_if_next()
                     .fmt(block);
             }
@@ -394,16 +394,13 @@ impl CodeFormatter {
             Token::Text {
                 tag,
                 encoding,
-                lquote,
                 text,
             } => {
                 self.push(&tag.data)
                     .push(" ")
                     .fmt(encoding)
                     .push(" ")
-                    .fmt(lquote.as_ref())
-                    .fmt(text.as_ref())
-                    .push("\"");
+                    .fmt(text);
             }
             Token::VariableDefinition { ty, id, eq, value } => {
                 self.push(&ty.data)
@@ -559,6 +556,12 @@ basic_format!(&TextEncoding);
 impl Formattable for &Block {
     fn format(&self, formatter: &mut CodeFormatter) {
         formatter.format_block(self);
+    }
+}
+
+impl Formattable for &QuotedString {
+    fn format(&self, formatter: &mut CodeFormatter) {
+        formatter.fmt(&self.lquote).fmt(&self.text).push("\"");
     }
 }
 

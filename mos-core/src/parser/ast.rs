@@ -546,6 +546,11 @@ pub enum Token {
         tag: Located<String>,
         value: Located<Expression>,
     },
+    Assert {
+        tag: Located<String>,
+        value: Located<Expression>,
+        failure_message: Option<QuotedString>,
+    },
     Braces {
         block: Block,
         scope: Identifier,
@@ -579,16 +584,14 @@ pub enum Token {
         tag: Located<String>,
         args: ImportArgs,
         from: Located<String>,
-        lquote: Located<char>,
-        filename: Located<String>,
+        filename: QuotedString,
         block: Option<Block>,
         import_scope: Identifier,
         resolved_path: PathBuf,
     },
     File {
         tag: Located<String>,
-        lquote: Located<char>,
-        filename: Located<String>,
+        filename: QuotedString,
     },
     Instruction(Instruction),
     Label {
@@ -634,8 +637,7 @@ pub enum Token {
     Text {
         tag: Located<String>,
         encoding: Option<Located<TextEncoding>>,
-        lquote: Located<char>,
-        text: Located<String>,
+        text: QuotedString,
     },
     VariableDefinition {
         ty: Located<VariableType>,
@@ -645,11 +647,24 @@ pub enum Token {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct QuotedString {
+    pub lquote: Located<char>,
+    pub text: Located<String>,
+}
+
+impl Display for QuotedString {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}{}\"", self.lquote, self.text)
+    }
+}
+
 impl Token {
     /// Grab the trivia that comes before the first item in the token (e.g. stuff that could be to the right of the previous token)
     pub fn trivia(&self) -> Option<&Vec<Trivia>> {
         let t = match self {
             Token::Align { tag, .. } => &tag.trivia,
+            Token::Assert { tag, .. } => &tag.trivia,
             Token::Braces { block, .. } => &block.lparen.trivia,
             Token::Config(block) => &block.lparen.trivia,
             Token::ConfigPair { key, .. } => &key.trivia,
@@ -878,6 +893,23 @@ impl Display for Token {
             Token::Align { tag, value } => {
                 write!(f, "{}{}", format!("{}", tag).to_uppercase(), value)
             }
+            Token::Assert {
+                tag,
+                value,
+                failure_message,
+            } => {
+                let failure_message = failure_message
+                    .as_ref()
+                    .map(|c| format!("{}", c))
+                    .unwrap_or_else(|| "".to_string());
+                write!(
+                    f,
+                    "{}{}{}",
+                    format!("{}", tag).to_uppercase(),
+                    value,
+                    failure_message
+                )
+            }
             Token::Braces { block, .. } | Token::Config(block) => {
                 write!(f, "{}", block)
             }
@@ -906,18 +938,8 @@ impl Display for Token {
                 write!(f, "{}", str)
             }
             Token::Expression(e) => write!(f, "{}", e),
-            Token::File {
-                tag,
-                lquote,
-                filename,
-            } => {
-                write!(
-                    f,
-                    "{}{}{}\"",
-                    tag.map(|t| t.to_uppercase()),
-                    lquote,
-                    filename,
-                )
+            Token::File { tag, filename } => {
+                write!(f, "{}{}", tag.map(|t| t.to_uppercase()), filename,)
             }
             Token::If {
                 tag_if,
@@ -943,7 +965,6 @@ impl Display for Token {
                 tag,
                 args,
                 from,
-                lquote,
                 filename,
                 block,
                 ..
@@ -964,12 +985,11 @@ impl Display for Token {
                 };
                 write!(
                     f,
-                    "{}{}{}{}{}{}",
+                    "{}{}{}{}{}",
                     tag.map(|t| t.to_uppercase()),
                     args,
                     from.map(|t| t.to_uppercase()),
-                    lquote,
-                    format!("{}\"", filename),
+                    filename,
                     block
                 )
             }
@@ -1070,18 +1090,16 @@ impl Display for Token {
             Token::Text {
                 tag,
                 encoding,
-                lquote,
                 text,
             } => {
                 write!(
                     f,
-                    "{}{}{}{}\"",
+                    "{}{}{}",
                     tag.map(|t| t.to_uppercase()),
                     encoding
                         .as_ref()
                         .map(|t| format!("{}", t).to_uppercase())
                         .unwrap_or_default(),
-                    lquote,
                     text,
                 )
             }

@@ -630,11 +630,11 @@ impl CodegenContext {
                 }
             }
             Token::File { filename, .. } => {
-                let span = filename.span;
+                let span = filename.text.span;
                 let source_file: PathBuf = self.tree.code_map.look_up_span(span).file.name().into();
                 let filename = match source_file.parent() {
-                    Some(parent) => parent.join(&filename.data),
-                    None => PathBuf::from(&filename.data),
+                    Some(parent) => parent.join(&filename.text.data),
+                    None => PathBuf::from(&filename.text.data),
                 };
                 match fs::read(&filename) {
                     Ok(bytes) => {
@@ -681,7 +681,7 @@ impl CodegenContext {
                     });
                     def.add_usage(DefinitionLocation {
                         parent_scope: self.current_scope_nx,
-                        span: filename.span,
+                        span: filename.text.span,
                     });
 
                     self.with_scope(import_scope, |s| {
@@ -956,7 +956,7 @@ impl CodegenContext {
                     .as_ref()
                     .map(|e| e.data)
                     .unwrap_or(TextEncoding::Ascii);
-                self.emit(text.span, &encode_text(&text.data, encoding))?;
+                self.emit(text.text.span, &encode_text(&text.text.data, encoding))?;
             }
             Token::VariableDefinition { ty, id, value, .. } => {
                 let value = self.evaluate_expression(&value)?;

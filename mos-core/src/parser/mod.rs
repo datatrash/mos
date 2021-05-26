@@ -719,30 +719,27 @@ fn import(input: LocatedSpan) -> IResult<Token> {
                 map(|input| arg_list(input, specific_arg), ImportArgs::Specific),
             )),
             mws(tag_no_case("from")),
-            ws(char('"')),
-            located(string),
-            char('"'),
+            quoted_string,
             opt(block),
         )),
-        move |(tag, args, from, lquote, filename, _, block)| {
+        move |(tag, args, from, filename, block)| {
             let import_scope = state.shared_state().new_anonymous_scope();
             let tag = tag.map_into(|_| ".import".to_string());
             let from = from.map_into(|_| "from".to_string());
 
             let current_file: PathBuf = state.current_file.name().into();
             let parent = current_file.parent().unwrap();
-            let path = parent.join(&filename.data);
+            let path = parent.join(&filename.text.data);
 
             state
                 .to_import
                 .borrow_mut()
-                .insert(path.clone(), filename.span);
+                .insert(path.clone(), filename.text.span);
 
             Token::Import {
                 tag,
                 args,
                 from,
-                lquote,
                 filename,
                 block,
                 import_scope,
@@ -769,16 +766,13 @@ fn text(input: LocatedSpan) -> IResult<Token> {
                 ))),
                 "unknown text encoding",
             ),
-            ws(char('"')),
-            located(string),
-            char('"'),
+            quoted_string,
         )),
-        |(tag, encoding, lquote, text, _)| {
+        |(tag, encoding, text)| {
             let tag = tag.map_into(|_| ".text".to_string());
             Token::Text {
                 tag,
                 encoding,
-                lquote,
                 text,
             }
         },
@@ -788,20 +782,19 @@ fn text(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a file directive, of the form `.file "foo.bin"`
 fn file(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((
-            mws(tag_no_case(".file")),
-            ws(char('"')),
-            located(string),
-            char('"'),
-        )),
-        move |(tag, lquote, filename, _)| {
+        tuple((mws(tag_no_case(".file")), quoted_string)),
+        move |(tag, filename)| {
             let tag = tag.map_into(|_| ".file".to_string());
-            Token::File {
-                tag,
-                lquote,
-                filename,
-            }
+            Token::File { tag, filename }
         },
+    )(input)
+}
+
+/// Tries to parse a quoted string, of the form `"hello i am a string"`
+fn quoted_string(input: LocatedSpan) -> IResult<QuotedString> {
+    map_once(
+        tuple((ws(char('"')), located(string), char('"'))),
+        move |(lquote, text, _)| QuotedString { lquote, text },
     )(input)
 }
 
@@ -812,6 +805,21 @@ fn test(input: LocatedSpan) -> IResult<Token> {
         move |(tag, id, block)| {
             let tag = tag.map_into(|_| ".test".to_string());
             Token::Test { tag, id, block }
+        },
+    )(input)
+}
+
+/// Tries to parse an assert directive, of the form `.assert 1 == 2 "some optional description"`
+fn assert(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((mws(tag_no_case(".assert")), expression, opt(quoted_string))),
+        move |(tag, value, failure_message)| {
+            let tag = tag.map_into(|_| ".assert".to_string());
+            Token::Assert {
+                tag,
+                value,
+                failure_message,
+            }
         },
     )(input)
 }
@@ -837,6 +845,7 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         text,
         file,
         test,
+        assert,
     ))(input)
 }
 
@@ -1391,6 +1400,15 @@ mod test {
     #[test]
     fn parse_test() {
         check("   .test    my_test { nop }", "   .TEST    my_test { NOP }");
+    }
+
+    #[test]
+    fn parse_assert() {
+        check("   .assert   1 == 2", "   .ASSERT   1 == 2");
+        check(
+            "   .assert   1 == 2   \"wat\"",
+            "   .ASSERT   1 == 2   \"wat\"",
+        );
     }
 
     #[test]

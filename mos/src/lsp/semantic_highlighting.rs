@@ -256,6 +256,11 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
 
     match &token {
         Token::Align { tag: _, value } => b.expression(&value.data),
+        Token::Assert {
+            tag: _,
+            value,
+            failure_message: _,
+        } => b.expression(&value.data),
         Token::Braces { block, .. } | Token::Config(block) => b.block(block),
         Token::ConfigPair { key, value, .. } => b.push(key, TokenType::Keyword).token(&value.data),
         Token::Data { values, size: _ } => b.expression_args(values),
@@ -271,7 +276,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         Token::Expression(expr) => b.expression(&expr),
         Token::File {
             tag: _, filename, ..
-        } => b.push(filename, TokenType::Constant),
+        } => b.push(&filename.text, TokenType::Constant),
         Token::Label { id, block, .. } => {
             let b = b.identifier(id);
             match block {
@@ -283,7 +288,6 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             tag: _,
             args,
             from: _,
-            lquote: _,
             filename,
             block,
             ..
@@ -295,7 +299,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 },
                 ImportArgs::Specific(args) => b.specific_import_args(args),
             };
-            let b = b.push(filename, TokenType::Constant);
+            let b = b.push(&filename.text, TokenType::Constant);
             match block {
                 Some(block) => b.block(block),
                 None => b,
@@ -346,7 +350,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             }
         }
         Token::Test { tag: _, id, block } => b.identifier(id).block(block),
-        Token::Text { tag: _, text, .. } => b.push(text, TokenType::Constant),
+        Token::Text { tag: _, text, .. } => b.push(&text.text, TokenType::Constant),
         Token::VariableDefinition { ty, id, value, .. } => {
             let token_type = match &ty.data {
                 VariableType::Constant => TokenType::Constant,
