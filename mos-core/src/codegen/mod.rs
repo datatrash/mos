@@ -26,7 +26,6 @@ use crate::parser::{
 use fs_err as fs;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
@@ -35,14 +34,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 pub struct CodegenOptions {
     pub pc: ProgramCounter,
-    pub test_name: Option<String>,
+    pub active_test: Option<IdentifierPath>,
 }
 
 impl Default for CodegenOptions {
     fn default() -> Self {
         Self {
             pc: ProgramCounter::new(0xc000),
-            test_name: None,
+            active_test: None,
         }
     }
 }
@@ -186,6 +185,7 @@ impl SymbolData {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SymbolType {
     Label,
+    TestCase,
     MacroArgument,
     Variable,
 }
@@ -204,6 +204,15 @@ impl Symbol {
             pass_idx,
             data: data.into(),
             ty: SymbolType::Label,
+            read_only: true,
+        }
+    }
+
+    fn test_case<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
+        Self {
+            pass_idx,
+            data: data.into(),
+            ty: SymbolType::TestCase,
             read_only: true,
         }
     }
@@ -260,14 +269,7 @@ pub struct CodegenContext {
     current_scope: IdentifierPath,
     current_scope_nx: SymbolIndex,
 
-    test_cases: HashMap<String, TestCase>,
-
     source_map: SourceMap,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TestCase {
-    pub emitted_at: Option<ProgramCounter>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -293,7 +295,6 @@ impl CodegenContext {
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
             current_scope_nx: SymbolIndex::new(0),
-            test_cases: HashMap::new(),
             source_map: SourceMap::default(),
         }
     }
@@ -312,10 +313,6 @@ impl CodegenContext {
 
     pub fn symbols_mut(&mut self) -> &mut SymbolTable<Symbol> {
         &mut self.symbols
-    }
-
-    pub fn test_cases(&self) -> &HashMap<String, TestCase> {
-        &self.test_cases
     }
 
     pub fn tree(&self) -> &Arc<ParseTree> {
@@ -354,7 +351,6 @@ impl CodegenContext {
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.lock().unwrap().clear();
-        self.test_cases.clear();
         self.source_map.clear();
     }
 
@@ -420,6 +416,7 @@ impl CodegenContext {
 
                             should_mark_as_undefined = match &value.ty {
                                 SymbolType::Label => true,
+                                SymbolType::TestCase => true,
                                 SymbolType::Variable => false,
                                 SymbolType::MacroArgument => false,
                             };
@@ -940,15 +937,15 @@ impl CodegenContext {
                     }
                 }
             }
-            Token::Test { name, block, .. } => {
+            Token::Test { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    let case = match self.test_cases.entry(name.data.clone()) {
-                        Entry::Occupied(e) => e.into_mut(),
-                        Entry::Vacant(e) => e.insert(TestCase { emitted_at: None }),
-                    };
-                    if let Some(active_test_name) = &self.options.test_name {
-                        if &name.data == active_test_name {
-                            case.emitted_at = Some(pc);
+                    self.add_symbol(
+                        id.span,
+                        IdentifierPath::from("tests").join(&id.data),
+                        Symbol::test_case(self.pass_idx, pc.as_i64()),
+                    )?;
+                    if let Some(active_test) = &self.options.active_test {
+                        if &self.current_scope.join(&id.data) == active_test {
                             self.emit_tokens(&block.inner)?;
                         }
                     }
@@ -1182,12 +1179,10 @@ pub fn codegen(
 #[cfg(test)]
 mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
-    use crate::codegen::{ProgramCounter, Segment, SegmentOptions, TestCase};
+    use crate::codegen::{Segment, SegmentOptions};
     use crate::errors::CoreResult;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
-    use itertools::Itertools;
-    use mos_testing::assert_unordered_eq;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -1956,41 +1951,28 @@ mod tests {
 
     #[test]
     fn can_enumerate_tests() -> CoreResult<()> {
-        let ctx = test_codegen(".test \"a\" { nop }\n.test \"b\" { asl }")?;
-        assert_unordered_eq(
-            &ctx.test_cases.keys().into_iter().cloned().collect_vec(),
-            &["a".into(), "b".into()],
-        );
+        let ctx = test_codegen(".test a { nop }\n.test b { asl }")?;
+        assert!(ctx.symbols.try_index(ctx.symbols.root, "tests.a").is_some());
+        assert!(ctx.symbols.try_index(ctx.symbols.root, "tests.b").is_some());
         Ok(())
     }
 
     #[test]
     fn can_compile_specified_test() -> CoreResult<()> {
-        let src = ".test \"a\" { nop }\n.test \"b\" { asl }";
+        let src = ".test a { nop }\n.test b { asl }";
         let ctx = test_codegen_with_options(
             src,
             CodegenOptions {
-                test_name: Some("a".into()),
+                active_test: Some("a".into()),
                 ..Default::default()
             },
         )?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xea]);
 
-        assert_eq!(
-            ctx.test_cases.get("a"),
-            Some(&TestCase {
-                emitted_at: Some(ProgramCounter::new(0xc000)),
-            })
-        );
-        assert_eq!(
-            ctx.test_cases.get("b"),
-            Some(&TestCase { emitted_at: None })
-        );
-
         let ctx = test_codegen_with_options(
             src,
             CodegenOptions {
-                test_name: Some("b".into()),
+                active_test: Some("b".into()),
                 ..Default::default()
             },
         )?;

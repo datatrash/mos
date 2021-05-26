@@ -1,5 +1,5 @@
 // Some tests taken from the c64unit examples
-.test "Stack pointer" {
+.test stack_pointer {
     lda #6
  	pha
  	lda #4

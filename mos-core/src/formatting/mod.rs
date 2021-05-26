@@ -384,18 +384,12 @@ impl CodeFormatter {
                     .push(" ")
                     .fmt(block);
             }
-            Token::Test {
-                tag,
-                lquote,
-                name,
-                block,
-            } => {
+            Token::Test { tag, id, block } => {
                 self.push(&tag.data)
-                    .push(" ")
-                    .fmt(lquote)
-                    .fmt(name)
-                    .push("\"")
-                    .fmt(block.as_ref());
+                    .spc_if_next()
+                    .fmt(id)
+                    .spc_if_next()
+                    .fmt(block);
             }
             Token::Text {
                 tag,

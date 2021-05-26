@@ -66,3 +66,7 @@
                     .loop 123 {
                         nop
                     }
+
+                    .test my_test {
+                        nop
+                    }

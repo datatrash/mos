@@ -628,9 +628,8 @@ pub enum Token {
     },
     Test {
         tag: Located<String>,
-        lquote: Located<char>,
-        name: Located<String>,
-        block: Box<Block>,
+        id: Located<Identifier>,
+        block: Block,
     },
     Text {
         tag: Located<String>,
@@ -1065,20 +1064,8 @@ impl Display for Token {
                 };
                 write!(f, "{}{}{}", format!("{}", tag).to_uppercase(), id, block)
             }
-            Token::Test {
-                tag,
-                lquote,
-                name,
-                block,
-            } => {
-                write!(
-                    f,
-                    "{}{}{}\"{}",
-                    tag.map(|t| t.to_uppercase()),
-                    lquote,
-                    name,
-                    block
-                )
+            Token::Test { tag, id, block } => {
+                write!(f, "{}{}{}", tag.map(|t| t.to_uppercase()), id, block)
             }
             Token::Text {
                 tag,

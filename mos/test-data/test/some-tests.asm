@@ -1,7 +1,7 @@
-.test "ok" {
+.test ok {
  	rts
 }
 
-.test "fail" {
+.test fail {
  	brk
 }

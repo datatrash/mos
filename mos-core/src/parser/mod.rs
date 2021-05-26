@@ -805,24 +805,13 @@ fn file(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
-/// Tries to parse a test directive, of the form `.test "name of my test" {}`
+/// Tries to parse a test directive, of the form `.test test_identifier {}`
 fn test(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((
-            mws(tag_no_case(".test")),
-            ws(char('"')),
-            located(string),
-            char('"'),
-            block,
-        )),
-        move |(tag, lquote, name, _, block)| {
+        tuple((mws(tag_no_case(".test")), ws(identifier_name), block)),
+        move |(tag, id, block)| {
             let tag = tag.map_into(|_| ".test".to_string());
-            Token::Test {
-                tag,
-                lquote,
-                name,
-                block: Box::new(block),
-            }
+            Token::Test { tag, id, block }
         },
     )(input)
 }
@@ -1401,10 +1390,7 @@ mod test {
 
     #[test]
     fn parse_test() {
-        check(
-            "   .test    \"my test\" { nop }",
-            "   .TEST    \"my test\" { NOP }",
-        );
+        check("   .test    my_test { nop }", "   .TEST    my_test { NOP }");
     }
 
     #[test]

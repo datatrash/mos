@@ -1,9 +1,9 @@
 use crate::errors::MosResult;
 use emulator_6502::{Interface6502, MOS6502};
-use itertools::Itertools;
-use mos_core::codegen::{codegen, CodegenContext, CodegenOptions};
+use mos_core::codegen::{codegen, CodegenContext, CodegenOptions, SymbolType};
 use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
+use mos_core::parser::IdentifierPath;
 use std::path::Path;
 
 pub struct TestRunner {
@@ -20,7 +20,7 @@ pub enum CycleResult {
     TestSuccess(usize),
 }
 
-pub fn enumerate_test_cases(input_path: &Path) -> MosResult<Vec<String>> {
+pub fn enumerate_test_cases(input_path: &Path) -> MosResult<Vec<IdentifierPath>> {
     let ctx = generate(
         input_path,
         CodegenOptions {
@@ -28,33 +28,40 @@ pub fn enumerate_test_cases(input_path: &Path) -> MosResult<Vec<String>> {
             ..Default::default()
         },
     )?;
-    let test_cases = ctx.test_cases().keys().into_iter().cloned().collect_vec();
+    let test_cases = ctx
+        .symbols()
+        .all()
+        .into_iter()
+        .filter(|(_, data)| data.ty == SymbolType::TestCase)
+        .map(|(name, _)| name)
+        .collect();
     Ok(test_cases)
 }
 
 impl TestRunner {
-    pub fn new(input_path: &Path, test_case: &str) -> MosResult<Self> {
+    pub fn new(input_path: &Path, test_path: &IdentifierPath) -> MosResult<Self> {
         let ctx = generate(
             input_path,
             CodegenOptions {
                 pc: 0x2000.into(),
-                test_name: Some(test_case.into()),
+                active_test: Some(test_path.clone()),
             },
         )?;
+
+        let test_pc = ctx
+            .symbols()
+            .try_index(ctx.symbols().root, test_path)
+            .map(|nx| ctx.symbols().try_get(nx))
+            .flatten()
+            .map(|symbol| symbol.data.as_i64())
+            .unwrap();
 
         let mut ram = BasicRam::new();
         for segment in ctx.segments().values() {
             ram.load_program(segment.range().start, segment.range_data());
         }
         let mut cpu = MOS6502::new();
-        cpu.set_program_counter(
-            ctx.test_cases()
-                .get(test_case)
-                .unwrap()
-                .emitted_at
-                .unwrap()
-                .as_u16(),
-        );
+        cpu.set_program_counter(test_pc as u16);
 
         Ok(Self {
             ctx,
