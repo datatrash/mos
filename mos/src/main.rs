@@ -98,7 +98,14 @@ fn run(args: ArgMatches) -> MosResult<()> {
         Some(("format", _)) => format_command(&cfg),
         Some(("init", _)) => init_command(&root, &cfg),
         Some(("lsp", args)) => lsp_command(args),
-        Some(("test", args)) => test_command(!args.is_present("no-color"), &root, &cfg),
+        Some(("test", args)) => {
+            let exit_code = test_command(!args.is_present("no-color"), &root, &cfg)?;
+            if exit_code > 0 {
+                std::process::exit(exit_code);
+            } else {
+                Ok(())
+            }
+        }
         _ => {
             let _ = get_app().print_help()?;
             Ok(())

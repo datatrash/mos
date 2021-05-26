@@ -199,7 +199,7 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    fn label<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
+    pub fn label<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
         Self {
             pass_idx,
             data: data.into(),

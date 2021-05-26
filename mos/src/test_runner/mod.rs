@@ -1,8 +1,11 @@
 use crate::errors::MosResult;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
-use mos_core::codegen::{codegen, CodegenContext, CodegenOptions, SymbolType};
+use mos_core::codegen::{
+    codegen, Assertion, CodegenContext, CodegenOptions, Symbol, SymbolIndex, SymbolType,
+};
 use mos_core::parser;
+use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
 use mos_core::parser::IdentifierPath;
 use std::path::Path;
@@ -12,14 +15,23 @@ pub struct TestRunner {
     ctx: CodegenContext,
     ram: BasicRam,
     cpu: MOS6502,
+    cpu_pc_nx: SymbolIndex,
     num_cycles: usize,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum CycleResult {
     Running,
-    TestFailed(usize, String),
+    TestFailed(usize, Box<TestFailure>),
     TestSuccess(usize),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct TestFailure {
+    pub location: Option<SpanLoc>,
+    pub message: String,
+    pub assertion: Option<Assertion>,
+    pub cpu: MOS6502,
 }
 
 pub fn enumerate_test_cases(
@@ -40,6 +52,7 @@ pub fn enumerate_test_cases(
         .into_iter()
         .filter(|(_, data)| data.ty == SymbolType::TestCase)
         .map(|(name, _)| name)
+        .sorted()
         .collect();
     Ok(test_cases)
 }
@@ -50,7 +63,7 @@ impl TestRunner {
         input_path: &Path,
         test_path: &IdentifierPath,
     ) -> MosResult<Self> {
-        let ctx = generate(
+        let mut ctx = generate(
             src,
             input_path,
             CodegenOptions {
@@ -74,10 +87,15 @@ impl TestRunner {
         let mut cpu = MOS6502::new();
         cpu.set_program_counter(test_pc as u16);
 
+        let root = ctx.symbols().root;
+        let cpu_nx = ctx.symbols_mut().ensure_index(root, "cpu");
+        let cpu_pc_nx = ctx.symbols_mut().insert(cpu_nx, "pc", Symbol::label(0, 0));
+
         Ok(Self {
             ctx,
             ram,
             cpu,
+            cpu_pc_nx,
             num_cycles: 0,
         })
     }
@@ -109,25 +127,43 @@ impl TestRunner {
                 .cloned()
                 .collect_vec();
 
+            if !active_assertions.is_empty() {
+                self.ctx.symbols_mut().update_data(
+                    self.cpu_pc_nx,
+                    Symbol::label(0, self.cpu.get_program_counter() as i64),
+                );
+            }
+
             for assertion in active_assertions {
-                if assertion.pc.as_u16() == self.cpu.get_program_counter() {
-                    let eval_result = self.ctx.evaluate_expression(&assertion.expression)?;
-                    if eval_result == 0 {
-                        let msg = assertion.failure_message.clone().unwrap_or_else(|| {
-                            format!("{}", &assertion.expression.data).trim().into()
-                        });
-                        return Ok(CycleResult::TestFailed(self.num_cycles, msg));
-                    }
+                let eval_result = self.ctx.evaluate_expression(&assertion.expression)?;
+                if eval_result == 0 {
+                    let message = assertion
+                        .failure_message
+                        .clone()
+                        .unwrap_or_else(|| format!("{}", &assertion.expression.data).trim().into());
+                    let location = self.ctx.analysis().look_up(assertion.expression.span);
+                    let failure = TestFailure {
+                        location: Some(location),
+                        message,
+                        assertion: Some(assertion),
+                        cpu: self.cpu.clone(),
+                    };
+                    return Ok(CycleResult::TestFailed(self.num_cycles, Box::new(failure)));
                 }
             }
         }
 
         if self.cpu.get_program_counter() == 0 {
-            // BRK caused the PC to jump to zero, so let's bail
+            // BRK caused the program counter to go to zero
             self.num_cycles -= 1; // ignore the BRK
             return Ok(CycleResult::TestFailed(
                 self.num_cycles,
-                "encountered an invalid instruction".into(),
+                Box::new(TestFailure {
+                    location: None,
+                    message: "encountered an invalid instruction".into(),
+                    assertion: None,
+                    cpu: self.cpu.clone(),
+                }),
             ));
         }
 
@@ -206,25 +242,43 @@ mod tests {
     }
 
     #[test]
+    fn use_pc_in_assertions() -> MosResult<()> {
+        let mut runner = get_runner(
+            ".test a {\nnop\n.assert cpu.pc == $2001\nrts\n}",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?, CycleResult::TestSuccess(2));
+        Ok(())
+    }
+
+    #[test]
     fn failing_assertion_with_message() -> MosResult<()> {
-        let src = InMemoryParsingSource::new()
-            .add(
-                "test.asm",
-                ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nrts\n}",
-            )
-            .into();
-        let mut runner = TestRunner::new(src, Path::new("test.asm"), &idpath!("a"))?;
-        assert_eq!(runner.run()?, CycleResult::TestFailed(2, "oh no".into()));
+        let mut runner = get_runner(
+            ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nrts\n}",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?.as_failure().message, "oh no");
         Ok(())
     }
 
     #[test]
     fn failing_assertion_without_message() -> MosResult<()> {
-        let src = InMemoryParsingSource::new()
-            .add("test.asm", ".test a {\nnop\n.assert 1 == 2\nrts\n}")
-            .into();
-        let mut runner = TestRunner::new(src, Path::new("test.asm"), &idpath!("a"))?;
-        assert_eq!(runner.run()?, CycleResult::TestFailed(2, "1 == 2".into()));
+        let mut runner = get_runner(".test a {\nnop\n.assert 1 == 2\nrts\n}", idpath!("a"))?;
+        assert_eq!(runner.run()?.as_failure().message, "1 == 2");
         Ok(())
+    }
+
+    fn get_runner(source: &str, test_path: IdentifierPath) -> MosResult<TestRunner> {
+        let src = InMemoryParsingSource::new().add("test.asm", source).into();
+        Ok(TestRunner::new(src, Path::new("test.asm"), &test_path)?)
+    }
+
+    impl CycleResult {
+        fn as_failure(&self) -> &TestFailure {
+            match self {
+                CycleResult::TestFailed(_, failure) => failure.as_ref(),
+                _ => panic!(),
+            }
+        }
     }
 }

@@ -16,7 +16,7 @@ macro_rules! idpath {
 }
 
 /// A Rust-style identifier that can be used to, well, identify things
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Identifier(String);
 
 impl Identifier {
@@ -101,7 +101,7 @@ impl Display for Identifier {
 }
 
 /// A path of multiple identifiers, usually written as being separated by dots (e.g. `foo.bar.baz`)
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IdentifierPath(Vec<Identifier>);
 
 impl Debug for IdentifierPath {

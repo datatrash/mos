@@ -159,6 +159,22 @@ impl CoreError {
     }
 }
 
+pub fn span_loc_to_error_string(
+    location: &SpanLoc,
+    paths_relative_from: &Option<PathBuf>,
+) -> String {
+    let mut filename: PathBuf = location.file.name().into();
+    if let Some(relative_from) = paths_relative_from {
+        filename = diff_paths(filename, relative_from).unwrap();
+    }
+    format!(
+        "{}:{}:{}: ",
+        filename.to_string_lossy(),
+        location.begin.line + 1,
+        location.begin.column + 1
+    )
+}
+
 pub fn format_error<M: Into<ErrorMessage>>(message: M, options: &ErrorFormattingOptions) -> String {
     let message = message.into();
 
@@ -166,18 +182,9 @@ pub fn format_error<M: Into<ErrorMessage>>(message: M, options: &ErrorFormatting
         .lines
         .into_iter()
         .map(|line| {
-            let location = line.location.map(|location| {
-                let mut filename: PathBuf = location.file.name().into();
-                if let Some(relative_from) = &options.paths_relative_from {
-                    filename = diff_paths(filename, relative_from).unwrap();
-                }
-                format!(
-                    "{}:{}:{}: ",
-                    filename.to_string_lossy(),
-                    location.begin.line + 1,
-                    location.begin.column + 1
-                )
-            });
+            let location = line
+                .location
+                .map(|l| span_loc_to_error_string(&l, &options.paths_relative_from));
 
             use ansi_term::Colour::Red;
             let err = if options.use_prefix {

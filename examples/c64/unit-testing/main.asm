@@ -13,3 +13,12 @@
  	// TODO: add assertions
  	rts
 }
+
+.test will_fail {
+    .assert cpu.pc == $1234
+    rts
+}
+
+.test will_succeed {
+    rts
+}
