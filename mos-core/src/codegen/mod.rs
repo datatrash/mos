@@ -2039,6 +2039,19 @@ mod tests {
             },
         )?;
         assert_eq!(ctx.current_segment().range_data(), vec![0x0a]);
+        Ok(())
+    }
+
+    #[test]
+    fn no_tests_compiled_when_no_active_test_specified() -> CoreResult<()> {
+        let ctx = test_codegen_with_options(
+            ".test a { nop }\nasl",
+            CodegenOptions {
+                active_test: None,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0x0a]);
 
         Ok(())
     }
