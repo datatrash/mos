@@ -189,61 +189,21 @@ pub enum SymbolType {
     Label,
     TestCase,
     MacroArgument,
+    Constant,
     Variable,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Symbol {
     pub pass_idx: usize,
+    pub span: Option<Span>,
     pub data: SymbolData,
     pub ty: SymbolType,
-    pub read_only: bool,
 }
 
 impl Symbol {
-    pub fn label<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
-        Self {
-            pass_idx,
-            data: data.into(),
-            ty: SymbolType::Label,
-            read_only: true,
-        }
-    }
-
-    fn test_case<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
-        Self {
-            pass_idx,
-            data: data.into(),
-            ty: SymbolType::TestCase,
-            read_only: true,
-        }
-    }
-
-    pub fn constant<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
-        Self {
-            pass_idx,
-            data: data.into(),
-            ty: SymbolType::Variable,
-            read_only: true,
-        }
-    }
-
-    fn macro_arg<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
-        Self {
-            pass_idx,
-            data: data.into(),
-            ty: SymbolType::MacroArgument,
-            read_only: true,
-        }
-    }
-
-    fn variable<V: Into<SymbolData>>(pass_idx: usize, data: V) -> Self {
-        Self {
-            pass_idx,
-            data: data.into(),
-            ty: SymbolType::Variable,
-            read_only: false,
-        }
+    fn read_only(&self) -> bool {
+        self.ty != SymbolType::Variable
     }
 }
 
@@ -357,15 +317,27 @@ impl CodegenContext {
             .collect_vec();
         for (path, range) in segs {
             let _ = self.add_symbol(
-                None,
                 path.join("start"),
-                Symbol::variable(self.pass_idx, range.start as i64),
+                self.symbol(None, range.start as i64, SymbolType::Variable),
             );
             let _ = self.add_symbol(
-                None,
                 path.join("end"),
-                Symbol::variable(self.pass_idx, range.end as i64),
+                self.symbol(None, range.end as i64, SymbolType::Variable),
             );
+        }
+    }
+
+    pub fn symbol<S: Into<Option<Span>>, D: Into<SymbolData>>(
+        &self,
+        span: S,
+        data: D,
+        ty: SymbolType,
+    ) -> Symbol {
+        Symbol {
+            pass_idx: self.pass_idx,
+            span: span.into(),
+            data: data.into(),
+            ty,
         }
     }
 
@@ -398,19 +370,18 @@ impl CodegenContext {
         }
     }
 
-    fn add_symbol<S: Into<Option<Span>>, I: Into<IdentifierPath>>(
+    fn add_symbol<I: Into<IdentifierPath>>(
         &mut self,
-        span: S,
         id: I,
-        value: Symbol,
+        symbol: Symbol,
     ) -> CoreResult<SymbolIndex> {
-        let span = span.into();
+        let span = symbol.span;
         let id = id.into();
         let path = self.current_scope.join(&id);
         log::trace!(
             "Inserting symbol: '{}' with value '{:?}' (inside scope '{}')",
             &id,
-            value,
+            symbol,
             &self.current_scope
         );
 
@@ -421,11 +392,11 @@ impl CodegenContext {
             Some(symbol_nx) => {
                 match self.symbols.try_get_mut(symbol_nx) {
                     Some(existing) => {
-                        if existing.ty != value.ty
-                            || existing.read_only != value.read_only
-                            || (existing.pass_idx == value.pass_idx
-                                && existing.data != value.data
-                                && existing.read_only)
+                        if existing.ty != symbol.ty
+                            || existing.read_only() != symbol.read_only()
+                            || (existing.pass_idx == symbol.pass_idx
+                                && existing.data != symbol.data
+                                && existing.read_only())
                         {
                             let span = span.expect("no span provided");
                             return self.error(span, format!("cannot redefine symbol: {}", &path));
@@ -433,29 +404,30 @@ impl CodegenContext {
 
                         // If the symbol already existed but with a different value,
                         // mark it as undefined so we will trigger another pass
-                        if existing.data != value.data {
+                        if existing.data != symbol.data {
                             log::trace!(
                                 "`--> Symbol already existed, but has changed. Old value was: {:?}",
                                 existing
                             );
 
-                            should_mark_as_undefined = match &value.ty {
+                            should_mark_as_undefined = match &symbol.ty {
                                 SymbolType::Label => true,
                                 SymbolType::TestCase => true,
                                 SymbolType::Variable => false,
+                                SymbolType::Constant => false,
                                 SymbolType::MacroArgument => false,
                             };
                         }
 
                         log::trace!("Symbol was updated with index: {:?}", symbol_nx);
-                        *existing = value;
+                        *existing = symbol;
                     }
                     None => {
                         log::trace!(
                             "Symbol was updated from 'no data' with index: {:?}",
                             symbol_nx
                         );
-                        self.symbols.update_data(symbol_nx, value);
+                        self.symbols.update_data(symbol_nx, symbol);
                     }
                 }
 
@@ -464,7 +436,7 @@ impl CodegenContext {
             None => {
                 let (parent, id) = path.clone().split();
                 let parent_nx = self.symbols.ensure_index(self.symbols.root, &parent);
-                let nx = self.symbols.insert(parent_nx, id, value);
+                let nx = self.symbols.insert(parent_nx, id, symbol);
                 log::trace!("Symbol was inserted with index: {:?}", nx);
                 nx
             }
@@ -881,9 +853,8 @@ impl CodegenContext {
             Token::Label { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
                     self.add_symbol(
-                        id.span,
                         id.data.clone(),
-                        Symbol::label(self.pass_idx, pc.as_i64()),
+                        self.symbol(id.span, pc.as_i64(), SymbolType::Label),
                     )?;
                     self.source_map.add(self.current_scope_nx, id.span, pc, 0);
                 }
@@ -901,7 +872,7 @@ impl CodegenContext {
                 let loop_count = self.evaluate_expression(expr)?;
                 for index in 0..loop_count {
                     self.with_scope(loop_scope, |s| {
-                        s.add_symbol(expr.span, "index", Symbol::constant(s.pass_idx, index))?;
+                        s.add_symbol("index", s.symbol(expr.span, index, SymbolType::Constant))?;
                         let result = s.emit_tokens(&block.inner);
                         s.remove_symbol("index");
                         result
@@ -913,15 +884,15 @@ impl CodegenContext {
             } => {
                 let args = args.iter().map(|(arg, _)| arg.clone()).collect();
                 self.add_symbol(
-                    id.span,
                     &id.data,
-                    Symbol::constant(
-                        self.pass_idx,
+                    self.symbol(
+                        id.span,
                         MacroDefinition {
                             id: id.clone(),
                             args,
                             block: block.inner.clone(),
                         },
+                        SymbolType::Constant,
                     ),
                 )?;
             }
@@ -937,9 +908,8 @@ impl CodegenContext {
                             let (expr, _) = args.get(idx).unwrap();
                             let value = s.evaluate_expression(expr)?;
                             s.add_symbol(
-                                arg_name.span,
                                 &arg_name.data,
-                                Symbol::macro_arg(s.pass_idx, value),
+                                s.symbol(arg_name.span, value, SymbolType::MacroArgument),
                             )?;
                         }
 
@@ -993,9 +963,8 @@ impl CodegenContext {
                     };
                     if should_add_test_symbol {
                         self.add_symbol(
-                            id.span,
                             &id.data,
-                            Symbol::test_case(self.pass_idx, pc.as_i64()),
+                            self.symbol(id.span, pc.as_i64(), SymbolType::TestCase),
                         )?;
                     }
                 }
@@ -1009,13 +978,11 @@ impl CodegenContext {
             }
             Token::VariableDefinition { ty, id, value, .. } => {
                 let value = self.evaluate_expression(&value)?;
-                let mut symbol = Symbol::variable(self.pass_idx, value);
-                symbol.read_only = match &ty.data {
-                    VariableType::Constant => true,
-                    VariableType::Variable => false,
+                let ty = match &ty.data {
+                    VariableType::Constant => SymbolType::Constant,
+                    VariableType::Variable => SymbolType::Variable,
                 };
-
-                self.add_symbol(id.span, id.data.clone(), symbol)?;
+                self.add_symbol(id.data.clone(), self.symbol(id.span, value, ty))?;
             }
             _ => {}
         }
@@ -1125,7 +1092,7 @@ impl CodegenContext {
             .symbols
             .ensure_index(self.symbols.root, &self.current_scope);
         self.try_current_target_pc()
-            .map(|pc| self.add_symbol(None, "-", Symbol::variable(self.pass_idx, pc.as_i64())));
+            .map(|pc| self.add_symbol("-", self.symbol(None, pc.as_i64(), SymbolType::Variable)));
         log::trace!(
             "Entering scope: {} ({:?})",
             self.current_scope,
@@ -1138,7 +1105,7 @@ impl CodegenContext {
             self.current_scope_nx
         );
         self.try_current_target_pc()
-            .map(|pc| self.add_symbol(None, "+", Symbol::variable(self.pass_idx, pc.as_i64())));
+            .map(|pc| self.add_symbol("+", self.symbol(None, pc.as_i64(), SymbolType::Variable)));
         self.current_scope_nx = old_scope_nx;
         self.current_scope.pop();
         result
@@ -1188,8 +1155,11 @@ pub fn codegen(
     let mut ctx = CodegenContext::new(ast.clone(), options.clone());
     ctx.register_default_fns();
     for (name, val) in &options.predefined_constants {
-        ctx.symbols
-            .insert(ctx.symbols.root, name.as_str(), Symbol::constant(0, *val));
+        ctx.symbols.insert(
+            ctx.symbols.root,
+            name.as_str(),
+            ctx.symbol(None, *val, SymbolType::Constant),
+        );
     }
 
     #[cfg(test)]

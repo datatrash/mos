@@ -133,9 +133,14 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
                     Err(e)
                 }
             }
-        } else if args.test_runner.is_some() {
+        } else if let Some(tr) = &args.test_runner {
             let source = conn.lock_lsp().parsing_source();
-            match TestRunnerAdapter::launch(&args, source, src_path, &"stack_pointer".into()) {
+            match TestRunnerAdapter::launch(
+                &args,
+                source,
+                src_path,
+                &tr.test_case_name.as_str().into(),
+            ) {
                 Ok(adapter) => {
                     conn.machine = Some(Machine::new(adapter));
                     Ok(())

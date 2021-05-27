@@ -33,21 +33,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
     let debugAdapterPort = await findFreePort();
 
     disposables.push(vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state)));
-    disposables.push(vscode.commands.registerCommand("mos.runSingleTest", async (_arg: string) => {
-        const workspaceFolders = vscode.workspace.workspaceFolders!;
-        const workspaceFolder = workspaceFolders[0];
-        await vscode.debug.startDebugging(workspaceFolder, {
-            type: "mos",
-            request: "launch",
-            name: "Launch",
-            workspace: workspaceFolder.uri.path,
-            trace: true,
-            testRunner: {}
-        });
-    }));
+    disposables.push(vscode.commands.registerCommand("mos.runSingleTest", testRunnerCommandFactory(true)));
+    disposables.push(vscode.commands.registerCommand("mos.debugSingleTest", testRunnerCommandFactory(false)));
 
     let serverOptions: ServerOptions = {
-        command: state.mosPath, args: ["-vvv", "lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
+        command: state.mosPath, args: ["lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
     };
 
     let clientOptions: LanguageClientOptions = {
@@ -67,6 +57,25 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
     log.info(`Trying to start debug adapter on port ${debugAdapterPort}`);
     ctx.subscriptions.push(debug.registerDebugAdapterDescriptorFactory("mos", new DebuggerAdapter(debugAdapterPort)));
+}
+
+export type Cmd = (...args: any[]) => unknown;
+
+function testRunnerCommandFactory(noDebug: boolean): Cmd {
+    return async (test_name: string) => {
+        const workspaceFolders = vscode.workspace.workspaceFolders!;
+        const workspaceFolder = workspaceFolders[0];
+        await vscode.debug.startDebugging(workspaceFolder, {
+            type: "mos",
+            request: "launch",
+            name: "Launch",
+            workspace: workspaceFolder.uri.path,
+            noDebug,
+            testRunner: {
+                testCaseName: test_name
+            }
+        });
+    };
 }
 
 class DebuggerAdapter implements DebugAdapterDescriptorFactory {

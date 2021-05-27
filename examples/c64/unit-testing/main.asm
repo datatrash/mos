@@ -10,7 +10,7 @@
 
                         tsx
 
-                        .assert cpu.pc == $2009
+                        .assert cpu.sp == $fd
 
                         brk
                     }

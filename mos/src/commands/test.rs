@@ -38,19 +38,19 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
     if let Some(test_name) = &cfg.test.name {
         test_cases = test_cases
             .into_iter()
-            .filter(|c| &c.to_string() == test_name)
+            .filter(|(_, c)| &c.to_string() == test_name)
             .collect();
     }
     if let Some(test_filter) = &cfg.test.filter {
         test_cases = test_cases
             .into_iter()
-            .filter(|c| c.to_string().contains(test_filter))
+            .filter(|(_, c)| c.to_string().contains(test_filter))
             .collect();
     }
 
     let mut failed = vec![];
     let mut num_passed = 0;
-    for test_case in test_cases {
+    for (_, test_case) in test_cases {
         let mut runner = TestRunner::new(src.clone(), &input_path, &test_case)?;
         let (num_cycles, failure) = match runner.run()? {
             ExecuteResult::Running => panic!(),

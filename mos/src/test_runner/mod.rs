@@ -4,8 +4,7 @@ use ansi_term::Colour;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
-    codegen, Assertion, CodegenContext, CodegenOptions, FunctionCallback, Symbol, SymbolIndex,
-    SymbolType,
+    codegen, Assertion, CodegenContext, CodegenOptions, FunctionCallback, SymbolIndex, SymbolType,
 };
 use mos_core::errors::CoreResult;
 use mos_core::parser;
@@ -22,6 +21,7 @@ pub struct TestRunner {
     ram: Arc<Mutex<BasicRam>>,
     cpu: MOS6502,
     cpu_pc_nx: SymbolIndex,
+    cpu_sp_nx: SymbolIndex,
     cpu_a_nx: SymbolIndex,
     cpu_x_nx: SymbolIndex,
     cpu_y_nx: SymbolIndex,
@@ -100,7 +100,7 @@ impl TestFailure {
 pub fn enumerate_test_cases(
     src: Arc<Mutex<dyn ParsingSource>>,
     input_path: &Path,
-) -> MosResult<Vec<IdentifierPath>> {
+) -> MosResult<Vec<(SpanLoc, IdentifierPath)>> {
     let mut ctx = generate(
         src,
         input_path,
@@ -125,8 +125,11 @@ pub fn enumerate_test_cases(
         .symbols()
         .all()
         .into_iter()
-        .filter(|(_, data)| data.ty == SymbolType::TestCase)
-        .map(|(name, _)| name)
+        .filter(|(_, data)| data.ty == SymbolType::TestCase && data.span.is_some())
+        .map(|(name, data)| {
+            let location = ctx.analysis().look_up(data.span.unwrap());
+            (location, name)
+        })
         .sorted()
         .collect();
     Ok(test_cases)
@@ -225,42 +228,41 @@ impl TestRunner {
 
         let root = ctx.symbols().root;
         let cpu_nx = ctx.symbols_mut().ensure_index(root, "cpu");
-        let cpu_pc_nx = ctx.symbols_mut().insert(cpu_nx, "pc", Symbol::label(0, 0));
-        let cpu_a_nx = ctx
-            .symbols_mut()
-            .insert(cpu_nx, "a", Symbol::constant(0, 0));
-        let cpu_x_nx = ctx
-            .symbols_mut()
-            .insert(cpu_nx, "x", Symbol::constant(0, 0));
-        let cpu_y_nx = ctx
-            .symbols_mut()
-            .insert(cpu_nx, "y", Symbol::constant(0, 0));
+
+        let add = |ctx: &mut CodegenContext,
+                   parent_nx: SymbolIndex,
+                   id: &str,
+                   ty: SymbolType|
+         -> SymbolIndex {
+            let symbol = ctx.symbol(None, 0, ty);
+            ctx.symbols_mut().insert(parent_nx, id, symbol)
+        };
+
+        let cpu_pc_nx = add(&mut ctx, cpu_nx, "pc", SymbolType::Label);
+        let cpu_sp_nx = add(&mut ctx, cpu_nx, "sp", SymbolType::Label);
+        let cpu_a_nx = add(&mut ctx, cpu_nx, "a", SymbolType::Constant);
+        let cpu_x_nx = add(&mut ctx, cpu_nx, "x", SymbolType::Constant);
+        let cpu_y_nx = add(&mut ctx, cpu_nx, "y", SymbolType::Constant);
 
         let cpu_flags_nx = ctx.symbols_mut().ensure_index(cpu_nx, "flags");
-        let cpu_flags_carry_nx =
-            ctx.symbols_mut()
-                .insert(cpu_flags_nx, "carry", Symbol::constant(0, 0));
-        let cpu_flags_zero_nx =
-            ctx.symbols_mut()
-                .insert(cpu_flags_nx, "zero", Symbol::constant(0, 0));
-        let cpu_flags_interrupt_disable_nx =
-            ctx.symbols_mut()
-                .insert(cpu_flags_nx, "interrupt_disable", Symbol::constant(0, 0));
-        let cpu_flags_decimal_nx =
-            ctx.symbols_mut()
-                .insert(cpu_flags_nx, "decimal", Symbol::constant(0, 0));
-        let cpu_flags_overflow_nx =
-            ctx.symbols_mut()
-                .insert(cpu_flags_nx, "overflow", Symbol::constant(0, 0));
-        let cpu_flags_negative_nx =
-            ctx.symbols_mut()
-                .insert(cpu_flags_nx, "negative", Symbol::constant(0, 0));
+        let cpu_flags_carry_nx = add(&mut ctx, cpu_flags_nx, "carry", SymbolType::Constant);
+        let cpu_flags_zero_nx = add(&mut ctx, cpu_flags_nx, "zero", SymbolType::Constant);
+        let cpu_flags_interrupt_disable_nx = add(
+            &mut ctx,
+            cpu_flags_nx,
+            "interrupt_disable",
+            SymbolType::Constant,
+        );
+        let cpu_flags_decimal_nx = add(&mut ctx, cpu_flags_nx, "decimal", SymbolType::Constant);
+        let cpu_flags_overflow_nx = add(&mut ctx, cpu_flags_nx, "overflow", SymbolType::Constant);
+        let cpu_flags_negative_nx = add(&mut ctx, cpu_flags_nx, "negative", SymbolType::Constant);
 
         Ok(Self {
             ctx: Arc::new(Mutex::new(ctx)),
             ram,
             cpu,
             cpu_pc_nx,
+            cpu_sp_nx,
             cpu_a_nx,
             cpu_x_nx,
             cpu_y_nx,
@@ -317,6 +319,7 @@ impl TestRunner {
         if !active_assertions.is_empty() {
             for (nx, value) in &[
                 (self.cpu_pc_nx, self.cpu.get_program_counter() as i64),
+                (self.cpu_sp_nx, self.cpu.get_stack_pointer() as i64),
                 (self.cpu_a_nx, self.cpu.get_accumulator() as i64),
                 (self.cpu_x_nx, self.cpu.get_x_register() as i64),
                 (self.cpu_y_nx, self.cpu.get_y_register() as i64),
@@ -345,11 +348,9 @@ impl TestRunner {
                     (self.cpu.get_status_register() & 128) as i64,
                 ),
             ] {
-                self.ctx
-                    .lock()
-                    .unwrap()
-                    .symbols_mut()
-                    .update_data(*nx, Symbol::label(0, *value));
+                let mut ctx = self.ctx.lock().unwrap();
+                let symbol = ctx.symbol(None, *value, SymbolType::Label);
+                ctx.symbols_mut().update_data(*nx, symbol);
             }
         }
 
@@ -543,14 +544,15 @@ mod tests {
             )
             .into();
         let cases = enumerate_test_cases(src, Path::new("test.asm"))?;
+        let cases = cases.into_iter().map(|(_, c)| c).collect_vec();
         assert_unordered_eq(&cases, &[idpath!("a"), idpath!("b"), idpath!("scope.c")]);
         Ok(())
     }
 
     #[test]
-    fn use_pc_in_assertions() -> MosResult<()> {
+    fn use_pc_sp_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert cpu.pc == $2001\nbrk\n}",
+            ".test a {\nnop\n.assert cpu.pc == $2001\n.assert cpu.sp == $fd\nbrk\n}",
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(2));

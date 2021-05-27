@@ -161,8 +161,7 @@ pub struct LaunchRequestArguments {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct TestRunnerArguments {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub single_test: Option<String>,
+    pub test_case_name: String,
 }
 
 pub struct ConfigurationDoneRequest {}
