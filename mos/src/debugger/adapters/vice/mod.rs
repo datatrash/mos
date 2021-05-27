@@ -176,7 +176,7 @@ impl MachineAdapter for ViceAdapter {
         Ok(validated_breakpoints)
     }
 
-    fn registers(&self) -> MosResult<HashMap<String, u16>> {
+    fn registers(&self) -> MosResult<HashMap<String, i64>> {
         Ok(self
             .current_register_values
             .iter()
@@ -184,7 +184,7 @@ impl MachineAdapter for ViceAdapter {
                 self.available_registers
                     .get(id)
                     .filter(|name| name.as_str() != "FL")
-                    .map(|name| (name.clone(), *value))
+                    .map(|name| (name.clone(), *value as i64))
             })
             .collect())
     }

@@ -1,7 +1,7 @@
 use crate::commands::paint;
 use crate::config::Config;
 use crate::errors::MosResult;
-use crate::test_runner::{enumerate_test_cases, CycleResult, TestRunner};
+use crate::test_runner::{enumerate_test_cases, ExecuteResult, TestRunner};
 use ansi_term::Colour;
 use clap::App;
 use mos_core::errors::span_loc_to_error_string;
@@ -53,9 +53,9 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
     for test_case in test_cases {
         let mut runner = TestRunner::new(src.clone(), &input_path, &test_case)?;
         let (num_cycles, failure) = match runner.run()? {
-            CycleResult::Running => panic!(),
-            CycleResult::TestFailed(num_cycles, failure) => (num_cycles, Some(failure)),
-            CycleResult::TestSuccess(num_cycles) => (num_cycles, None),
+            ExecuteResult::Running => panic!(),
+            ExecuteResult::TestFailed(num_cycles, failure) => (num_cycles, Some(failure)),
+            ExecuteResult::TestSuccess(num_cycles) => (num_cycles, None),
         };
         let cycles = if use_color {
             paint(

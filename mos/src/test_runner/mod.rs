@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::errors::{MosError, MosResult};
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
@@ -33,7 +33,7 @@ pub struct TestRunner {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum CycleResult {
+pub enum ExecuteResult {
     Running,
     TestFailed(usize, Box<TestFailure>),
     TestSuccess(usize),
@@ -106,8 +106,17 @@ impl TestRunner {
             .try_index(ctx.symbols().root, test_path)
             .map(|nx| ctx.symbols().try_get(nx))
             .flatten()
-            .map(|symbol| symbol.data.as_i64())
-            .unwrap();
+            .map(|symbol| symbol.data.as_i64());
+
+        let test_pc = match test_pc {
+            Some(pc) => pc,
+            None => {
+                return Err(MosError::UnitTest(format!(
+                    "Test case not found: {}",
+                    test_path
+                )));
+            }
+        };
 
         let ram = Arc::new(Mutex::new(BasicRam::new()));
         for segment in ctx.segments().values() {
@@ -219,21 +228,25 @@ impl TestRunner {
         &self.cpu
     }
 
+    pub fn num_cycles(&self) -> usize {
+        self.num_cycles
+    }
+
     pub fn codegen(&self) -> Arc<Mutex<CodegenContext>> {
         self.ctx.clone()
     }
 
-    pub fn run(&mut self) -> MosResult<CycleResult> {
+    pub fn run(&mut self) -> MosResult<ExecuteResult> {
         loop {
-            let result = self.cycle()?;
-            if let CycleResult::Running = result {
+            let result = self.execute_instruction()?;
+            if let ExecuteResult::Running = result {
                 continue;
             }
             return Ok(result);
         }
     }
 
-    pub fn cycle(&mut self) -> MosResult<CycleResult> {
+    pub fn execute_instruction(&mut self) -> MosResult<ExecuteResult> {
         log::trace!(
             "PC: {} (ram: ${:02X})",
             self.cpu.get_program_counter(),
@@ -241,109 +254,147 @@ impl TestRunner {
         );
 
         // Check assertions
-        if self.cpu.get_remaining_cycles() == 0 {
-            let active_assertions = self
+        let active_assertions = self
+            .ctx
+            .lock()
+            .unwrap()
+            .assertions()
+            .iter()
+            .filter(|a| a.pc.as_u16() == self.cpu.get_program_counter())
+            .cloned()
+            .collect_vec();
+
+        if !active_assertions.is_empty() {
+            for (nx, value) in &[
+                (self.cpu_pc_nx, self.cpu.get_program_counter() as i64),
+                (self.cpu_a_nx, self.cpu.get_accumulator() as i64),
+                (self.cpu_x_nx, self.cpu.get_x_register() as i64),
+                (self.cpu_y_nx, self.cpu.get_y_register() as i64),
+                (
+                    self.cpu_flags_carry_nx,
+                    (self.cpu.get_status_register() & 1) as i64,
+                ),
+                (
+                    self.cpu_flags_zero_nx,
+                    (self.cpu.get_status_register() & 2) as i64,
+                ),
+                (
+                    self.cpu_flags_interrupt_disable_nx,
+                    (self.cpu.get_status_register() & 4) as i64,
+                ),
+                (
+                    self.cpu_flags_decimal_nx,
+                    (self.cpu.get_status_register() & 8) as i64,
+                ),
+                (
+                    self.cpu_flags_overflow_nx,
+                    (self.cpu.get_status_register() & 64) as i64,
+                ),
+                (
+                    self.cpu_flags_negative_nx,
+                    (self.cpu.get_status_register() & 128) as i64,
+                ),
+            ] {
+                self.ctx
+                    .lock()
+                    .unwrap()
+                    .symbols_mut()
+                    .update_data(*nx, Symbol::label(0, *value));
+            }
+        }
+
+        for assertion in active_assertions {
+            let eval_result = self
                 .ctx
                 .lock()
                 .unwrap()
-                .assertions()
-                .iter()
-                .filter(|a| a.pc.as_u16() == self.cpu.get_program_counter())
-                .cloned()
-                .collect_vec();
-
-            if !active_assertions.is_empty() {
-                for (nx, value) in &[
-                    (self.cpu_pc_nx, self.cpu.get_program_counter() as i64),
-                    (self.cpu_a_nx, self.cpu.get_accumulator() as i64),
-                    (self.cpu_x_nx, self.cpu.get_x_register() as i64),
-                    (self.cpu_y_nx, self.cpu.get_y_register() as i64),
-                    (
-                        self.cpu_flags_carry_nx,
-                        (self.cpu.get_status_register() & 1) as i64,
-                    ),
-                    (
-                        self.cpu_flags_zero_nx,
-                        (self.cpu.get_status_register() & 2) as i64,
-                    ),
-                    (
-                        self.cpu_flags_interrupt_disable_nx,
-                        (self.cpu.get_status_register() & 4) as i64,
-                    ),
-                    (
-                        self.cpu_flags_decimal_nx,
-                        (self.cpu.get_status_register() & 8) as i64,
-                    ),
-                    (
-                        self.cpu_flags_overflow_nx,
-                        (self.cpu.get_status_register() & 64) as i64,
-                    ),
-                    (
-                        self.cpu_flags_negative_nx,
-                        (self.cpu.get_status_register() & 128) as i64,
-                    ),
-                ] {
-                    self.ctx
-                        .lock()
-                        .unwrap()
-                        .symbols_mut()
-                        .update_data(*nx, Symbol::label(0, *value));
-                }
-            }
-
-            for assertion in active_assertions {
-                let eval_result = self
+                .evaluate_expression(&assertion.expression)?;
+            if eval_result == 0 {
+                let message = assertion
+                    .failure_message
+                    .clone()
+                    .unwrap_or_else(|| format!("{}", &assertion.expression.data).trim().into());
+                let location = self
                     .ctx
                     .lock()
                     .unwrap()
-                    .evaluate_expression(&assertion.expression)?;
-                if eval_result == 0 {
-                    let message = assertion
-                        .failure_message
-                        .clone()
-                        .unwrap_or_else(|| format!("{}", &assertion.expression.data).trim().into());
-                    let location = self
-                        .ctx
-                        .lock()
-                        .unwrap()
-                        .analysis()
-                        .look_up(assertion.expression.span);
-                    let failure = TestFailure {
-                        location: Some(location),
-                        message,
-                        assertion: Some(assertion),
-                        cpu: self.cpu.clone(),
-                    };
-                    return Ok(CycleResult::TestFailed(self.num_cycles, Box::new(failure)));
-                }
+                    .analysis()
+                    .look_up(assertion.expression.span);
+                let failure = TestFailure {
+                    location: Some(location),
+                    message,
+                    assertion: Some(assertion),
+                    cpu: self.cpu.clone(),
+                };
+                return Ok(ExecuteResult::TestFailed(
+                    self.num_cycles,
+                    Box::new(failure),
+                ));
             }
         }
 
-        if self.cpu.get_program_counter() == 0 {
-            // BRK caused the program counter to go to zero
-            self.num_cycles -= 1; // ignore the BRK
-            return Ok(CycleResult::TestFailed(
-                self.num_cycles,
-                Box::new(TestFailure {
-                    location: None,
-                    message: "encountered an invalid instruction".into(),
-                    assertion: None,
-                    cpu: self.cpu.clone(),
-                }),
-            ));
-        }
-
-        if self.cpu.get_remaining_cycles() == 0
-            && self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize] == 0x60
-        {
-            // RTS, test succeeded
-            return Ok(CycleResult::TestSuccess(self.num_cycles));
+        if self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize] == 0 {
+            // BRK, test succeeded
+            return Ok(ExecuteResult::TestSuccess(self.num_cycles));
         }
 
         self.cpu.cycle(self.ram.lock().unwrap().deref_mut());
-        self.num_cycles += 1;
+        self.num_cycles += 1 + self.cpu.get_remaining_cycles() as usize;
+        self.cpu
+            .execute_instruction(self.ram.lock().unwrap().deref_mut());
 
-        Ok(CycleResult::Running)
+        Ok(ExecuteResult::Running)
+    }
+
+    pub fn step_over(&mut self) -> MosResult<ExecuteResult> {
+        let opcode = self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize];
+        match opcode {
+            0x20 => {
+                // jsr
+                let wait_until_pc = self.cpu.get_program_counter() + 3;
+                loop {
+                    let result = self.execute_instruction()?;
+
+                    if self.cpu.get_program_counter() == wait_until_pc {
+                        return Ok(result);
+                    }
+
+                    match result {
+                        ExecuteResult::Running => {}
+                        result => {
+                            return Ok(result);
+                        }
+                    }
+                }
+            }
+            _ => self.execute_instruction(),
+        }
+    }
+
+    pub fn step_out(&mut self) -> MosResult<ExecuteResult> {
+        if self.cpu.get_stack_pointer() > 253 {
+            // Nothing to step out to
+            return Ok(ExecuteResult::Running);
+        }
+
+        let sp_lo =
+            self.ram.lock().unwrap().ram[256 + self.cpu.get_stack_pointer() as usize + 1] as usize;
+        let sp_hi =
+            self.ram.lock().unwrap().ram[256 + self.cpu.get_stack_pointer() as usize + 2] as usize;
+        let will_return_to = 1 + sp_lo + 256 * sp_hi;
+
+        loop {
+            if self.cpu.get_program_counter() == will_return_to as u16 {
+                return Ok(ExecuteResult::Running);
+            }
+
+            match self.execute_instruction()? {
+                ExecuteResult::Running => {}
+                result => {
+                    return Ok(result);
+                }
+            }
+        }
     }
 }
 
@@ -398,11 +449,47 @@ mod tests {
     use mos_testing::assert_unordered_eq;
 
     #[test]
+    fn step_over() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                jsr foo
+                brk
+           foo: nop
+                rts
+            }",
+            idpath!("a"),
+        )?;
+        runner.step_over()?;
+        assert_eq!(runner.cpu.get_program_counter(), 0x2003);
+        Ok(())
+    }
+
+    #[test]
+    fn step_out() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                jsr foo
+                brk
+           foo: nop
+                rts
+            }",
+            idpath!("a"),
+        )?;
+        runner.execute_instruction()?;
+        assert_eq!(runner.cpu.get_program_counter(), 0x2004);
+        runner.step_out()?;
+        assert_eq!(runner.cpu.get_program_counter(), 0x2003);
+        Ok(())
+    }
+
+    #[test]
     fn can_enumerate_tests() -> MosResult<()> {
         let src = InMemoryParsingSource::new()
             .add(
                 "test.asm",
-                ".test a {rts}\n.test b {rts}\nscope: {\n.test c {rts}\n}",
+                ".test a {brk}\n.test b {brk}\nscope: {\n.test c {brk}\n}",
             )
             .into();
         let cases = enumerate_test_cases(src, Path::new("test.asm"))?;
@@ -413,10 +500,10 @@ mod tests {
     #[test]
     fn use_pc_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert cpu.pc == $2001\nrts\n}",
+            ".test a {\nnop\n.assert cpu.pc == $2001\nbrk\n}",
             idpath!("a"),
         )?;
-        assert_eq!(runner.run()?, CycleResult::TestSuccess(2));
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(2));
         Ok(())
     }
 
@@ -431,11 +518,11 @@ mod tests {
                 .assert cpu.a == 1
                 .assert cpu.x == 2
                 .assert cpu.y == 3
-                rts
+                brk
              }",
             idpath!("a"),
         )?;
-        assert_eq!(runner.run()?, CycleResult::TestSuccess(6));
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(6));
         Ok(())
     }
 
@@ -468,11 +555,11 @@ mod tests {
                 lda #0
                 sbc #1
                 .assert cpu.flags.negative
-                rts
+                brk
              }",
             idpath!("a"),
         )?;
-        assert_eq!(runner.run()?, CycleResult::TestSuccess(24));
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(24));
         Ok(())
     }
 
@@ -487,12 +574,12 @@ mod tests {
                 sta foo + 1
                 .assert ram(foo) == 1
                 .assert ram16(foo) == 513
-                rts
+                brk
                 foo: .word 0
              }",
             idpath!("a"),
         )?;
-        assert_eq!(runner.run()?, CycleResult::TestSuccess(12));
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(12));
         Ok(())
     }
 
@@ -502,20 +589,20 @@ mod tests {
             r"
             .test a {
                 .if defined(TEST) { nop } else { asl }
-                rts
+                brk
              }",
             idpath!("a"),
         )?;
         let ctx = runner.ctx.lock().unwrap();
         let segment = ctx.segments().values().next().unwrap();
-        assert_eq!(segment.range_data(), vec![0xea, 0x60]);
+        assert_eq!(segment.range_data(), vec![0xea, 0]);
         Ok(())
     }
 
     #[test]
     fn failing_assertion_with_message() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nrts\n}",
+            ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nbrk\n}",
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?.as_failure().message, "oh no");
@@ -524,7 +611,7 @@ mod tests {
 
     #[test]
     fn failing_assertion_without_message() -> MosResult<()> {
-        let mut runner = get_runner(".test a {\nnop\n.assert 1 == 2\nrts\n}", idpath!("a"))?;
+        let mut runner = get_runner(".test a {\nnop\n.assert 1 == 2\nbrk\n}", idpath!("a"))?;
         assert_eq!(runner.run()?.as_failure().message, "1 == 2");
         Ok(())
     }
@@ -534,10 +621,10 @@ mod tests {
         Ok(TestRunner::new(src, Path::new("test.asm"), &test_path)?)
     }
 
-    impl CycleResult {
+    impl ExecuteResult {
         fn as_failure(&self) -> &TestFailure {
             match self {
-                CycleResult::TestFailed(_, failure) => failure.as_ref(),
+                ExecuteResult::TestFailed(_, failure) => failure.as_ref(),
                 _ => panic!(),
             }
         }

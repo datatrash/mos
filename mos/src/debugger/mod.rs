@@ -277,15 +277,16 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
                         conn.machine_adapter()?
                             .registers()?
                             .into_iter()
-                            .map(|(name, val)| (name, val as i64))
+                            .map(|(name, val)| (name, val))
                             .collect()
                     }
                     3 => {
                         // Locals
                         let mut result = HashMap::new();
+                        let state = conn.machine_adapter()?.running_state()?;
                         if let Some(codegen) = conn.codegen().as_ref() {
                             let codegen = codegen.lock().unwrap();
-                            if let Some(scope) = current_scope(&conn, &codegen)? {
+                            if let Some(scope) = current_scope(&state, &codegen)? {
                                 for (id, symbol_nx) in
                                     codegen.symbols().visible_symbols(scope, true)
                                 {
@@ -473,9 +474,10 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
         conn: &mut DebugSession,
         args: EvaluateArguments,
     ) -> MosResult<EvaluateResponse> {
+        let state = conn.machine_adapter()?.running_state()?;
         if let Some(codegen) = conn.codegen().as_ref() {
             let codegen = codegen.lock().unwrap();
-            if let Some(scope) = current_scope(&conn, &codegen)? {
+            if let Some(scope) = current_scope(&state, &codegen)? {
                 let expr_path = IdentifierPath::from(args.expression.as_str());
                 if let Some(symbol_nx) = codegen.symbols().query(scope, expr_path) {
                     if let Some(symbol) = codegen.symbols().try_get(symbol_nx) {
@@ -499,9 +501,12 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
     }
 }
 
-fn current_scope(conn: &DebugSession, codegen: &CodegenContext) -> MosResult<Option<SymbolIndex>> {
-    if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
-        if let Some(offset) = codegen.source_map().address_to_offset(pc) {
+fn current_scope(
+    state: &MachineRunningState,
+    codegen: &CodegenContext,
+) -> MosResult<Option<SymbolIndex>> {
+    if let MachineRunningState::Stopped(pc) = state {
+        if let Some(offset) = codegen.source_map().address_to_offset(*pc) {
             return Ok(Some(offset.scope));
         }
     }

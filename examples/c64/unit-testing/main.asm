@@ -15,15 +15,15 @@
                             jmp -
                         }
 
-                        rts
+                        brk
                     }
 
                     .test will_fail {
                         .assert cpu.pc == $1234
 
-                        rts
+                        brk
                     }
 
                     .test will_succeed {
-                        rts
+                        brk
                     }

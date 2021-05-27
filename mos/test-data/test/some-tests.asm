@@ -1,6 +1,6 @@
 .test ok {
     .assert 1 == 1 "nice"
- 	rts
+ 	brk
 }
 
 .test fail {

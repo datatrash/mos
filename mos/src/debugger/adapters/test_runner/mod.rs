@@ -8,6 +8,7 @@ use crate::test_runner::TestRunner;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
 use mos_core::parser::source::ParsingSource;
+use mos_core::parser::IdentifierPath;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,28 +23,33 @@ pub struct TestRunnerAdapter {
     ctx: Arc<Mutex<CodegenContext>>,
     event_sender: Sender<MachineEvent>,
     event_receiver: Receiver<MachineEvent>,
+    breakpoints: Arc<Mutex<Vec<MachineBreakpoint>>>,
 }
 
 impl TestRunnerAdapter {
-    pub fn launch<P: Into<PathBuf>>(
-        _launch_args: &LaunchRequestArguments,
+    pub fn new<P: Into<PathBuf>>(
         parsing_source: Arc<Mutex<dyn ParsingSource>>,
         source_path: P,
-    ) -> MosResult<Box<dyn MachineAdapter + Send>> {
+        test_case_path: &IdentifierPath,
+    ) -> MosResult<Self> {
         let is_connected = Arc::new(AtomicBool::new(true));
         let state = Arc::new(Mutex::new(MachineRunningState::Launching));
+        let breakpoints: Arc<Mutex<Vec<MachineBreakpoint>>> = Arc::new(Mutex::new(vec![]));
 
         let (event_sender, event_receiver) = unbounded();
         let runner = Arc::new(Mutex::new(TestRunner::new(
             parsing_source,
             &source_path.into(),
-            &mos_core::idpath!("stack_pointer"),
+            test_case_path,
         )?));
 
         let thread_is_connected = is_connected.clone();
         let thread_state = state.clone();
         let thread_runner = runner.clone();
+        let thread_breakpoints = breakpoints.clone();
+        let thread_sender = event_sender.clone();
         thread::spawn(move || {
+            let mut last_checked_pc = None;
             while thread_is_connected.load(Ordering::Relaxed) {
                 let state = *thread_state.lock().unwrap();
                 match state {
@@ -52,7 +58,27 @@ impl TestRunnerAdapter {
                     }
                     MachineRunningState::Running => {
                         let mut runner = thread_runner.lock().unwrap();
-                        match runner.cycle() {
+
+                        let pc = ProgramCounter::new(runner.cpu().get_program_counter() as usize);
+                        if last_checked_pc != Some(pc) {
+                            last_checked_pc = Some(pc);
+                            let bps = thread_breakpoints.lock().unwrap();
+                            if bps
+                                .iter()
+                                .any(|bp| bp.range.start <= pc && bp.range.end >= pc)
+                            {
+                                let mut state = thread_state.lock().unwrap();
+                                let old = *state;
+                                let new = MachineRunningState::Stopped(pc);
+                                *state = new;
+                                thread_sender
+                                    .send(MachineEvent::RunningStateChanged { old, new })
+                                    .unwrap();
+                                continue;
+                            }
+                        }
+
+                        match runner.execute_instruction() {
                             Ok(_) => {
                                 // Give rest of core a chance to do something
                                 thread::sleep(Duration::from_millis(0));
@@ -67,14 +93,36 @@ impl TestRunnerAdapter {
         });
 
         let ctx = runner.lock().unwrap().codegen();
-        Ok(Box::new(Self {
+        Ok(Self {
             is_connected,
             state,
             runner,
             ctx,
             event_sender,
             event_receiver,
-        }))
+            breakpoints,
+        })
+    }
+
+    pub fn launch<P: Into<PathBuf>>(
+        _launch_args: &LaunchRequestArguments,
+        parsing_source: Arc<Mutex<dyn ParsingSource>>,
+        source_path: P,
+    ) -> MosResult<Box<dyn MachineAdapter + Send>> {
+        Ok(Box::new(Self::new(
+            parsing_source,
+            source_path,
+            &mos_core::idpath!("stack_pointer"),
+        )?))
+    }
+
+    fn update_state(&mut self, new: MachineRunningState) -> MosResult<()> {
+        let mut state = self.state.lock().unwrap();
+        let old = *state;
+        *state = new;
+        self.event_sender
+            .send(MachineEvent::RunningStateChanged { old, new })?;
+        Ok(())
     }
 }
 
@@ -110,52 +158,109 @@ impl MachineAdapter for TestRunnerAdapter {
     }
 
     fn resume(&mut self) -> MosResult<()> {
-        let mut state = self.state.lock().unwrap();
-        let old = *state;
-        let new = MachineRunningState::Running;
-        *state = new;
-        self.event_sender
-            .send(MachineEvent::RunningStateChanged { old, new })?;
+        self.update_state(MachineRunningState::Running)?;
         Ok(())
     }
 
     fn pause(&mut self) -> MosResult<()> {
         let pc = self.runner.lock().unwrap().cpu().get_program_counter();
-        let mut state = self.state.lock().unwrap();
-        let old = *state;
-        let new = MachineRunningState::Stopped(ProgramCounter::new(pc as usize));
-        *state = new;
-        self.event_sender
-            .send(MachineEvent::RunningStateChanged { old, new })?;
+        self.update_state(MachineRunningState::Stopped(ProgramCounter::new(
+            pc as usize,
+        )))?;
         Ok(())
     }
 
     fn next(&mut self) -> MosResult<()> {
+        {
+            let mut runner = self.runner.lock().unwrap();
+            runner.step_over()?;
+        }
+        self.pause()?;
         Ok(())
     }
 
     fn step_in(&mut self) -> MosResult<()> {
+        {
+            let mut runner = self.runner.lock().unwrap();
+            runner.execute_instruction()?;
+        }
+        self.pause()?;
         Ok(())
     }
 
     fn step_out(&mut self) -> MosResult<()> {
+        {
+            let mut runner = self.runner.lock().unwrap();
+            runner.step_out()?;
+        }
+        self.pause()?;
         Ok(())
     }
 
     fn set_breakpoints(
         &mut self,
-        _source_path: &str,
+        source_path: &str,
         breakpoints: Vec<MachineBreakpoint>,
     ) -> MosResult<Vec<MachineValidatedBreakpoint>> {
-        dbg!(&breakpoints);
-        Ok(vec![])
+        *self.breakpoints.lock().unwrap() = breakpoints.clone();
+        Ok(breakpoints
+            .into_iter()
+            .enumerate()
+            .map(|(id, bp)| MachineValidatedBreakpoint {
+                id,
+                source_path: source_path.into(),
+                range: bp.range.clone(),
+                requested: bp,
+            })
+            .collect())
     }
 
-    fn registers(&self) -> MosResult<HashMap<String, u16>> {
-        Ok(HashMap::new())
+    fn registers(&self) -> MosResult<HashMap<String, i64>> {
+        let runner = self.runner.lock().unwrap();
+        let cpu = runner.cpu();
+
+        let mut map = HashMap::new();
+        map.insert("A".into(), cpu.get_accumulator() as i64);
+        map.insert("X".into(), cpu.get_x_register() as i64);
+        map.insert("Y".into(), cpu.get_y_register() as i64);
+        map.insert("CYC".into(), runner.num_cycles() as i64);
+        Ok(map)
     }
 
     fn flags(&self) -> MosResult<u8> {
-        Ok(0)
+        Ok(self.runner.lock().unwrap().cpu().get_status_register())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mos_core::idpath;
+    use mos_core::parser::source::InMemoryParsingSource;
+
+    #[test]
+    fn breakpoints() -> MosResult<()> {
+        let source = InMemoryParsingSource::new()
+            .add("test.asm", ".test a {\nnop\nnop\n}")
+            .into();
+        let mut adapter = TestRunnerAdapter::new(source, "test.asm", &idpath!("a"))?;
+        adapter.set_breakpoints(
+            "test.asm",
+            vec![MachineBreakpoint {
+                line: 2,
+                column: None,
+                range: ProgramCounter::new(0x2001)..ProgramCounter::new(0x2001),
+            }],
+        )?;
+        adapter.start()?;
+        let event = adapter.event_receiver.recv()?;
+        assert!(matches!(
+            event,
+            MachineEvent::RunningStateChanged {
+                old: MachineRunningState::Running,
+                new: MachineRunningState::Stopped(_)
+            }
+        ));
+        Ok(())
     }
 }

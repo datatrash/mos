@@ -977,15 +977,26 @@ impl CodegenContext {
             }
             Token::Test { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    self.add_symbol(
-                        id.span,
-                        &id.data,
-                        Symbol::test_case(self.pass_idx, pc.as_i64()),
-                    )?;
-                    if let Some(active_test) = &self.options.active_test {
-                        if &self.current_scope.join(&id.data) == active_test {
-                            self.emit_tokens(&block.inner)?;
+                    let should_add_test_symbol = match &self.options.active_test {
+                        Some(active_test) => {
+                            if &self.current_scope.join(&id.data) == active_test {
+                                self.emit_tokens(&block.inner)?;
+                                true
+                            } else {
+                                false
+                            }
                         }
+                        None => {
+                            // No active test, so enumerate all tests
+                            true
+                        }
+                    };
+                    if should_add_test_symbol {
+                        self.add_symbol(
+                            id.span,
+                            &id.data,
+                            Symbol::test_case(self.pass_idx, pc.as_i64()),
+                        )?;
                     }
                 }
             }

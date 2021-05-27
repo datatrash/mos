@@ -87,7 +87,7 @@ pub trait MachineAdapter {
     fn resume(&mut self) -> MosResult<()>;
     /// When running, pause
     fn pause(&mut self) -> MosResult<()>;
-    /// When paused, go to the next instruction
+    /// When paused, go to the next instruction (skip subroutines)
     fn next(&mut self) -> MosResult<()>;
     /// When paused, step in to the next instruction (also step into subroutines)
     fn step_in(&mut self) -> MosResult<()>;
@@ -102,7 +102,7 @@ pub trait MachineAdapter {
     ) -> MosResult<Vec<MachineValidatedBreakpoint>>;
 
     /// Gets the current register values
-    fn registers(&self) -> MosResult<HashMap<String, u16>>;
+    fn registers(&self) -> MosResult<HashMap<String, i64>>;
 
     /// Get the cpu flags
     fn flags(&self) -> MosResult<u8>;
