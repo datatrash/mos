@@ -17,7 +17,7 @@ import {AddressInfo} from "net";
 
 let client: LanguageClient;
 
-let buildTaskProvider: vscode.Disposable | undefined;
+let disposables: vscode.Disposable[] = [];
 
 export class State {
     workspaceFolder!: vscode.WorkspaceFolder;
@@ -32,10 +32,22 @@ export async function activate(ctx: vscode.ExtensionContext) {
 
     let debugAdapterPort = await findFreePort();
 
-    buildTaskProvider = vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state));
+    disposables.push(vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state)));
+    disposables.push(vscode.commands.registerCommand("mos.runSingleTest", async (_arg: string) => {
+        const workspaceFolders = vscode.workspace.workspaceFolders!;
+        const workspaceFolder = workspaceFolders[0];
+        await vscode.debug.startDebugging(workspaceFolder, {
+            type: "mos",
+            request: "launch",
+            name: "Launch",
+            workspace: workspaceFolder.uri.path,
+            trace: true,
+            testRunner: {}
+        });
+    }));
 
     let serverOptions: ServerOptions = {
-        command: state.mosPath, args: ["lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
+        command: state.mosPath, args: ["-vvv", "lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
     };
 
     let clientOptions: LanguageClientOptions = {
@@ -98,10 +110,8 @@ async function getState(ctx: vscode.ExtensionContext): Promise<State | undefined
 
 export function deactivate(): void {
     (async () => {
-        if (buildTaskProvider) {
-            buildTaskProvider.dispose();
-            buildTaskProvider = undefined;
-        }
+        disposables.forEach(d => d.dispose());
+        disposables = [];
         if (!client) {
             return;
         }

@@ -1,9 +1,10 @@
+pub mod test_runner;
 pub mod vice;
 
 use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::{MosError, MosResult};
 use crossbeam_channel::{bounded, Receiver, TryRecvError};
-use mos_core::codegen::ProgramCounter;
+use mos_core::codegen::{CodegenContext, ProgramCounter};
 use std::collections::HashMap;
 use std::io::{BufReader, ErrorKind};
 use std::net::TcpStream;
@@ -64,6 +65,10 @@ pub enum MachineEvent {
 }
 
 pub trait MachineAdapter {
+    /// If the adapter is doing its own code generation instead of the one that the LSP is doing, we can grab that here
+    /// to generate the breakpoint mappings etc
+    fn codegen(&self) -> Option<Arc<Mutex<CodegenContext>>>;
+
     /// Poll the underlying machine for data and handle any events that may have occured
     fn poll(&mut self) -> MosResult<()>;
     /// The receiver for any events that may originate from the underlying machine

@@ -18,6 +18,7 @@ impl RequestHandler<Completion> for CompletionHandler {
         params: CompletionParams,
     ) -> MosResult<Option<CompletionResponse>> {
         if let Some(codegen) = &ctx.codegen {
+            let codegen = codegen.lock().unwrap();
             if let Some(tree) = &ctx.tree {
                 let path = &params
                     .text_document_position
@@ -35,7 +36,7 @@ impl RequestHandler<Completion> for CompletionHandler {
                     let line = source_file.file.source_line(source_line);
 
                     // Only look at the line until the source_column
-                    if source_column <= line.len() {
+                    if source_column <= line.len() && source_column > 0 {
                         let (line, suffix) = line.split_at(source_column - 1);
 
                         // Are we autocompleting a dot?

@@ -36,6 +36,10 @@ struct ViceBreakpoint {
 }
 
 impl MachineAdapter for ViceAdapter {
+    fn codegen(&self) -> Option<Arc<Mutex<CodegenContext>>> {
+        None
+    }
+
     fn poll(&mut self) -> MosResult<()> {
         self.handle_responses(false)
     }
@@ -224,7 +228,7 @@ impl ViceAdapter {
     pub fn launch<P: Into<PathBuf>>(
         launch_args: &LaunchRequestArguments,
         binary_path: P,
-    ) -> MosResult<Box<ViceAdapter>> {
+    ) -> MosResult<Box<dyn MachineAdapter + Send>> {
         let binary_path = binary_path.into();
         let port = find_available_port();
         let monitor_address = format!("ip4://127.0.0.1:{}", port);
@@ -238,7 +242,7 @@ impl ViceAdapter {
 
         // Launch VICE but make sure it doesn't inherit any stdout/stderr stuff from our main LSP, since that will cause the LSp
         // communication to break once VICE exits.
-        let process = Command::new(&launch_args.vice_path)
+        let process = Command::new(launch_args.vice_path.as_ref().unwrap())
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

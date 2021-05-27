@@ -131,7 +131,17 @@ pub struct LaunchRequestArguments {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub no_debug: Option<bool>,
     pub workspace: String,
-    pub vice_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vice_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_runner: Option<TestRunnerArguments>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TestRunnerArguments {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub single_test: Option<String>,
 }
 
 pub struct ConfigurationDoneRequest {}

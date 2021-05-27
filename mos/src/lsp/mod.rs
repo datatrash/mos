@@ -1,3 +1,4 @@
+mod code_lens;
 mod completion;
 mod documents;
 mod formatting;
@@ -10,6 +11,7 @@ mod traits;
 
 use crate::config::Config;
 use crate::errors::MosResult;
+use crate::lsp::code_lens::CodeLensRequestHandler;
 use crate::lsp::completion::CompletionHandler;
 use crate::lsp::documents::{
     DidChangeTextDocumentHandler, DidCloseTextDocumentHandler, DidOpenTextDocumentHandler,
@@ -24,8 +26,8 @@ use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf, RenameOptions,
-    ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
+    CodeLensOptions, CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf,
+    RenameOptions, ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
 };
 use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
 use mos_core::errors::{CoreError, CoreResult};
@@ -71,7 +73,7 @@ pub struct LspContext {
     connection: Option<(Arc<Connection>, Option<IoThreads>)>,
     tree: Option<Arc<ParseTree>>,
     error: Option<CoreError>,
-    codegen: Option<CodegenContext>,
+    codegen: Option<Arc<Mutex<CodegenContext>>>,
     parsing_source: Arc<Mutex<LspParsingSource>>,
     shutdown_manager: Arc<Mutex<ShutdownManager>>,
     #[cfg(test)]
@@ -221,24 +223,16 @@ impl LspContext {
         PathBuf::from(".").absolutize().unwrap().into()
     }
 
-    pub fn codegen(&self) -> Option<&CodegenContext> {
-        self.codegen.as_ref()
-    }
-
-    pub fn codegen_mut(&mut self) -> Option<&mut CodegenContext> {
-        self.codegen.as_mut()
-    }
-
-    pub fn analysis(&self) -> Option<&Analysis> {
-        self.codegen.as_ref().map(|c| c.analysis())
+    pub fn codegen(&self) -> Option<Arc<Mutex<CodegenContext>>> {
+        self.codegen.clone()
     }
 
     fn connection(&self) -> Option<Arc<Connection>> {
         self.connection.as_ref().map(|c| c.0.clone())
     }
 
-    fn parsing_source(&self) -> MutexGuard<LspParsingSource> {
-        self.parsing_source.lock().unwrap()
+    pub fn parsing_source(&self) -> Arc<Mutex<LspParsingSource>> {
+        self.parsing_source.clone()
     }
 
     #[cfg(test)]
@@ -325,6 +319,7 @@ impl LspServer {
         lsp.register_request_handler(PrepareRenameRequestHandler {});
         lsp.register_request_handler(RenameHandler {});
         lsp.register_request_handler(CompletionHandler {});
+        lsp.register_request_handler(CodeLensRequestHandler {});
         lsp.register_notification_handler(DidOpenTextDocumentHandler {});
         lsp.register_notification_handler(DidChangeTextDocumentHandler {});
         lsp.register_notification_handler(DidCloseTextDocumentHandler {});
@@ -361,6 +356,9 @@ impl LspServer {
             completion_provider: Some(CompletionOptions {
                 trigger_characters: Some(vec![".".into(), "#".into()]),
                 ..Default::default()
+            }),
+            code_lens_provider: Some(CodeLensOptions {
+                resolve_provider: None,
             }),
             ..Default::default()
         };

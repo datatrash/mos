@@ -23,10 +23,13 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
         ctx: &mut LspContext,
         params: GotoDefinitionParams,
     ) -> MosResult<Option<GotoDefinitionResponse>> {
-        let defs = ctx
-            .analysis()
-            .map(|a| ctx.find_definitions(a, &params.text_document_position_params))
-            .unwrap_or_default();
+        if ctx.codegen.is_none() {
+            return Ok(None);
+        }
+        let codegen = ctx.codegen().unwrap();
+        let codegen = codegen.lock().unwrap();
+        let analysis = codegen.analysis();
+        let defs = ctx.find_definitions(analysis, &params.text_document_position_params);
         if let Some((_, def)) = defs.first() {
             if let Some(location) = &def.location {
                 let tree = ctx.tree.as_ref().unwrap();
@@ -41,7 +44,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                 );
                 let origin = origin.map(|dl| tree.code_map.look_up_span(dl.span));
 
-                let l = ctx.analysis().unwrap().look_up(location.span);
+                let l = analysis.look_up(location.span);
                 let link = LocationLink {
                     origin_selection_range: origin.map(to_range),
                     target_uri: Url::from_file_path(l.file.name())?,
@@ -62,31 +65,33 @@ impl RequestHandler<References> for FindReferencesHandler {
         ctx: &mut LspContext,
         params: ReferenceParams,
     ) -> MosResult<Option<Vec<Location>>> {
-        if let Some(analysis) = ctx.analysis() {
-            let defs = analysis.find_filter(
-                params
-                    .text_document_position
-                    .text_document
-                    .uri
-                    .to_file_path()?,
-                to_line_col(&params.text_document_position.position),
-                |ty| matches!(ty, DefinitionType::Symbol(_)),
-            );
-
-            let locations = defs
-                .into_iter()
-                .map(|(_, def)| match params.context.include_declaration {
-                    true => def.definition_and_usages(),
-                    false => def.usages(),
-                })
-                .flatten()
-                .map(|dl| to_location(ctx.analysis().unwrap().look_up(dl.span)))
-                .collect_vec();
-
-            Ok(Some(locations))
-        } else {
-            Ok(None)
+        if ctx.codegen.is_none() {
+            return Ok(None);
         }
+        let codegen = ctx.codegen().unwrap();
+        let codegen = codegen.lock().unwrap();
+        let analysis = codegen.analysis();
+        let defs = analysis.find_filter(
+            params
+                .text_document_position
+                .text_document
+                .uri
+                .to_file_path()?,
+            to_line_col(&params.text_document_position.position),
+            |ty| matches!(ty, DefinitionType::Symbol(_)),
+        );
+
+        let locations = defs
+            .into_iter()
+            .map(|(_, def)| match params.context.include_declaration {
+                true => def.definition_and_usages(),
+                false => def.usages(),
+            })
+            .flatten()
+            .map(|dl| to_location(analysis.look_up(dl.span)))
+            .collect_vec();
+
+        Ok(Some(locations))
     }
 }
 
@@ -96,17 +101,20 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
         ctx: &mut LspContext,
         params: DocumentHighlightParams,
     ) -> MosResult<Option<Vec<DocumentHighlight>>> {
-        let defs = ctx
-            .analysis()
-            .map(|a| ctx.find_definitions(a, &params.text_document_position_params))
-            .unwrap_or_default();
+        if ctx.codegen.is_none() {
+            return Ok(None);
+        }
+        let codegen = ctx.codegen().unwrap();
+        let codegen = codegen.lock().unwrap();
+        let analysis = codegen.analysis();
+        let defs = ctx.find_definitions(analysis, &params.text_document_position_params);
         let highlights = defs
             .into_iter()
             .map(|(_, def)| {
                 def.definition_and_usages()
                     .into_iter()
                     .filter_map(|dl| {
-                        let loc = to_location(ctx.analysis().unwrap().look_up(dl.span));
+                        let loc = to_location(analysis.look_up(dl.span));
                         if loc.uri == params.text_document_position_params.text_document.uri {
                             Some(DocumentHighlight {
                                 range: loc.range,

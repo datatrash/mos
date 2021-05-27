@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub struct TestRunner {
-    ctx: CodegenContext,
+    ctx: Arc<Mutex<CodegenContext>>,
     ram: Arc<Mutex<BasicRam>>,
     cpu: MOS6502,
     cpu_pc_nx: SymbolIndex,
@@ -198,7 +198,7 @@ impl TestRunner {
                 .insert(cpu_flags_nx, "negative", Symbol::constant(0, 0));
 
         Ok(Self {
-            ctx,
+            ctx: Arc::new(Mutex::new(ctx)),
             ram,
             cpu,
             cpu_pc_nx,
@@ -213,6 +213,14 @@ impl TestRunner {
             cpu_flags_negative_nx,
             num_cycles: 0,
         })
+    }
+
+    pub fn cpu(&self) -> &MOS6502 {
+        &self.cpu
+    }
+
+    pub fn codegen(&self) -> Arc<Mutex<CodegenContext>> {
+        self.ctx.clone()
     }
 
     pub fn run(&mut self) -> MosResult<CycleResult> {
@@ -236,6 +244,8 @@ impl TestRunner {
         if self.cpu.get_remaining_cycles() == 0 {
             let active_assertions = self
                 .ctx
+                .lock()
+                .unwrap()
                 .assertions()
                 .iter()
                 .filter(|a| a.pc.as_u16() == self.cpu.get_program_counter())
@@ -274,19 +284,30 @@ impl TestRunner {
                     ),
                 ] {
                     self.ctx
+                        .lock()
+                        .unwrap()
                         .symbols_mut()
                         .update_data(*nx, Symbol::label(0, *value));
                 }
             }
 
             for assertion in active_assertions {
-                let eval_result = self.ctx.evaluate_expression(&assertion.expression)?;
+                let eval_result = self
+                    .ctx
+                    .lock()
+                    .unwrap()
+                    .evaluate_expression(&assertion.expression)?;
                 if eval_result == 0 {
                     let message = assertion
                         .failure_message
                         .clone()
                         .unwrap_or_else(|| format!("{}", &assertion.expression.data).trim().into());
-                    let location = self.ctx.analysis().look_up(assertion.expression.span);
+                    let location = self
+                        .ctx
+                        .lock()
+                        .unwrap()
+                        .analysis()
+                        .look_up(assertion.expression.span);
                     let failure = TestFailure {
                         location: Some(location),
                         message,
@@ -485,7 +506,8 @@ mod tests {
              }",
             idpath!("a"),
         )?;
-        let segment = runner.ctx.segments().values().next().unwrap();
+        let ctx = runner.ctx.lock().unwrap();
+        let segment = ctx.segments().values().next().unwrap();
         assert_eq!(segment.range_data(), vec![0xea, 0x60]);
         Ok(())
     }

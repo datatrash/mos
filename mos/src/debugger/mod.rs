@@ -3,6 +3,7 @@ pub mod connection;
 pub mod protocol;
 pub mod types;
 
+use crate::debugger::adapters::test_runner::TestRunnerAdapter;
 use crate::debugger::adapters::vice::ViceAdapter;
 use crate::debugger::adapters::{
     Machine, MachineAdapter, MachineBreakpoint, MachineEvent, MachineRunningState,
@@ -106,23 +107,47 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
     fn handle(&self, conn: &mut DebugSession, args: LaunchRequestArguments) -> MosResult<()> {
         conn.no_debug = args.no_debug.unwrap_or_default();
         let cfg = conn.lock_lsp().config().unwrap();
-        let asm_path = PathBuf::from(args.workspace.clone())
-            .join(PathBuf::from(cfg.build.target_directory))
-            .join(PathBuf::from(cfg.build.entry));
-        let prg_path = asm_path.with_extension("prg");
-        match ViceAdapter::launch(&args, prg_path) {
-            Ok(adapter) => {
-                conn.machine = Some(Machine::new(adapter));
+
+        let src_path = PathBuf::from(args.workspace.clone()).join(PathBuf::from(&cfg.build.entry));
+
+        let prg_path = PathBuf::from(args.workspace.clone())
+            .join(PathBuf::from(&cfg.build.target_directory))
+            .join(PathBuf::from(&cfg.build.entry))
+            .with_extension("prg");
+
+        if args.vice_path.is_some() {
+            match ViceAdapter::launch(&args, prg_path) {
+                Ok(adapter) => {
+                    conn.machine = Some(Machine::new(adapter));
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!(
+                        "Could not launch VICE. Terminating debugging session. Details: {:?}",
+                        e
+                    );
+                    Err(e)
+                }
             }
-            Err(e) => {
-                log::error!(
-                    "Could not launch machine. Terminating debugging session. Details: {:?}",
-                    e
-                );
-                return Err(e);
+        } else if args.test_runner.is_some() {
+            let source = conn.lock_lsp().parsing_source();
+            match TestRunnerAdapter::launch(&args, source, src_path) {
+                Ok(adapter) => {
+                    conn.machine = Some(Machine::new(adapter));
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!(
+                        "Could not launch test runner. Terminating debugging session. Details: {:?}",
+                        e
+                    );
+                    Err(e)
+                }
             }
+        } else {
+            log::error!("Could not launch debugging session. No emulator or test run specified.");
+            Err(MosError::Unknown)
         }
-        Ok(())
     }
 }
 
@@ -186,8 +211,10 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
         _args: StackTraceArguments,
     ) -> MosResult<StackTraceResponse> {
         let mut stack_frames = vec![];
-        if let MachineRunningState::Stopped(pc) = conn.machine_adapter()?.running_state()? {
-            if let Some(codegen) = conn.lock_lsp().codegen() {
+        let state = conn.machine_adapter()?.running_state()?;
+        if let MachineRunningState::Stopped(pc) = state {
+            if let Some(codegen) = conn.codegen().as_ref() {
+                let codegen = codegen.lock().unwrap();
                 if let Some(offset) = codegen.source_map().address_to_offset(pc) {
                     let sl = codegen.tree().code_map.look_up_span(offset.span);
 
@@ -256,8 +283,9 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
                     3 => {
                         // Locals
                         let mut result = HashMap::new();
-                        if let Some(codegen) = conn.lock_lsp().codegen() {
-                            if let Some(scope) = current_scope(&conn, codegen)? {
+                        if let Some(codegen) = conn.codegen().as_ref() {
+                            let codegen = codegen.lock().unwrap();
+                            if let Some(scope) = current_scope(&conn, &codegen)? {
                                 for (id, symbol_nx) in
                                     codegen.symbols().visible_symbols(scope, true)
                                 {
@@ -347,13 +375,21 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
                 let column = bp.column.map(|c| c - 1);
 
                 // A single location may result in multiple breakpoints
-                let pcs = match conn.lock_lsp().codegen() {
-                    Some(codegen) => codegen
-                        .source_map()
-                        .line_col_to_offsets(&codegen.tree().code_map, &source_path, line, column)
-                        .into_iter()
-                        .map(|o| ProgramCounter::new(o.pc.start)..ProgramCounter::new(o.pc.end))
-                        .collect_vec(),
+                let pcs = match conn.codegen().as_ref() {
+                    Some(codegen) => {
+                        let codegen = codegen.lock().unwrap();
+                        codegen
+                            .source_map()
+                            .line_col_to_offsets(
+                                &codegen.tree().code_map,
+                                &source_path,
+                                line,
+                                column,
+                            )
+                            .into_iter()
+                            .map(|o| ProgramCounter::new(o.pc.start)..ProgramCounter::new(o.pc.end))
+                            .collect_vec()
+                    }
                     None => vec![],
                 };
 
@@ -437,8 +473,9 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
         conn: &mut DebugSession,
         args: EvaluateArguments,
     ) -> MosResult<EvaluateResponse> {
-        if let Some(codegen) = conn.lock_lsp().codegen() {
-            if let Some(scope) = current_scope(&conn, codegen)? {
+        if let Some(codegen) = conn.codegen().as_ref() {
+            let codegen = codegen.lock().unwrap();
+            if let Some(scope) = current_scope(&conn, &codegen)? {
                 let expr_path = IdentifierPath::from(args.expression.as_str());
                 if let Some(symbol_nx) = codegen.symbols().query(scope, expr_path) {
                     if let Some(symbol) = codegen.symbols().try_get(symbol_nx) {
@@ -472,6 +509,33 @@ fn current_scope(conn: &DebugSession, codegen: &CodegenContext) -> MosResult<Opt
     Ok(None)
 }
 
+enum CodegenRef<'a> {
+    Adapter(
+        (
+            MutexGuard<'a, Box<dyn MachineAdapter + Send>>,
+            MutexGuard<'a, LspContext>,
+        ),
+    ),
+    Lsp(MutexGuard<'a, LspContext>),
+}
+
+impl<'a> CodegenRef<'a> {
+    fn as_ref(&'a self) -> Option<Arc<Mutex<CodegenContext>>> {
+        match self {
+            CodegenRef::Adapter((machine, lsp)) => {
+                match machine.codegen() {
+                    Some(c) => Some(c),
+                    None => {
+                        // machine adapter has no codegen, fall back to LSP
+                        lsp.codegen()
+                    }
+                }
+            }
+            CodegenRef::Lsp(lsp) => lsp.codegen(),
+        }
+    }
+}
+
 impl DebugSession {
     pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
         Self {
@@ -486,6 +550,14 @@ impl DebugSession {
 
     fn lock_lsp(&self) -> MutexGuard<LspContext> {
         self.lsp.lock().unwrap()
+    }
+
+    fn codegen(&self) -> CodegenRef {
+        if let Some(machine) = self.machine.as_ref() {
+            CodegenRef::Adapter((machine.adapter(), self.lock_lsp()))
+        } else {
+            CodegenRef::Lsp(self.lock_lsp())
+        }
     }
 
     fn machine_adapter(&self) -> MosResult<MutexGuard<Box<dyn MachineAdapter + Send>>> {

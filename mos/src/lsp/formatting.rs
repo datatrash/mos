@@ -36,8 +36,9 @@ impl RequestHandler<lsp_types::request::OnTypeFormatting> for OnTypeFormattingRe
 
 fn do_formatting(ctx: &mut LspContext, uri: &Url) -> Option<Vec<TextEdit>> {
     let path = uri.to_file_path().unwrap();
-    ctx.analysis().map(|analysis| {
-        let tree = analysis.tree();
+    ctx.codegen().map(|codegen| {
+        let codegen = codegen.lock().unwrap();
+        let tree = codegen.analysis().tree();
         if let Some(old_file) = tree.try_get_file(&path) {
             let old_text = old_file.file.source();
             let new_text = format(path, tree.clone(), FormattingOptions::default());

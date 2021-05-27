@@ -25,6 +25,7 @@ impl RequestHandler<PrepareRenameRequest> for PrepareRenameRequestHandler {
         params: TextDocumentPositionParams,
     ) -> MosResult<Option<PrepareRenameResponse>> {
         if let Some(codegen) = &ctx.codegen {
+            let codegen = codegen.lock().unwrap();
             if let Some(tree) = &ctx.tree {
                 let file_path = &params.text_document.uri.to_file_path().unwrap();
 
@@ -104,6 +105,7 @@ impl RequestHandler<Rename> for RenameHandler {
             Some(cg) => cg,
             None => return Ok(None),
         };
+        let mut codegen = codegen.lock().unwrap();
         let mut defs = ctx.find_definitions(codegen.analysis(), &params.text_document_position);
         if defs.is_empty() {
             return Ok(None);
@@ -114,8 +116,6 @@ impl RequestHandler<Rename> for RenameHandler {
             DefinitionType::Filename(_) => Ok(None),
             DefinitionType::Symbol(def_symbol_nx) => {
                 if let Some(location) = &def.location {
-                    let codegen = ctx.codegen_mut().unwrap();
-
                     // First, determine all the query_indices for every usage
                     let steps = def
                         .usages()
