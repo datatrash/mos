@@ -5,6 +5,7 @@ use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::{MosError, MosResult};
 use crossbeam_channel::{bounded, Receiver, TryRecvError};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
+use mos_core::parser::code_map::SpanLoc;
 use std::collections::HashMap;
 use std::io::{BufReader, ErrorKind};
 use std::net::TcpStream;
@@ -60,6 +61,10 @@ pub enum MachineEvent {
     RunningStateChanged {
         old: MachineRunningState,
         new: MachineRunningState,
+    },
+    Message {
+        output: String,
+        location: Option<SpanLoc>,
     },
     Disconnected,
 }

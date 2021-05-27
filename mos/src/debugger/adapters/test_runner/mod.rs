@@ -4,7 +4,9 @@ use crate::debugger::adapters::{
 };
 use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::MosResult;
-use crate::test_runner::TestRunner;
+use crate::test_runner::{ExecuteResult, TestRunner};
+use crate::utils::paint;
+use ansi_term::Colour;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
 use mos_core::parser::source::ParsingSource;
@@ -28,6 +30,7 @@ pub struct TestRunnerAdapter {
 
 impl TestRunnerAdapter {
     pub fn new<P: Into<PathBuf>>(
+        no_debug: bool,
         parsing_source: Arc<Mutex<dyn ParsingSource>>,
         source_path: P,
         test_case_path: &IdentifierPath,
@@ -48,6 +51,7 @@ impl TestRunnerAdapter {
         let thread_runner = runner.clone();
         let thread_breakpoints = breakpoints.clone();
         let thread_sender = event_sender.clone();
+        let thread_test_case_path = test_case_path.clone();
         thread::spawn(move || {
             let mut last_checked_pc = None;
             while thread_is_connected.load(Ordering::Relaxed) {
@@ -60,7 +64,7 @@ impl TestRunnerAdapter {
                         let mut runner = thread_runner.lock().unwrap();
 
                         let pc = ProgramCounter::new(runner.cpu().get_program_counter() as usize);
-                        if last_checked_pc != Some(pc) {
+                        if last_checked_pc != Some(pc) && !no_debug {
                             last_checked_pc = Some(pc);
                             let bps = thread_breakpoints.lock().unwrap();
                             if bps
@@ -79,12 +83,54 @@ impl TestRunnerAdapter {
                         }
 
                         match runner.execute_instruction() {
-                            Ok(_) => {
+                            Ok(result) => {
                                 // Give rest of core a chance to do something
                                 thread::sleep(Duration::from_millis(0));
+
+                                match result {
+                                    ExecuteResult::Running => {}
+                                    ExecuteResult::TestFailed(cycles, failure) => {
+                                        let _ = thread_sender.send(MachineEvent::Message {
+                                            output: format!(
+                                                "test {} {} {}: {}\n{}",
+                                                thread_test_case_path,
+                                                paint(true, Colour::Red, "FAILED"),
+                                                paint(
+                                                    true,
+                                                    Colour::Yellow,
+                                                    format!("({} cycles)", cycles)
+                                                ),
+                                                failure.message,
+                                                failure.format_cpu_details(true)
+                                            ),
+                                            location: failure.location,
+                                        });
+                                        let _ = thread_sender.send(MachineEvent::Disconnected);
+                                        thread_is_connected.store(false, Ordering::Relaxed);
+                                    }
+                                    ExecuteResult::TestSuccess(cycles) => {
+                                        let _ = thread_sender.send(MachineEvent::Message {
+                                            output: format!(
+                                                "test {} {} {}",
+                                                thread_test_case_path,
+                                                paint(true, Colour::Green, "ok"),
+                                                paint(
+                                                    true,
+                                                    Colour::Yellow,
+                                                    format!("({} cycles)", cycles)
+                                                )
+                                            ),
+                                            location: None,
+                                        });
+                                        let _ = thread_sender.send(MachineEvent::Disconnected);
+                                        thread_is_connected.store(false, Ordering::Relaxed);
+                                    }
+                                }
                             }
-                            Err(_e) => {
-                                // Do something
+                            Err(e) => {
+                                log::error!("Error when executing instructions: {}", e);
+                                let _ = thread_sender.send(MachineEvent::Disconnected);
+                                thread_is_connected.store(false, Ordering::Relaxed);
                             }
                         }
                     }
@@ -105,14 +151,16 @@ impl TestRunnerAdapter {
     }
 
     pub fn launch<P: Into<PathBuf>>(
-        _launch_args: &LaunchRequestArguments,
+        launch_args: &LaunchRequestArguments,
         parsing_source: Arc<Mutex<dyn ParsingSource>>,
         source_path: P,
+        test_case_path: &IdentifierPath,
     ) -> MosResult<Box<dyn MachineAdapter + Send>> {
         Ok(Box::new(Self::new(
+            launch_args.no_debug.unwrap_or_default(),
             parsing_source,
             source_path,
-            &mos_core::idpath!("stack_pointer"),
+            test_case_path,
         )?))
     }
 
@@ -243,7 +291,7 @@ mod tests {
         let source = InMemoryParsingSource::new()
             .add("test.asm", ".test a {\nnop\nnop\n}")
             .into();
-        let mut adapter = TestRunnerAdapter::new(source, "test.asm", &idpath!("a"))?;
+        let mut adapter = TestRunnerAdapter::new(false, source, "test.asm", &idpath!("a"))?;
         adapter.set_breakpoints(
             "test.asm",
             vec![MachineBreakpoint {

@@ -1,4 +1,6 @@
 use crate::errors::{MosError, MosResult};
+use crate::utils::paint;
+use ansi_term::Colour;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
@@ -45,6 +47,54 @@ pub struct TestFailure {
     pub message: String,
     pub assertion: Option<Assertion>,
     pub cpu: MOS6502,
+}
+
+impl TestFailure {
+    pub fn format_cpu_details(&self, use_color: bool) -> String {
+        let flags = self.cpu.get_status_register();
+        let fmt = |f: char, b: u8| if b != 0 { f } else { '-' };
+        let flags = vec![
+            fmt('N', flags & 128),
+            fmt('V', flags & 64),
+            '-',
+            fmt('B', flags & 16),
+            fmt('D', flags & 8),
+            fmt('I', flags & 4),
+            fmt('Z', flags & 2),
+            fmt('C', flags & 1),
+        ];
+        let flags: String = flags.into_iter().collect();
+
+        format!(
+            "PC = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
+            paint(
+                use_color,
+                Colour::Yellow,
+                format!("${:04X}", self.cpu.get_program_counter())
+            ),
+            paint(
+                use_color,
+                Colour::Yellow,
+                format!("${:04X}", self.cpu.get_stack_pointer())
+            ),
+            paint(use_color, Colour::Yellow, flags),
+            paint(
+                use_color,
+                Colour::Yellow,
+                format!("${:02X}", self.cpu.get_accumulator())
+            ),
+            paint(
+                use_color,
+                Colour::Yellow,
+                format!("${:02X}", self.cpu.get_x_register())
+            ),
+            paint(
+                use_color,
+                Colour::Yellow,
+                format!("${:02X}", self.cpu.get_y_register())
+            )
+        )
+    }
 }
 
 pub fn enumerate_test_cases(

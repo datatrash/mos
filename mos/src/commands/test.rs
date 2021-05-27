@@ -1,7 +1,7 @@
-use crate::commands::paint;
 use crate::config::Config;
 use crate::errors::MosResult;
 use crate::test_runner::{enumerate_test_cases, ExecuteResult, TestRunner};
+use crate::utils::paint;
 use ansi_term::Colour;
 use clap::App;
 use mos_core::errors::span_loc_to_error_string;
@@ -91,20 +91,6 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
         log::info!("failed tests:");
         log::info!("");
         for (failed_test_name, failure) in &failed {
-            let flags = failure.cpu.get_status_register();
-            let fmt = |f: char, b: u8| if b != 0 { f } else { '-' };
-            let flags = vec![
-                fmt('N', flags & 128),
-                fmt('V', flags & 64),
-                '-',
-                fmt('B', flags & 16),
-                fmt('D', flags & 8),
-                fmt('I', flags & 4),
-                fmt('Z', flags & 2),
-                fmt('C', flags & 1),
-            ];
-            let flags: String = flags.into_iter().collect();
-
             let location = failure
                 .location
                 .as_ref()
@@ -122,35 +108,7 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
                     format!("{}assertion failed: '{}'", location, failure.message)
                 )
             );
-            log::info!(
-                "PC = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
-                paint(
-                    use_color,
-                    Colour::Yellow,
-                    format!("${:04X}", failure.cpu.get_program_counter())
-                ),
-                paint(
-                    use_color,
-                    Colour::Yellow,
-                    format!("${:04X}", failure.cpu.get_stack_pointer())
-                ),
-                paint(use_color, Colour::Yellow, flags),
-                paint(
-                    use_color,
-                    Colour::Yellow,
-                    format!("${:02X}", failure.cpu.get_accumulator())
-                ),
-                paint(
-                    use_color,
-                    Colour::Yellow,
-                    format!("${:02X}", failure.cpu.get_x_register())
-                ),
-                paint(
-                    use_color,
-                    Colour::Yellow,
-                    format!("${:02X}", failure.cpu.get_y_register())
-                )
-            );
+            log::info!("{}", failure.format_cpu_details(use_color));
         }
         log::info!("");
         log::info!("failed test summary:");

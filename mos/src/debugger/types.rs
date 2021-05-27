@@ -23,6 +23,27 @@ impl Event for TerminatedEvent {
     const EVENT: &'static str = "terminated";
 }
 
+pub struct OutputEvent {}
+
+impl Event for OutputEvent {
+    type Body = OutputEventArguments;
+    const EVENT: &'static str = "output";
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputEventArguments {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    pub output: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+}
+
 pub struct StoppedEvent {}
 
 impl Event for StoppedEvent {
@@ -101,9 +122,9 @@ pub struct InitializeRequestArguments {
     #[serde(rename = "clientID")]
     pub client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub lines_start_at1: Option<bool>,
+    pub lines_start_at_1: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub columns_start_at1: Option<bool>,
+    pub columns_start_at_1: Option<bool>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]

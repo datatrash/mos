@@ -78,6 +78,8 @@ pub struct DebugSession {
     conn: Option<Arc<DebugConnection>>,
     pending_events: Vec<ProtocolMessage>,
     no_debug: bool,
+    lines_start_at_1: bool,
+    columns_start_at_1: bool,
 }
 
 trait Handler<R: Request> {
@@ -90,8 +92,10 @@ impl Handler<InitializeRequest> for InitializeRequestHandler {
     fn handle(
         &self,
         conn: &mut DebugSession,
-        _args: InitializeRequestArguments,
+        args: InitializeRequestArguments,
     ) -> MosResult<Capabilities> {
+        conn.lines_start_at_1 = args.lines_start_at_1.unwrap_or_default();
+        conn.columns_start_at_1 = args.columns_start_at_1.unwrap_or_default();
         conn.enqueue_event::<InitializedEvent>(());
         Ok(Capabilities {
             supports_configuration_done_request: Some(true),
@@ -131,7 +135,7 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
             }
         } else if args.test_runner.is_some() {
             let source = conn.lock_lsp().parsing_source();
-            match TestRunnerAdapter::launch(&args, source, src_path) {
+            match TestRunnerAdapter::launch(&args, source, src_path, &"stack_pointer".into()) {
                 Ok(adapter) => {
                     conn.machine = Some(Machine::new(adapter));
                     Ok(())
@@ -219,11 +223,10 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
                     let sl = codegen.tree().code_map.look_up_span(offset.span);
 
                     let mut frame = StackFrame::new(1, "Stack frame");
-                    // TODO: Deal with 0/1 offset
-                    frame.line = sl.begin.line + 1;
-                    frame.column = sl.begin.column + 1;
-                    frame.end_line = Some(sl.end.line + 1);
-                    frame.end_column = Some(sl.end.column + 1);
+                    frame.line = conn.line(sl.begin.line);
+                    frame.column = conn.column(sl.begin.column);
+                    frame.end_line = Some(conn.line(sl.end.line));
+                    frame.end_column = Some(conn.column(sl.end.column));
                     frame.source = Some(Source {
                         path: Some(sl.file.name().into()),
                         ..Default::default()
@@ -372,8 +375,14 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
             .unwrap_or_default()
             .into_iter()
             .map(|bp| {
-                let line = bp.line - 1; // TODO: deal with this properly
-                let column = bp.column.map(|c| c - 1);
+                let line = if conn.lines_start_at_1 {
+                    bp.line - 1
+                } else {
+                    bp.line
+                };
+                let column = bp
+                    .column
+                    .map(|c| if conn.columns_start_at_1 { c - 1 } else { c });
 
                 // A single location may result in multiple breakpoints
                 let pcs = match conn.codegen().as_ref() {
@@ -418,8 +427,8 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
                 let mut b = Breakpoint::new(true);
                 b.id = Some(mvb.id);
                 b.verified = true;
-                b.line = Some(mvb.requested.line + 1);
-                b.column = mvb.requested.column.map(|c| c + 1);
+                b.line = Some(conn.line(mvb.requested.line));
+                b.column = mvb.requested.column.map(|c| conn.column(c));
                 b.source = Some(source.clone());
                 b
             })
@@ -550,6 +559,24 @@ impl DebugSession {
             conn: None,
             pending_events: vec![],
             no_debug: false,
+            lines_start_at_1: false,
+            columns_start_at_1: false,
+        }
+    }
+
+    fn line(&self, line: usize) -> usize {
+        if self.lines_start_at_1 {
+            line + 1
+        } else {
+            line
+        }
+    }
+
+    fn column(&self, column: usize) -> usize {
+        if self.columns_start_at_1 {
+            column + 1
+        } else {
+            column
         }
     }
 
@@ -731,6 +758,18 @@ impl DebugSession {
                     panic!("Should never receive any machine events during launch.");
                 }
             },
+            MachineEvent::Message { output, location } => {
+                self.enqueue_event::<OutputEvent>(OutputEventArguments {
+                    category: Some("stdout".into()),
+                    output,
+                    source: location.as_ref().map(|sl| Source {
+                        path: Some(sl.file.name().into()),
+                        ..Default::default()
+                    }),
+                    line: location.as_ref().map(|sl| self.line(sl.begin.line)),
+                    column: location.as_ref().map(|sl| self.column(sl.begin.column)),
+                });
+            }
             MachineEvent::Disconnected => {
                 self.enqueue_event::<TerminatedEvent>(());
             }

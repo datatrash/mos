@@ -23,6 +23,8 @@ mod errors;
 mod lsp;
 /// Unit Test runner
 mod test_runner;
+/// Miscellaneous utility methods
+mod utils;
 
 fn get_app() -> App<'static> {
     App::new("mos")
