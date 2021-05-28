@@ -14,6 +14,7 @@ import {
 } from "vscode";
 import * as net from "net";
 import {AddressInfo} from "net";
+import {RunAllTestsTaskProvider} from "./run-all-tests-task-provider";
 
 let client: LanguageClient;
 
@@ -33,6 +34,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
     let debugAdapterPort = await findFreePort();
 
     disposables.push(vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state)));
+    disposables.push(vscode.tasks.registerTaskProvider("run all tests", new RunAllTestsTaskProvider(state)));
     disposables.push(vscode.commands.registerCommand("mos.runSingleTest", testRunnerCommandFactory(true)));
     disposables.push(vscode.commands.registerCommand("mos.debugSingleTest", testRunnerCommandFactory(false)));
 

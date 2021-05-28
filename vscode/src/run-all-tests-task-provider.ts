@@ -1,12 +1,9 @@
 import * as vscode from "vscode";
 import {TaskGroup} from "vscode";
 import {State} from "./extension";
+import {MosTaskDefinition} from "./build-task-provider";
 
-export interface MosTaskDefinition extends vscode.TaskDefinition {
-    type: string
-}
-
-export class BuildTaskProvider implements vscode.TaskProvider {
+export class RunAllTestsTaskProvider implements vscode.TaskProvider {
     private state: State;
 
     constructor(state: State) {
@@ -15,11 +12,11 @@ export class BuildTaskProvider implements vscode.TaskProvider {
 
     public provideTasks(): vscode.Task[] {
         const definition: MosTaskDefinition = {
-            type: "build"
+            type: "shell"
         };
-        const exec = new vscode.ShellExecution(this.state.mosPath, ['build']);
-        const task = new vscode.Task(definition, this.state.workspaceFolder, "Build", "mos", exec, ['$mos']);
-        task.group = TaskGroup.Build;
+        const exec = new vscode.ShellExecution(this.state.mosPath, ['test']);
+        const task = new vscode.Task(definition, this.state.workspaceFolder, "Run all tests", "mos", exec, ['$mos']);
+        task.group = TaskGroup.Test;
         return [task];
     }
 

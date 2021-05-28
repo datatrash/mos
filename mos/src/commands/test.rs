@@ -105,7 +105,7 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
                 paint(
                     use_color,
                     Colour::Red,
-                    format!("{}assertion failed: '{}'", location, failure.message)
+                    format!("{}error: assertion failed: '{}'", location, failure.message)
                 )
             );
             log::info!("{}", failure.format_cpu_details(use_color));
