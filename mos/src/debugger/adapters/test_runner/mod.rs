@@ -4,7 +4,7 @@ use crate::debugger::adapters::{
 };
 use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::MosResult;
-use crate::test_runner::{ExecuteResult, TestRunner};
+use crate::test_runner::{format_cpu_details, ExecuteResult, TestRunner};
 use crate::utils::paint;
 use ansi_term::Colour;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -101,7 +101,7 @@ impl TestRunnerAdapter {
                                                     format!("({} cycles)", cycles)
                                                 ),
                                                 failure.message,
-                                                failure.format_cpu_details(true)
+                                                format_cpu_details(&failure.cpu, true)
                                             ),
                                             location: failure.location,
                                         });

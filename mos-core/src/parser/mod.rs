@@ -824,6 +824,32 @@ fn assert(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
+/// Tries to parse an trace directive, of the form `.trace`
+fn trace(input: LocatedSpan) -> IResult<Token> {
+    map_once(
+        tuple((
+            mws(tag_no_case(".trace")),
+            opt(tuple((
+                ws(char('(')),
+                opt(expression_arg_list),
+                ws(char(')')),
+            ))),
+        )),
+        move |(tag, optional_args)| {
+            let tag = tag.map_into(|_| ".trace".to_string());
+            let lparen = optional_args.as_ref().map(|args| args.0.clone());
+            let args = optional_args.as_ref().map(|args| args.1.clone()).flatten();
+            let rparen = optional_args.map(|args| args.2);
+            Token::Trace {
+                tag,
+                lparen,
+                args: args.unwrap_or_default(),
+                rparen,
+            }
+        },
+    )(input)
+}
+
 /// Tries to parse all valid statement types
 fn statement(input: LocatedSpan) -> IResult<Token> {
     alt((
@@ -846,6 +872,7 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
         file,
         test,
         assert,
+        trace,
     ))(input)
 }
 
@@ -1409,6 +1436,12 @@ mod test {
             "   .assert   1 == 2   \"wat\"",
             "   .ASSERT   1 == 2   \"wat\"",
         );
+    }
+
+    #[test]
+    fn trace() {
+        check("   .trace", "   .TRACE");
+        check("   .trace  ( 1,  2)", "   .TRACE  ( 1,  2)");
     }
 
     #[test]

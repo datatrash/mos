@@ -639,6 +639,12 @@ pub enum Token {
         encoding: Option<Located<TextEncoding>>,
         text: QuotedString,
     },
+    Trace {
+        tag: Located<String>,
+        lparen: Option<Located<char>>,
+        args: Vec<ArgItem<Expression>>,
+        rparen: Option<Located<char>>,
+    },
     VariableDefinition {
         ty: Located<VariableType>,
         id: Located<Identifier>,
@@ -687,6 +693,7 @@ impl Token {
             Token::Segment { tag, .. } => &tag.trivia,
             Token::Test { tag, .. } => &tag.trivia,
             Token::Text { tag, .. } => &tag.trivia,
+            Token::Trace { tag, .. } => &tag.trivia,
             Token::VariableDefinition { ty, .. } => &ty.trivia,
         };
 
@@ -1101,6 +1108,30 @@ impl Display for Token {
                         .map(|t| format!("{}", t).to_uppercase())
                         .unwrap_or_default(),
                     text,
+                )
+            }
+            Token::Trace {
+                tag,
+                lparen,
+                args,
+                rparen,
+            } => {
+                let lparen = match lparen {
+                    Some(s) => format!("{}", s),
+                    None => "".to_string(),
+                };
+                let rparen = match rparen {
+                    Some(s) => format!("{}", s),
+                    None => "".to_string(),
+                };
+
+                write!(
+                    f,
+                    "{}{}{}{}",
+                    tag.map(|t| t.to_uppercase()),
+                    lparen,
+                    format_arglist(&args),
+                    rparen
                 )
             }
             Token::VariableDefinition { ty, id, eq, value } => {

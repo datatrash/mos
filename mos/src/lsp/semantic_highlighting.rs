@@ -351,6 +351,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         }
         Token::Test { tag: _, id, block } => b.identifier(id).block(block),
         Token::Text { tag: _, text, .. } => b.push(&text.text, TokenType::Constant),
+        Token::Trace { args, .. } => b.expression_args(args),
         Token::VariableDefinition { ty, id, value, .. } => {
             let token_type = match &ty.data {
                 VariableType::Constant => TokenType::Constant,

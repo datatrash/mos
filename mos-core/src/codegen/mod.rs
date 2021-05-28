@@ -19,9 +19,9 @@ use crate::codegen::text_encoding::encode_text;
 use crate::errors::{CoreError, CoreResult};
 use crate::parser::code_map::Span;
 use crate::parser::{
-    AddressModifier, AddressingMode, DataSize, Expression, ExpressionFactor, ExpressionFactorFlags,
-    Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree, TextEncoding, Token,
-    VariableType,
+    AddressModifier, AddressingMode, ArgItem, DataSize, Expression, ExpressionFactor,
+    ExpressionFactorFlags, Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree,
+    TextEncoding, Token, VariableType,
 };
 use fs_err as fs;
 use itertools::Itertools;
@@ -238,7 +238,7 @@ pub struct CodegenContext {
     current_scope: IdentifierPath,
     current_scope_nx: SymbolIndex,
 
-    assertions: Vec<Assertion>,
+    test_elements: Vec<TestElement>,
 
     source_map: SourceMap,
 }
@@ -251,10 +251,23 @@ pub struct UndefinedSymbol {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum TestElement {
+    Assertion(Assertion),
+    Trace(Trace),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Assertion {
     pub pc: ProgramCounter,
     pub expression: Located<Expression>,
     pub failure_message: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trace {
+    pub pc: ProgramCounter,
+    pub args: Vec<ArgItem<Expression>>,
+    pub evaluated: Vec<i64>,
 }
 
 impl CodegenContext {
@@ -274,7 +287,7 @@ impl CodegenContext {
             suppress_undefined_symbol_registration: false,
             current_scope: IdentifierPath::empty(),
             current_scope_nx: SymbolIndex::new(0),
-            assertions: vec![],
+            test_elements: vec![],
             source_map: SourceMap::default(),
         }
     }
@@ -299,8 +312,8 @@ impl CodegenContext {
         &self.tree
     }
 
-    pub fn assertions(&self) -> &[Assertion] {
-        &self.assertions
+    pub fn test_elements(&self) -> &[TestElement] {
+        &self.test_elements
     }
 
     pub fn source_map(&self) -> &SourceMap {
@@ -347,7 +360,7 @@ impl CodegenContext {
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
         self.undefined.lock().unwrap().clear();
-        self.assertions.clear();
+        self.test_elements.clear();
         self.source_map.clear();
     }
 
@@ -571,11 +584,11 @@ impl CodegenContext {
                 ..
             } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    self.assertions.push(Assertion {
+                    self.test_elements.push(TestElement::Assertion(Assertion {
                         pc,
                         expression: value.clone(),
                         failure_message: failure_message.as_ref().map(|f| f.text.data.clone()),
-                    });
+                    }));
                 }
             }
             Token::Braces { block, scope } => {
@@ -975,6 +988,26 @@ impl CodegenContext {
                     .map(|e| e.data)
                     .unwrap_or(TextEncoding::Ascii);
                 self.emit(text.text.span, &encode_text(&text.text.data, encoding))?;
+            }
+            Token::Trace { args, .. } => {
+                if let Some(pc) = self.try_current_target_pc() {
+                    // Try to evaluate arguments already, in case they are only temporarily available
+                    let evaluated = args
+                        .iter()
+                        .map(|(expr, _)| {
+                            self.with_suppressed_undefined_registration(|s| {
+                                s.evaluate_expression(expr)
+                            })
+                            .unwrap_or(0)
+                        })
+                        .collect_vec();
+
+                    self.test_elements.push(TestElement::Trace(Trace {
+                        pc,
+                        args: args.clone(),
+                        evaluated,
+                    }));
+                }
             }
             Token::VariableDefinition { ty, id, value, .. } => {
                 let value = self.evaluate_expression(&value)?;

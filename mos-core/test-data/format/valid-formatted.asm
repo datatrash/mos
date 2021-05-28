@@ -73,3 +73,4 @@
 
                     .assert 1 == 2
                     .assert 1 == 2 "oh snap"
+                    .trace (cpu.pc)

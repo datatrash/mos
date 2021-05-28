@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::errors::MosResult;
-use crate::test_runner::{enumerate_test_cases, ExecuteResult, TestRunner};
+use crate::test_runner::{enumerate_test_cases, format_cpu_details, ExecuteResult, TestRunner};
 use crate::utils::paint;
 use ansi_term::Colour;
 use clap::App;
@@ -108,7 +108,13 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
                     format!("{}error: assertion failed: '{}'", location, failure.message)
                 )
             );
-            log::info!("{}", failure.format_cpu_details(use_color));
+            log::info!("{}", format_cpu_details(&failure.cpu, use_color));
+            if !failure.traces.is_empty() {
+                log::info!("traces:");
+                for trace in &failure.traces {
+                    log::info!("- {}", &trace);
+                }
+            }
         }
         log::info!("");
         log::info!("failed test summary:");

@@ -5,6 +5,7 @@ use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
     codegen, Assertion, CodegenContext, CodegenOptions, FunctionCallback, SymbolIndex, SymbolType,
+    TestElement, Trace,
 };
 use mos_core::errors::CoreResult;
 use mos_core::parser;
@@ -12,6 +13,7 @@ use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
 use mos_core::parser::{Expression, IdentifierPath, Located};
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -32,6 +34,7 @@ pub struct TestRunner {
     cpu_flags_overflow_nx: SymbolIndex,
     cpu_flags_negative_nx: SymbolIndex,
     num_cycles: usize,
+    formatted_traces: Vec<FormattedTrace>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -47,54 +50,62 @@ pub struct TestFailure {
     pub message: String,
     pub assertion: Option<Assertion>,
     pub cpu: MOS6502,
+    pub traces: Vec<FormattedTrace>,
 }
 
-impl TestFailure {
-    pub fn format_cpu_details(&self, use_color: bool) -> String {
-        let flags = self.cpu.get_status_register();
-        let fmt = |f: char, b: u8| if b != 0 { f } else { '-' };
-        let flags = vec![
-            fmt('N', flags & 128),
-            fmt('V', flags & 64),
-            '-',
-            fmt('B', flags & 16),
-            fmt('D', flags & 8),
-            fmt('I', flags & 4),
-            fmt('Z', flags & 2),
-            fmt('C', flags & 1),
-        ];
-        let flags: String = flags.into_iter().collect();
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormattedTrace(String);
 
-        format!(
-            "PC = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
-            paint(
-                use_color,
-                Colour::Yellow,
-                format!("${:04X}", self.cpu.get_program_counter())
-            ),
-            paint(
-                use_color,
-                Colour::Yellow,
-                format!("${:04X}", self.cpu.get_stack_pointer())
-            ),
-            paint(use_color, Colour::Yellow, flags),
-            paint(
-                use_color,
-                Colour::Yellow,
-                format!("${:02X}", self.cpu.get_accumulator())
-            ),
-            paint(
-                use_color,
-                Colour::Yellow,
-                format!("${:02X}", self.cpu.get_x_register())
-            ),
-            paint(
-                use_color,
-                Colour::Yellow,
-                format!("${:02X}", self.cpu.get_y_register())
-            )
-        )
+impl Display for FormattedTrace {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
+}
+
+pub fn format_cpu_details(cpu: &MOS6502, use_color: bool) -> String {
+    let flags = cpu.get_status_register();
+    let fmt = |f: char, b: u8| if b != 0 { f } else { '-' };
+    let flags = vec![
+        fmt('N', flags & 128),
+        fmt('V', flags & 64),
+        '-',
+        fmt('B', flags & 16),
+        fmt('D', flags & 8),
+        fmt('I', flags & 4),
+        fmt('Z', flags & 2),
+        fmt('C', flags & 1),
+    ];
+    let flags: String = flags.into_iter().collect();
+
+    format!(
+        "PC = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
+        paint(
+            use_color,
+            Colour::Yellow,
+            format!("${:04X}", cpu.get_program_counter())
+        ),
+        paint(
+            use_color,
+            Colour::Yellow,
+            format!("${:02X}", cpu.get_stack_pointer())
+        ),
+        paint(use_color, Colour::Yellow, flags),
+        paint(
+            use_color,
+            Colour::Yellow,
+            format!("${:02X}", cpu.get_accumulator())
+        ),
+        paint(
+            use_color,
+            Colour::Yellow,
+            format!("${:02X}", cpu.get_x_register())
+        ),
+        paint(
+            use_color,
+            Colour::Yellow,
+            format!("${:02X}", cpu.get_y_register())
+        )
+    )
 }
 
 pub fn enumerate_test_cases(
@@ -273,6 +284,7 @@ impl TestRunner {
             cpu_flags_overflow_nx,
             cpu_flags_negative_nx,
             num_cycles: 0,
+            formatted_traces: vec![],
         })
     }
 
@@ -305,18 +317,21 @@ impl TestRunner {
             self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize]
         );
 
-        // Check assertions
-        let active_assertions = self
+        // Check active elements
+        let active_elements = self
             .ctx
             .lock()
             .unwrap()
-            .assertions()
+            .test_elements()
             .iter()
-            .filter(|a| a.pc.as_u16() == self.cpu.get_program_counter())
+            .filter(|a| match a {
+                TestElement::Assertion(e) => e.pc.as_u16() == self.cpu.get_program_counter(),
+                TestElement::Trace(e) => e.pc.as_u16() == self.cpu.get_program_counter(),
+            })
             .cloned()
             .collect_vec();
 
-        if !active_assertions.is_empty() {
+        if !active_elements.is_empty() {
             for (nx, value) in &[
                 (self.cpu_pc_nx, self.cpu.get_program_counter() as i64),
                 (self.cpu_sp_nx, self.cpu.get_stack_pointer() as i64),
@@ -354,6 +369,36 @@ impl TestRunner {
             }
         }
 
+        let active_traces = active_elements
+            .iter()
+            .filter_map(|e| {
+                if let TestElement::Trace(t) = e {
+                    Some(t)
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        let active_assertions = active_elements
+            .iter()
+            .filter_map(|e| {
+                if let TestElement::Assertion(a) = e {
+                    Some(a)
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        for trace in active_traces {
+            let fmt = match trace.args.is_empty() {
+                true => format_cpu_details(&self.cpu, false),
+                false => format_trace(trace, self.ctx.lock().unwrap().deref_mut())?,
+            };
+            self.formatted_traces.push(FormattedTrace(fmt));
+        }
+
         for assertion in active_assertions {
             let eval_result = self
                 .ctx
@@ -374,8 +419,9 @@ impl TestRunner {
                 let failure = TestFailure {
                     location: Some(location),
                     message,
-                    assertion: Some(assertion),
+                    assertion: Some(assertion.clone()),
                     cpu: self.cpu.clone(),
+                    traces: self.formatted_traces.clone(),
                 };
                 return Ok(ExecuteResult::TestFailed(
                     self.num_cycles,
@@ -447,6 +493,28 @@ impl TestRunner {
             }
         }
     }
+}
+
+fn format_trace(trace: &Trace, ctx: &mut CodegenContext) -> MosResult<String> {
+    let mut eval = vec![];
+    let mut evaluated_during_codegen = trace.evaluated.clone();
+    for (expr, _) in &trace.args {
+        let mut value = ctx.evaluate_expression(expr)?;
+
+        let previously_evaluated = evaluated_during_codegen.remove(0);
+        if value == 0 {
+            // Symbol is maybe not found, let's see if it was already evaluated during codegen
+            value = previously_evaluated;
+        }
+
+        let value = if value < 256 {
+            format!("${:02X}", value)
+        } else {
+            format!("${:04X}", value)
+        };
+        eval.push(format!("{} = {}", &expr.data, value));
+    }
+    Ok(eval.join(", "))
 }
 
 fn generate(
@@ -665,6 +733,33 @@ mod tests {
     fn failing_assertion_without_message() -> MosResult<()> {
         let mut runner = get_runner(".test a {\nnop\n.assert 1 == 2\nbrk\n}", idpath!("a"))?;
         assert_eq!(runner.run()?.as_failure().message, "1 == 2");
+        Ok(())
+    }
+
+    #[test]
+    fn trace_formatting() -> MosResult<()> {
+        let mut runner = get_runner(
+            r#"
+        .test a {
+            .trace
+            .trace (cpu.pc, cpu.sp)
+            .loop 2 { .trace (index) }
+            .assert 1 == 2
+        }
+        "#,
+            idpath!("a"),
+        )?;
+        assert_eq!(
+            runner.run()?.as_failure().traces,
+            vec![
+                FormattedTrace(
+                    "PC = $2000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
+                ),
+                FormattedTrace("cpu.pc = $2000, cpu.sp = $FD".into()),
+                FormattedTrace("index = $00".into()),
+                FormattedTrace("index = $01".into()),
+            ]
+        );
         Ok(())
     }
 

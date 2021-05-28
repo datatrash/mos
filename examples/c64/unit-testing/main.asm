@@ -16,9 +16,14 @@
                     }
 
                     .test will_fail {
+                        .loop 8 {
+                            .trace (index, cpu.pc, ram($2000))
+                        }
+                        .trace
                         .assert cpu.pc == $1234
 
-                        brk
+                        // will never be reached
+                        nop
                     }
 
                     .test will_succeed {
