@@ -119,21 +119,7 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
             .join(PathBuf::from(&cfg.build.entry))
             .with_extension("prg");
 
-        if args.vice_path.is_some() {
-            match ViceAdapter::launch(&args, prg_path) {
-                Ok(adapter) => {
-                    conn.machine = Some(Machine::new(adapter));
-                    Ok(())
-                }
-                Err(e) => {
-                    log::error!(
-                        "Could not launch VICE. Terminating debugging session. Details: {:?}",
-                        e
-                    );
-                    Err(e)
-                }
-            }
-        } else if let Some(tr) = &args.test_runner {
+        if let Some(tr) = &args.test_runner {
             let source = conn.lock_lsp().parsing_source();
             match TestRunnerAdapter::launch(
                 &args,
@@ -148,6 +134,20 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
                 Err(e) => {
                     log::error!(
                         "Could not launch test runner. Terminating debugging session. Details: {:?}",
+                        e
+                    );
+                    Err(e)
+                }
+            }
+        } else if args.vice_path.is_some() {
+            match ViceAdapter::launch(&args, prg_path) {
+                Ok(adapter) => {
+                    conn.machine = Some(Machine::new(adapter));
+                    Ok(())
+                }
+                Err(e) => {
+                    log::error!(
+                        "Could not launch VICE. Terminating debugging session. Details: {:?}",
                         e
                     );
                     Err(e)

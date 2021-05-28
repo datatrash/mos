@@ -68,7 +68,7 @@ function testRunnerCommandFactory(noDebug: boolean): Cmd {
         await vscode.debug.startDebugging(workspaceFolder, {
             type: "mos",
             request: "launch",
-            name: "Launch",
+            name: `Test ${test_name}`,
             workspace: workspaceFolder.uri.path,
             noDebug,
             testRunner: {
