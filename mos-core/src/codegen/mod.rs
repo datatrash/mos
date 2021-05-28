@@ -1021,11 +1021,7 @@ impl CodegenContext {
                         let val = self.with_suppressed_undefined_registration(|s| {
                             s.evaluate_expression(expr)
                         });
-                        if let Ok(Some(v)) = val {
-                            evaluated.push(Some(v));
-                        } else {
-                            evaluated.push(None);
-                        }
+                        evaluated.push(val.ok().flatten());
                     }
 
                     self.test_elements.push(TestElement::Trace(Trace {

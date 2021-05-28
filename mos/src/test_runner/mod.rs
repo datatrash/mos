@@ -637,6 +637,23 @@ mod tests {
     }
 
     #[test]
+    fn use_index_in_assertions() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                .loop 2 {
+                    .assert cpu.pc == $2000 + index
+                    nop
+                 }
+                 brk
+             }",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(4));
+        Ok(())
+    }
+
+    #[test]
     fn use_registers_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
             r"
