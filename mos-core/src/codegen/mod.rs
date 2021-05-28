@@ -1020,8 +1020,12 @@ impl CodegenContext {
                     for (expr, _) in args {
                         let val = self.with_suppressed_undefined_registration(|s| {
                             s.evaluate_expression(expr)
-                        })?;
-                        evaluated.push(val);
+                        });
+                        if let Ok(Some(v)) = val {
+                            evaluated.push(Some(v));
+                        } else {
+                            evaluated.push(None);
+                        }
                     }
 
                     self.test_elements.push(TestElement::Trace(Trace {

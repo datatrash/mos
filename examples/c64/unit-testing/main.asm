@@ -16,7 +16,7 @@
                     }
 
                     .test will_fail {
-                        .loop 8 {
+                        .loop 2 {
                             .trace (index, cpu.pc, ram($2000))
                         }
                         .trace

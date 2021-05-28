@@ -751,7 +751,7 @@ mod tests {
             r#"
         .test a {
             .trace
-            .trace (cpu.pc, cpu.sp, foo)
+            .trace (cpu.pc, cpu.sp, foo, ram($2000))
             .loop 2 { .trace (index) }
             .assert 1 == 2
         }
@@ -764,7 +764,9 @@ mod tests {
                 FormattedTrace(
                     "PC = $2000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
                 ),
-                FormattedTrace("cpu.pc = $2000, cpu.sp = $FD, foo = <unknown>".into()),
+                FormattedTrace(
+                    "cpu.pc = $2000, cpu.sp = $FD, foo = <unknown>, ram($2000) = $00".into()
+                ),
                 FormattedTrace("index = $00".into()),
                 FormattedTrace("index = $01".into()),
             ]
