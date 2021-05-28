@@ -126,8 +126,12 @@ pub fn enumerate_test_cases(
             1
         }
 
-        fn apply(&self, _: &mut CodegenContext, _: &[&Located<Expression>]) -> CoreResult<i64> {
-            Ok(0)
+        fn apply(
+            &self,
+            _: &mut CodegenContext,
+            _: &[&Located<Expression>],
+        ) -> CoreResult<Option<i64>> {
+            Ok(None)
         }
     }
     ctx.register_fn("ram", DummyFn {});
@@ -204,21 +208,21 @@ impl TestRunner {
                 &self,
                 ctx: &mut CodegenContext,
                 args: &[&Located<Expression>],
-            ) -> CoreResult<i64> {
+            ) -> CoreResult<Option<i64>> {
                 let expr = args.first().unwrap();
                 match ctx.evaluate_expression(expr) {
-                    Ok(result) => {
-                        let address = result as usize;
+                    Ok(result) => Ok(result.map(|address| {
+                        let address = address as usize;
                         let ram = &self.ram.lock().unwrap().ram;
                         if self.word {
                             let lo = ram.get(address).cloned().unwrap_or_default() as i64;
                             let hi = ram.get(address + 1).cloned().unwrap_or_default() as i64;
-                            Ok(hi * 256 + lo)
+                            hi * 256 + lo
                         } else {
-                            Ok(ram.get(address).cloned().unwrap_or_default() as i64)
+                            ram.get(address).cloned().unwrap_or_default() as i64
                         }
-                    }
-                    Err(_) => Ok(0),
+                    })),
+                    Err(_) => Ok(None),
                 }
             }
         }
@@ -405,7 +409,7 @@ impl TestRunner {
                 .lock()
                 .unwrap()
                 .evaluate_expression(&assertion.expression)?;
-            if eval_result == 0 {
+            if eval_result == Some(0) {
                 let message = assertion
                     .failure_message
                     .clone()
@@ -502,15 +506,20 @@ fn format_trace(trace: &Trace, ctx: &mut CodegenContext) -> MosResult<String> {
         let mut value = ctx.evaluate_expression(expr)?;
 
         let previously_evaluated = evaluated_during_codegen.remove(0);
-        if value == 0 {
+        if value.is_none() {
             // Symbol is maybe not found, let's see if it was already evaluated during codegen
             value = previously_evaluated;
         }
 
-        let value = if value < 256 {
-            format!("${:02X}", value)
-        } else {
-            format!("${:04X}", value)
+        let value = match value {
+            Some(value) => {
+                if value < 256 {
+                    format!("${:02X}", value)
+                } else {
+                    format!("${:04X}", value)
+                }
+            }
+            None => "<unknown>".into(),
         };
         eval.push(format!("{} = {}", &expr.data, value));
     }
@@ -742,7 +751,7 @@ mod tests {
             r#"
         .test a {
             .trace
-            .trace (cpu.pc, cpu.sp)
+            .trace (cpu.pc, cpu.sp, foo)
             .loop 2 { .trace (index) }
             .assert 1 == 2
         }
@@ -755,7 +764,7 @@ mod tests {
                 FormattedTrace(
                     "PC = $2000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
                 ),
-                FormattedTrace("cpu.pc = $2000, cpu.sp = $FD".into()),
+                FormattedTrace("cpu.pc = $2000, cpu.sp = $FD, foo = <unknown>".into()),
                 FormattedTrace("index = $00".into()),
                 FormattedTrace("index = $01".into()),
             ]

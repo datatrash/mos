@@ -19,7 +19,7 @@ use crate::codegen::text_encoding::encode_text;
 use crate::errors::{CoreError, CoreResult};
 use crate::parser::code_map::Span;
 use crate::parser::{
-    AddressModifier, AddressingMode, ArgItem, DataSize, Expression, ExpressionFactor,
+    AddressModifier, AddressingMode, ArgItem, Block, DataSize, Expression, ExpressionFactor,
     ExpressionFactorFlags, Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree,
     TextEncoding, Token, VariableType,
 };
@@ -216,7 +216,11 @@ pub struct MacroDefinition {
 
 pub trait FunctionCallback {
     fn expected_args(&self) -> usize;
-    fn apply(&self, ctx: &mut CodegenContext, args: &[&Located<Expression>]) -> CoreResult<i64>;
+    fn apply(
+        &self,
+        ctx: &mut CodegenContext,
+        args: &[&Located<Expression>],
+    ) -> CoreResult<Option<i64>>;
 }
 
 pub struct CodegenContext {
@@ -267,7 +271,7 @@ pub struct Assertion {
 pub struct Trace {
     pub pc: ProgramCounter,
     pub args: Vec<ArgItem<Expression>>,
-    pub evaluated: Vec<i64>,
+    pub evaluated: Vec<Option<i64>>,
 }
 
 impl CodegenContext {
@@ -331,11 +335,11 @@ impl CodegenContext {
         for (path, range) in segs {
             let _ = self.add_symbol(
                 path.join("start"),
-                self.symbol(None, range.start as i64, SymbolType::Variable),
+                self.symbol(None, range.start as i64, SymbolType::Constant),
             );
             let _ = self.add_symbol(
                 path.join("end"),
-                self.symbol(None, range.end as i64, SymbolType::Variable),
+                self.symbol(None, range.end as i64, SymbolType::Constant),
             );
         }
     }
@@ -411,7 +415,7 @@ impl CodegenContext {
                                 && existing.data != symbol.data
                                 && existing.read_only())
                         {
-                            let span = span.expect("no span provided");
+                            let span = symbol.span.expect("no span provided");
                             return self.error(span, format!("cannot redefine symbol: {}", &path));
                         }
 
@@ -427,7 +431,7 @@ impl CodegenContext {
                                 SymbolType::Label => true,
                                 SymbolType::TestCase => true,
                                 SymbolType::Variable => false,
-                                SymbolType::Constant => false,
+                                SymbolType::Constant => true,
                                 SymbolType::MacroArgument => false,
                             };
                         }
@@ -455,11 +459,11 @@ impl CodegenContext {
             }
         };
 
-        if should_mark_as_undefined {
-            self.mark_undefined(span.expect("expected a span"), &id);
-        }
-
         if let Some(span) = span {
+            if should_mark_as_undefined {
+                self.mark_undefined(span, &id);
+            }
+
             log::trace!(
                 "Setting location for definition '{}' ({:?})",
                 &path,
@@ -571,11 +575,12 @@ impl CodegenContext {
         match token {
             Token::Align { value, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    let align = self.evaluate_expression(value)?;
-                    let padding = (align - (pc.as_i64() % align)) as usize;
-                    let mut bytes = Vec::new();
-                    bytes.resize(padding, 0u8);
-                    self.emit(value.span, &bytes)?;
+                    if let Some(align) = self.evaluate_expression(value)? {
+                        let padding = (align - (pc.as_i64() % align)) as usize;
+                        let mut bytes = Vec::new();
+                        bytes.resize(padding, 0u8);
+                        self.emit(value.span, &bytes)?;
+                    }
                 }
             }
             Token::Assert {
@@ -592,18 +597,21 @@ impl CodegenContext {
                 }
             }
             Token::Braces { block, scope } => {
-                self.with_scope(scope, |s| s.emit_tokens(&block.inner))?;
+                self.with_scope(scope, Some(block), |s| s.emit_tokens(&block.inner))?;
             }
             Token::Data { values, size } => {
                 let exprs = values.iter().map(|(expr, _comma)| expr).collect_vec();
                 for expr in exprs {
-                    let value = self.evaluate_expression(expr)?;
-                    let bytes = match &size.data {
-                        DataSize::Byte => vec![value as u8],
-                        DataSize::Word => (value as u16).to_le_bytes().to_vec(),
-                        DataSize::Dword => (value as u32).to_le_bytes().to_vec(),
-                    };
-                    self.emit(expr.span, &bytes)?;
+                    if let Some(value) = self.evaluate_expression(expr)? {
+                        let bytes = match &size.data {
+                            DataSize::Byte => vec![value as u8],
+                            DataSize::Word => (value as u16).to_le_bytes().to_vec(),
+                            DataSize::Dword => (value as u32).to_le_bytes().to_vec(),
+                        };
+                        self.emit(expr.span, &bytes)?;
+                    } else {
+                        self.emit(expr.span, &[])?;
+                    }
                 }
             }
             Token::Definition {
@@ -632,7 +640,13 @@ impl CodegenContext {
 
                             let mut opts = SegmentOptions::default();
                             let name = extractor.get_identifier(self, "name")?;
-                            opts.initial_pc = extractor.get_i64(self, "start")?.into();
+                            match extractor.try_get_i64(self, "start")? {
+                                Some(val) => opts.initial_pc = val.into(),
+                                None => {
+                                    // Will be marked as undefined and retried later
+                                    opts.initial_pc = 0.into();
+                                }
+                            }
                             if let Some(write) = extractor.try_get_string("write") {
                                 opts.write = write.parse()?;
                             }
@@ -674,11 +688,12 @@ impl CodegenContext {
             Token::If {
                 value, if_, else_, ..
             } => {
-                let value = self.evaluate_expression(value)?;
-                if value != 0 {
-                    self.emit_tokens(&if_.inner)?;
-                } else if let Some(e) = else_ {
-                    self.emit_tokens(&e.inner)?;
+                if let Some(value) = self.evaluate_expression(value)? {
+                    if value != 0 {
+                        self.emit_tokens(&if_.inner)?;
+                    } else if let Some(e) = else_ {
+                        self.emit_tokens(&e.inner)?;
+                    }
                 }
             }
             Token::Import {
@@ -707,7 +722,7 @@ impl CodegenContext {
                         span: filename.text.span,
                     });
 
-                    self.with_scope(import_scope, |s| {
+                    self.with_scope(import_scope, block.as_ref(), |s| {
                         if let Some(block) = block {
                             s.emit_tokens(&block.inner)?;
                         }
@@ -805,62 +820,65 @@ impl CodegenContext {
                 }
             }
             Token::Instruction(i) => {
-                let (value, am, suffix) = match &i.operand {
-                    Some(op) => {
-                        let value = self.evaluate_expression(&op.expr)?;
+                let mut full_span = i.mnemonic.span;
+                if let Some(operand_span) = i.operand.as_ref().map(|o| o.expr.span) {
+                    full_span = operand_span.merge(full_span);
+                }
+
+                let data = match &i.operand {
+                    Some(op) => self.evaluate_expression(&op.expr)?.map(|value| {
                         let register_suffix = op.suffix.as_ref().map(|s| s.register.data);
                         (value, op.addressing_mode, register_suffix)
-                    }
-                    None => (0, AddressingMode::Implied, None),
+                    }),
+                    None => Some((0, AddressingMode::Implied, None)),
                 };
 
-                let value = match &i.mnemonic.data {
-                    Mnemonic::Bcc
-                    | Mnemonic::Bcs
-                    | Mnemonic::Beq
-                    | Mnemonic::Bmi
-                    | Mnemonic::Bne
-                    | Mnemonic::Bpl
-                    | Mnemonic::Bvc
-                    | Mnemonic::Bvs => {
-                        let target_pc = value as i64;
-                        // If the current PC cannot be determined we'll just default to the target_pc. This will be fixed up later
-                        // when the instruction is re-emitted.
-                        let cur_pc = (self
-                            .try_current_target_pc()
-                            .unwrap_or_else(|| target_pc.into())
-                            + 2)
-                        .as_i64();
-                        let mut offset = target_pc - cur_pc;
-                        if offset >= -128 && offset <= 127 {
-                            if offset < 0 {
-                                offset += 256;
+                if let Some((value, am, suffix)) = data {
+                    let value = match &i.mnemonic.data {
+                        Mnemonic::Bcc
+                        | Mnemonic::Bcs
+                        | Mnemonic::Beq
+                        | Mnemonic::Bmi
+                        | Mnemonic::Bne
+                        | Mnemonic::Bpl
+                        | Mnemonic::Bvc
+                        | Mnemonic::Bvs => {
+                            let target_pc = value as i64;
+                            // If the current PC cannot be determined we'll just default to the target_pc. This will be fixed up later
+                            // when the instruction is re-emitted.
+                            let cur_pc = (self
+                                .try_current_target_pc()
+                                .unwrap_or_else(|| target_pc.into())
+                                + 2)
+                            .as_i64();
+                            let mut offset = target_pc - cur_pc;
+                            if offset >= -128 && offset <= 127 {
+                                if offset < 0 {
+                                    offset += 256;
+                                }
+                                offset as i64
+                            } else if target_pc == 0 {
+                                // We probably couldn't determine the target_pc, so let's ignore the error for now.
+                                // We'll just return a dummy offset. This instruction will be re-emitted in a next pass anyway.
+                                0
+                            } else {
+                                return self.error(i.mnemonic.span, "branch too far");
                             }
-                            offset as i64
-                        } else if target_pc == 0 {
-                            // We probably couldn't determine the target_pc, so let's ignore the error for now.
-                            // We'll just return a dummy offset. This instruction will be re-emitted in a next pass anyway.
-                            0
-                        } else {
-                            return self.error(i.mnemonic.span, "branch too far");
                         }
-                    }
-                    _ => value,
-                };
+                        _ => value,
+                    };
 
-                match get_opcode_bytes(i.mnemonic.data, am, suffix, value) {
-                    Ok(bytes) => {
-                        let mut span = i.mnemonic.span;
-                        if let Some(operand_span) = i.operand.as_ref().map(|o| o.expr.span) {
-                            span = operand_span.merge(span);
+                    match get_opcode_bytes(i.mnemonic.data, am, suffix, value) {
+                        Ok(bytes) => self.emit(full_span, &bytes)?,
+                        Err(()) => {
+                            // Emit 'nothing' so at least the code map gets updated
+                            self.emit(full_span, &[])?;
+                            return self.error(full_span, "operand size mismatch");
                         }
-                        self.emit(span, &bytes)?
                     }
-                    Err(()) => {
-                        // Emit 'nothing' so at least the code map gets updated
-                        self.emit(i.mnemonic.span, &[])?;
-                        return self.error(i.mnemonic.span, "operand size mismatch");
-                    }
+                } else {
+                    // Expression could not be evaluated, still make sure to emit 'nothing' so code map gets updated
+                    self.emit(full_span, &[])?;
                 }
             }
             Token::Label { id, block, .. } => {
@@ -873,7 +891,7 @@ impl CodegenContext {
                 }
 
                 if let Some(b) = block {
-                    self.with_scope(&id.data, |s| s.emit_tokens(&b.inner))?;
+                    self.with_scope(&id.data, Some(b), |s| s.emit_tokens(&b.inner))?;
                 }
             }
             Token::Loop {
@@ -882,14 +900,18 @@ impl CodegenContext {
                 block,
                 ..
             } => {
-                let loop_count = self.evaluate_expression(expr)?;
-                for index in 0..loop_count {
-                    self.with_scope(loop_scope, |s| {
-                        s.add_symbol("index", s.symbol(expr.span, index, SymbolType::Constant))?;
-                        let result = s.emit_tokens(&block.inner);
-                        s.remove_symbol("index");
-                        result
-                    })?;
+                if let Some(loop_count) = self.evaluate_expression(expr)? {
+                    for index in 0..loop_count {
+                        self.with_scope(loop_scope, Some(block), |s| {
+                            s.add_symbol(
+                                "index",
+                                s.symbol(expr.span, index, SymbolType::Constant),
+                            )?;
+                            let result = s.emit_tokens(&block.inner);
+                            s.remove_symbol("index");
+                            result
+                        })?;
+                    }
                 }
             }
             Token::MacroDefinition {
@@ -916,14 +938,15 @@ impl CodegenContext {
 
                 if let Some(def) = def {
                     self.expect_args(name.span, args.len(), def.args.len())?;
-                    self.with_scope(&name.data, |s| {
+                    self.with_scope(&name.data, None, |s| {
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
-                            let value = s.evaluate_expression(expr)?;
-                            s.add_symbol(
-                                &arg_name.data,
-                                s.symbol(arg_name.span, value, SymbolType::MacroArgument),
-                            )?;
+                            if let Some(value) = s.evaluate_expression(expr)? {
+                                s.add_symbol(
+                                    &arg_name.data,
+                                    s.symbol(arg_name.span, value, SymbolType::MacroArgument),
+                                )?;
+                            }
                         }
 
                         s.emit_tokens(&def.block)?;
@@ -937,9 +960,10 @@ impl CodegenContext {
                 }
             }
             Token::ProgramCounterDefinition { value, .. } => {
-                let pc = self.evaluate_expression(value)?.into();
-                if let Some(seg) = self.try_current_segment_mut() {
-                    seg.pc = pc;
+                if let Some(pc) = self.evaluate_expression(value)? {
+                    if let Some(seg) = self.try_current_segment_mut() {
+                        seg.pc = pc.into();
+                    }
                 }
             }
             Token::Segment { id, block, .. } => {
@@ -992,15 +1016,13 @@ impl CodegenContext {
             Token::Trace { args, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
                     // Try to evaluate arguments already, in case they are only temporarily available
-                    let evaluated = args
-                        .iter()
-                        .map(|(expr, _)| {
-                            self.with_suppressed_undefined_registration(|s| {
-                                s.evaluate_expression(expr)
-                            })
-                            .unwrap_or(0)
-                        })
-                        .collect_vec();
+                    let mut evaluated = vec![];
+                    for (expr, _) in args {
+                        let val = self.with_suppressed_undefined_registration(|s| {
+                            s.evaluate_expression(expr)
+                        })?;
+                        evaluated.push(val);
+                    }
 
                     self.test_elements.push(TestElement::Trace(Trace {
                         pc,
@@ -1010,12 +1032,13 @@ impl CodegenContext {
                 }
             }
             Token::VariableDefinition { ty, id, value, .. } => {
-                let value = self.evaluate_expression(&value)?;
-                let ty = match &ty.data {
-                    VariableType::Constant => SymbolType::Constant,
-                    VariableType::Variable => SymbolType::Variable,
-                };
-                self.add_symbol(id.data.clone(), self.symbol(id.span, value, ty))?;
+                if let Some(value) = self.evaluate_expression(&value)? {
+                    let ty = match &ty.data {
+                        VariableType::Constant => SymbolType::Constant,
+                        VariableType::Variable => SymbolType::Variable,
+                    };
+                    self.add_symbol(id.data.clone(), self.symbol(id.span, value, ty))?;
+                }
             }
             _ => {}
         }
@@ -1023,26 +1046,33 @@ impl CodegenContext {
         Ok(())
     }
 
-    pub fn evaluate_expression(&mut self, expr: &Located<Expression>) -> CoreResult<i64> {
+    pub fn evaluate_expression(&mut self, expr: &Located<Expression>) -> CoreResult<Option<i64>> {
         match &expr.data {
             Expression::Factor { factor, flags, .. } => {
-                let mut value = self.evaluate_expression_factor(factor)?;
-                if flags.contains(ExpressionFactorFlags::NOT) {
-                    if value == 0 {
-                        value = 1
-                    } else {
-                        value = 0
+                match self.evaluate_expression_factor(factor)? {
+                    Some(mut value) => {
+                        if flags.contains(ExpressionFactorFlags::NOT) {
+                            if value == 0 {
+                                value = 1
+                            } else {
+                                value = 0
+                            }
+                        }
+                        if flags.contains(ExpressionFactorFlags::NEG) {
+                            value = -value;
+                        }
+                        Ok(Some(value))
                     }
+                    None => Ok(None),
                 }
-                if flags.contains(ExpressionFactorFlags::NEG) {
-                    value = -value;
-                }
-                Ok(value)
             }
             Expression::BinaryExpression(bin) => {
                 let lhs = self.evaluate_expression(&bin.lhs)?;
                 let rhs = self.evaluate_expression(&bin.rhs)?;
-                Ok(bin.op.data.apply(lhs, rhs))
+                match (lhs, rhs) {
+                    (Some(lhs), Some(rhs)) => Ok(Some(bin.op.data.apply(lhs, rhs))),
+                    _ => Ok(None),
+                }
             }
         }
     }
@@ -1061,11 +1091,11 @@ impl CodegenContext {
     fn evaluate_expression_factor(
         &mut self,
         factor: &Located<ExpressionFactor>,
-    ) -> CoreResult<i64> {
+    ) -> CoreResult<Option<i64>> {
         match &factor.data {
-            ExpressionFactor::CurrentProgramCounter(_) => {
-                Ok(self.try_current_target_pc().unwrap_or_default().as_i64())
-            }
+            ExpressionFactor::CurrentProgramCounter(_) => Ok(Some(
+                self.try_current_target_pc().unwrap_or_default().as_i64(),
+            )),
             ExpressionFactor::ExprParens { inner, .. } => self.evaluate_expression(inner),
             ExpressionFactor::FunctionCall { name, args, .. } => {
                 match self.functions.get(name.data.as_str()) {
@@ -1085,17 +1115,16 @@ impl CodegenContext {
                     path.span,
                 );
 
-                let val = self
+                Ok(self
                     .get_symbol_data(path.span, &path.data)
                     .map(|d| d.as_i64())
-                    .unwrap_or_default();
-                match modifier.as_ref().map(|m| &m.data) {
-                    Some(AddressModifier::HighByte) => Ok((val >> 8) & 255),
-                    Some(AddressModifier::LowByte) => Ok(val & 255),
-                    _ => Ok(val),
-                }
+                    .map(|val| match modifier.as_ref().map(|m| &m.data) {
+                        Some(AddressModifier::HighByte) => (val >> 8) & 255,
+                        Some(AddressModifier::LowByte) => val & 255,
+                        _ => val,
+                    }))
             }
-            ExpressionFactor::Number { value: number, .. } => Ok(number.data.value()),
+            ExpressionFactor::Number { value: number, .. } => Ok(Some(number.data.value())),
         }
     }
 
@@ -1104,10 +1133,10 @@ impl CodegenContext {
             .get_or_create_definition_mut(DefinitionType::Symbol(symbol_nx))
     }
 
-    fn with_suppressed_undefined_registration<F: FnOnce(&mut Self) -> CoreResult<i64>>(
+    fn with_suppressed_undefined_registration<F: FnOnce(&mut Self) -> CoreResult<Option<i64>>>(
         &mut self,
         f: F,
-    ) -> CoreResult<i64> {
+    ) -> CoreResult<Option<i64>> {
         self.suppress_undefined_symbol_registration = true;
         let result = f(self);
         self.suppress_undefined_symbol_registration = false;
@@ -1117,6 +1146,7 @@ impl CodegenContext {
     fn with_scope<F: FnOnce(&mut Self) -> CoreResult<()>>(
         &mut self,
         scope: &Identifier,
+        add_symbols_for_block: Option<&Block>,
         f: F,
     ) -> CoreResult<()> {
         let old_scope_nx = self.current_scope_nx;
@@ -1124,8 +1154,11 @@ impl CodegenContext {
         self.current_scope_nx = self
             .symbols
             .ensure_index(self.symbols.root, &self.current_scope);
-        self.try_current_target_pc()
-            .map(|pc| self.add_symbol("-", self.symbol(None, pc.as_i64(), SymbolType::Variable)));
+        if let Some(span) = add_symbols_for_block.map(|b| b.lparen.span) {
+            self.try_current_target_pc().map(|pc| {
+                self.add_symbol("-", self.symbol(span, pc.as_i64(), SymbolType::Constant))
+            });
+        }
         log::trace!(
             "Entering scope: {} ({:?})",
             self.current_scope,
@@ -1137,8 +1170,11 @@ impl CodegenContext {
             self.current_scope,
             self.current_scope_nx
         );
-        self.try_current_target_pc()
-            .map(|pc| self.add_symbol("+", self.symbol(None, pc.as_i64(), SymbolType::Variable)));
+        if let Some(span) = add_symbols_for_block.map(|b| b.rparen.span) {
+            self.try_current_target_pc().map(|pc| {
+                self.add_symbol("+", self.symbol(span, pc.as_i64(), SymbolType::Constant))
+            });
+        }
         self.current_scope_nx = old_scope_nx;
         self.current_scope.pop();
         result
@@ -1163,17 +1199,17 @@ impl CodegenContext {
                 &self,
                 ctx: &mut CodegenContext,
                 args: &[&Located<Expression>],
-            ) -> CoreResult<i64> {
+            ) -> CoreResult<Option<i64>> {
                 let expr = args.first().unwrap();
                 match ctx.with_suppressed_undefined_registration(|s| s.evaluate_expression(expr)) {
                     Ok(result) => {
-                        if result != 0 {
-                            Ok(1)
+                        if result.is_some() {
+                            Ok(Some(1))
                         } else {
-                            Ok(0)
+                            Ok(Some(0))
                         }
                     }
-                    Err(_) => Ok(0),
+                    Err(_) => Ok(Some(0)),
                 }
             }
         }

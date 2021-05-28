@@ -64,25 +64,10 @@ impl<'a> ConfigExtractor<'a> {
     pub fn try_get_i64(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<Option<i64>> {
         match self.try_get_located_token(key) {
             Some(lt) => match &lt.data {
-                Token::Expression(expr) => {
-                    Ok(Some(ctx.evaluate_expression(&lt.map(|_| expr.clone()))?))
-                }
+                Token::Expression(expr) => Ok(ctx.evaluate_expression(&lt.map(|_| expr.clone()))?),
                 _ => Ok(None),
             },
             None => Ok(None),
-        }
-    }
-
-    pub fn get_i64(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<i64> {
-        match self.try_get_i64(ctx, key)? {
-            Some(val) => Ok(val),
-            None => Err(CoreError::Codegen {
-                location: ctx
-                    .tree
-                    .code_map
-                    .look_up_span(self.get_located_token(key).span),
-                message: "expected expression".into(),
-            }),
         }
     }
 
