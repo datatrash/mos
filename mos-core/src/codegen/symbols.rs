@@ -7,7 +7,8 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
-pub struct SymbolTable<S: Debug> {
+#[derive(Clone)]
+pub struct SymbolTable<S: Clone + Debug> {
     graph: Graph<Item<S>, Identifier>,
     pub root: SymbolIndex,
 }
@@ -20,18 +21,18 @@ pub enum QueryTraversalStep {
     Super(SymbolIndex),
 }
 
-#[derive(Debug)]
-pub struct Item<S: Debug> {
+#[derive(Clone, Debug)]
+pub struct Item<S: Clone + Debug> {
     data: Option<S>,
 }
 
-impl<S: Debug> Item<S> {
+impl<S: Clone + Debug> Item<S> {
     fn new<OS: Into<Option<S>>>(data: OS) -> Self {
         Self { data: data.into() }
     }
 }
 
-impl<S: Debug> Default for SymbolTable<S> {
+impl<S: Clone + Debug> Default for SymbolTable<S> {
     fn default() -> Self {
         let mut graph = Graph::new();
         let root = graph.add_node(Item::new(None));
@@ -40,7 +41,7 @@ impl<S: Debug> Default for SymbolTable<S> {
     }
 }
 
-impl<S: Debug> SymbolTable<S> {
+impl<S: Clone + Debug> SymbolTable<S> {
     pub fn try_get(&self, nx: SymbolIndex) -> Option<&S> {
         self.graph
             .node_weight(nx)

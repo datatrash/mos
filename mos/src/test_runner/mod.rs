@@ -4,35 +4,24 @@ use ansi_term::Colour;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
-    codegen, Assertion, CodegenContext, CodegenOptions, FunctionCallback, SymbolIndex, SymbolType,
-    TestElement, Trace,
+    codegen, Assertion, CodegenContext, CodegenOptions, EvaluationResult, Evaluator,
+    FunctionCallback, Symbol, SymbolIndex, SymbolTable, SymbolType, TestElement, Trace,
 };
-use mos_core::errors::CoreResult;
 use mos_core::parser;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
 use mos_core::parser::{Expression, IdentifierPath, Located};
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub struct TestRunner {
     ctx: Arc<Mutex<CodegenContext>>,
+    test_elements: Vec<TestElement>,
     ram: Arc<Mutex<BasicRam>>,
     cpu: MOS6502,
-    cpu_pc_nx: SymbolIndex,
-    cpu_sp_nx: SymbolIndex,
-    cpu_a_nx: SymbolIndex,
-    cpu_x_nx: SymbolIndex,
-    cpu_y_nx: SymbolIndex,
-    cpu_flags_carry_nx: SymbolIndex,
-    cpu_flags_zero_nx: SymbolIndex,
-    cpu_flags_interrupt_disable_nx: SymbolIndex,
-    cpu_flags_decimal_nx: SymbolIndex,
-    cpu_flags_overflow_nx: SymbolIndex,
-    cpu_flags_negative_nx: SymbolIndex,
     num_cycles: usize,
     formatted_traces: Vec<FormattedTrace>,
 }
@@ -44,13 +33,26 @@ pub enum ExecuteResult {
     TestSuccess(usize),
 }
 
-#[derive(Debug, PartialEq)]
 pub struct TestFailure {
     pub location: Option<SpanLoc>,
     pub message: String,
     pub assertion: Option<Assertion>,
     pub cpu: MOS6502,
     pub traces: Vec<FormattedTrace>,
+}
+
+impl Debug for TestFailure {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl PartialEq for TestFailure {
+    fn eq(&self, other: &Self) -> bool {
+        self.location == other.location
+            && self.message == other.message
+            && self.traces == other.traces
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -78,7 +80,7 @@ pub fn format_cpu_details(cpu: &MOS6502, use_color: bool) -> String {
     let flags: String = flags.into_iter().collect();
 
     format!(
-        "PC = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
+        "* = {}, SP = {}, flags = {}, A = {}, X = {}, Y = {}",
         paint(
             use_color,
             Colour::Yellow,
@@ -128,9 +130,9 @@ pub fn enumerate_test_cases(
 
         fn apply(
             &self,
-            _: &mut CodegenContext,
+            _: &Evaluator,
             _: &[&Located<Expression>],
-        ) -> CoreResult<Option<i64>> {
+        ) -> EvaluationResult<Option<i64>> {
             Ok(None)
         }
     }
@@ -206,11 +208,11 @@ impl TestRunner {
 
             fn apply(
                 &self,
-                ctx: &mut CodegenContext,
+                ctx: &Evaluator,
                 args: &[&Located<Expression>],
-            ) -> CoreResult<Option<i64>> {
+            ) -> EvaluationResult<Option<i64>> {
                 let expr = args.first().unwrap();
-                match ctx.evaluate_expression(expr) {
+                match ctx.evaluate_expression(expr, false) {
                     Ok(result) => Ok(result.map(|address| {
                         let address = address as usize;
                         let ram = &self.ram.lock().unwrap().ram;
@@ -241,52 +243,12 @@ impl TestRunner {
             },
         );
 
-        let root = ctx.symbols().root;
-        let cpu_nx = ctx.symbols_mut().ensure_index(root, "cpu");
-
-        let add = |ctx: &mut CodegenContext,
-                   parent_nx: SymbolIndex,
-                   id: &str,
-                   ty: SymbolType|
-         -> SymbolIndex {
-            let symbol = ctx.symbol(None, 0, ty);
-            ctx.symbols_mut().insert(parent_nx, id, symbol)
-        };
-
-        let cpu_pc_nx = add(&mut ctx, cpu_nx, "pc", SymbolType::Label);
-        let cpu_sp_nx = add(&mut ctx, cpu_nx, "sp", SymbolType::Label);
-        let cpu_a_nx = add(&mut ctx, cpu_nx, "a", SymbolType::Constant);
-        let cpu_x_nx = add(&mut ctx, cpu_nx, "x", SymbolType::Constant);
-        let cpu_y_nx = add(&mut ctx, cpu_nx, "y", SymbolType::Constant);
-
-        let cpu_flags_nx = ctx.symbols_mut().ensure_index(cpu_nx, "flags");
-        let cpu_flags_carry_nx = add(&mut ctx, cpu_flags_nx, "carry", SymbolType::Constant);
-        let cpu_flags_zero_nx = add(&mut ctx, cpu_flags_nx, "zero", SymbolType::Constant);
-        let cpu_flags_interrupt_disable_nx = add(
-            &mut ctx,
-            cpu_flags_nx,
-            "interrupt_disable",
-            SymbolType::Constant,
-        );
-        let cpu_flags_decimal_nx = add(&mut ctx, cpu_flags_nx, "decimal", SymbolType::Constant);
-        let cpu_flags_overflow_nx = add(&mut ctx, cpu_flags_nx, "overflow", SymbolType::Constant);
-        let cpu_flags_negative_nx = add(&mut ctx, cpu_flags_nx, "negative", SymbolType::Constant);
-
+        let test_elements = ctx.remove_test_elements();
         Ok(Self {
             ctx: Arc::new(Mutex::new(ctx)),
+            test_elements,
             ram,
             cpu,
-            cpu_pc_nx,
-            cpu_sp_nx,
-            cpu_a_nx,
-            cpu_x_nx,
-            cpu_y_nx,
-            cpu_flags_carry_nx,
-            cpu_flags_zero_nx,
-            cpu_flags_interrupt_disable_nx,
-            cpu_flags_decimal_nx,
-            cpu_flags_overflow_nx,
-            cpu_flags_negative_nx,
             num_cycles: 0,
             formatted_traces: vec![],
         })
@@ -322,108 +284,64 @@ impl TestRunner {
         );
 
         // Check active elements
-        let active_elements = self
-            .ctx
-            .lock()
-            .unwrap()
-            .test_elements()
-            .iter()
-            .filter(|a| match a {
-                TestElement::Assertion(e) => e.pc.as_u16() == self.cpu.get_program_counter(),
-                TestElement::Trace(e) => e.pc.as_u16() == self.cpu.get_program_counter(),
-            })
-            .cloned()
-            .collect_vec();
+        let mut active_traces = vec![];
+        let mut active_assertions = vec![];
+        let mut idx = 0;
+        while idx < self.test_elements.len() {
+            let should_extract = match &self.test_elements[idx] {
+                TestElement::Assertion(e) => {
+                    e.extracted_evaluator.pc.as_u16() == self.cpu.get_program_counter()
+                }
+                TestElement::Trace(e) => {
+                    e.extracted_evaluator.pc.as_u16() == self.cpu.get_program_counter()
+                }
+            };
 
-        if !active_elements.is_empty() {
-            for (nx, value) in &[
-                (self.cpu_pc_nx, self.cpu.get_program_counter() as i64),
-                (self.cpu_sp_nx, self.cpu.get_stack_pointer() as i64),
-                (self.cpu_a_nx, self.cpu.get_accumulator() as i64),
-                (self.cpu_x_nx, self.cpu.get_x_register() as i64),
-                (self.cpu_y_nx, self.cpu.get_y_register() as i64),
-                (
-                    self.cpu_flags_carry_nx,
-                    (self.cpu.get_status_register() & 1) as i64,
-                ),
-                (
-                    self.cpu_flags_zero_nx,
-                    (self.cpu.get_status_register() & 2) as i64,
-                ),
-                (
-                    self.cpu_flags_interrupt_disable_nx,
-                    (self.cpu.get_status_register() & 4) as i64,
-                ),
-                (
-                    self.cpu_flags_decimal_nx,
-                    (self.cpu.get_status_register() & 8) as i64,
-                ),
-                (
-                    self.cpu_flags_overflow_nx,
-                    (self.cpu.get_status_register() & 64) as i64,
-                ),
-                (
-                    self.cpu_flags_negative_nx,
-                    (self.cpu.get_status_register() & 128) as i64,
-                ),
-            ] {
-                let mut ctx = self.ctx.lock().unwrap();
-                let symbol = ctx.symbol(None, *value, SymbolType::Label);
-                ctx.symbols_mut().update_data(*nx, symbol);
+            if should_extract {
+                match self.test_elements.remove(idx) {
+                    TestElement::Assertion(a) => {
+                        active_assertions.push(a);
+                    }
+                    TestElement::Trace(t) => {
+                        active_traces.push(t);
+                    }
+                }
+            } else {
+                idx += 1;
             }
         }
 
-        let active_traces = active_elements
-            .iter()
-            .filter_map(|e| {
-                if let TestElement::Trace(t) = e {
-                    Some(t)
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
-
-        let active_assertions = active_elements
-            .iter()
-            .filter_map(|e| {
-                if let TestElement::Assertion(a) = e {
-                    Some(a)
-                } else {
-                    None
-                }
-            })
-            .collect_vec();
-
-        for trace in active_traces {
-            let fmt = match trace.args.is_empty() {
+        for mut trace in active_traces {
+            let fmt = match trace.exprs.is_empty() {
                 true => format_cpu_details(&self.cpu, false),
-                false => format_trace(trace, self.ctx.lock().unwrap().deref_mut())?,
+                false => {
+                    self.add_symbols(&mut trace.extracted_evaluator.symbols);
+                    format_trace(trace, &self.ctx.lock().unwrap())?
+                }
             };
             self.formatted_traces.push(FormattedTrace(fmt));
         }
 
-        for assertion in active_assertions {
-            let eval_result = self
-                .ctx
-                .lock()
-                .unwrap()
-                .evaluate_expression(&assertion.expression)?;
-            if eval_result == Some(0) {
+        for mut assertion in active_assertions {
+            self.add_symbols(&mut assertion.extracted_evaluator.symbols);
+            let ctx = self.ctx.lock().unwrap();
+            let evaluator = assertion
+                .extracted_evaluator
+                .get_evaluator(&ctx.functions());
+            let eval_result = evaluator
+                .evaluate_expression(&assertion.expr, false)
+                .ok()
+                .flatten();
+            if eval_result == Some(0) || eval_result.is_none() {
                 let message = assertion
                     .failure_message
                     .clone()
-                    .unwrap_or_else(|| format!("{}", &assertion.expression.data).trim().into());
-                let location = self
-                    .ctx
-                    .lock()
-                    .unwrap()
-                    .analysis()
-                    .look_up(assertion.expression.span);
+                    .unwrap_or_else(|| format!("{}", &assertion.expr.data).trim().into());
+                let location = ctx.analysis().look_up(assertion.expr.span);
                 let failure = TestFailure {
                     location: Some(location),
                     message,
-                    assertion: Some(assertion.clone()),
+                    assertion: Some(assertion),
                     cpu: self.cpu.clone(),
                     traces: self.formatted_traces.clone(),
                 };
@@ -497,19 +415,91 @@ impl TestRunner {
             }
         }
     }
+
+    fn add_symbols(&self, symbols: &mut SymbolTable<Symbol>) {
+        let root = symbols.root;
+        let cpu_nx = symbols.ensure_index(root, "cpu");
+        let cpu_flags_nx = symbols.ensure_index(cpu_nx, "flags");
+
+        let mut add = |parent_nx: SymbolIndex, id: &str, data: i64, ty: SymbolType| {
+            let symbol = Symbol {
+                pass_idx: 0,
+                span: None,
+                data: data.into(),
+                ty,
+            };
+            symbols.insert(parent_nx, id, symbol);
+        };
+
+        add(
+            cpu_nx,
+            "sp",
+            self.cpu.get_stack_pointer() as i64,
+            SymbolType::Label,
+        );
+        add(
+            cpu_nx,
+            "a",
+            self.cpu.get_accumulator() as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_nx,
+            "x",
+            self.cpu.get_x_register() as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_nx,
+            "y",
+            self.cpu.get_y_register() as i64,
+            SymbolType::Constant,
+        );
+
+        add(
+            cpu_flags_nx,
+            "carry",
+            (self.cpu.get_status_register() & 1) as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "zero",
+            (self.cpu.get_status_register() & 2) as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "interrupt_disable",
+            (self.cpu.get_status_register() & 4) as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "decimal",
+            (self.cpu.get_status_register() & 8) as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "overflow",
+            (self.cpu.get_status_register() & 64) as i64,
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "negative",
+            (self.cpu.get_status_register() & 128) as i64,
+            SymbolType::Constant,
+        );
+    }
 }
 
-fn format_trace(trace: &Trace, ctx: &mut CodegenContext) -> MosResult<String> {
+fn format_trace(trace: Trace, ctx: &CodegenContext) -> MosResult<String> {
     let mut eval = vec![];
-    let mut evaluated_during_codegen = trace.evaluated.clone();
-    for (expr, _) in &trace.args {
-        let mut value = ctx.evaluate_expression(expr)?;
-
-        let previously_evaluated = evaluated_during_codegen.remove(0);
-        if value.is_none() {
-            // Symbol is maybe not found, let's see if it was already evaluated during codegen
-            value = previously_evaluated;
-        }
+    for expr in &trace.exprs {
+        let evaluator = trace.extracted_evaluator.get_evaluator(ctx.functions());
+        let value = evaluator.evaluate_expression(expr, false).ok().flatten();
 
         let value = match value {
             Some(value) => {
@@ -629,7 +619,7 @@ mod tests {
     #[test]
     fn use_pc_sp_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert cpu.pc == $2001\n.assert cpu.sp == $fd\nbrk\n}",
+            ".test a {\nnop\n.assert * == $2001\n.assert cpu.sp == $fd\nbrk\n}",
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(2));
@@ -642,7 +632,7 @@ mod tests {
             r"
             .test a {
                 .loop 2 {
-                    .assert cpu.pc == $2000 + index
+                    .assert * == $2000 + index
                     nop
                  }
                  brk
@@ -730,6 +720,27 @@ mod tests {
     }
 
     #[test]
+    fn nested_lookups() -> MosResult<()> {
+        let mut runner = get_runner(
+            r"
+            .test a {
+                .const foo = 1
+                label: {
+                    .const foo = 2
+                    .assert foo == 2
+                    .assert super.foo == 1
+                }
+                .assert foo == 1
+                .assert label.foo == 2
+                brk
+             }",
+            idpath!("a"),
+        )?;
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(0));
+        Ok(())
+    }
+
+    #[test]
     fn can_determine_code_is_in_test_mode() -> MosResult<()> {
         let runner = get_runner(
             r"
@@ -768,7 +779,7 @@ mod tests {
             r#"
         .test a {
             .trace
-            .trace (cpu.pc, cpu.sp, foo, ram($2000))
+            .trace (*, cpu.sp, foo, ram($2000))
             .loop 2 { .trace (index) }
             .assert 1 == 2
         }
@@ -779,11 +790,9 @@ mod tests {
             runner.run()?.as_failure().traces,
             vec![
                 FormattedTrace(
-                    "PC = $2000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
+                    "* = $2000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
                 ),
-                FormattedTrace(
-                    "cpu.pc = $2000, cpu.sp = $FD, foo = <unknown>, ram($2000) = $00".into()
-                ),
+                FormattedTrace("* = $2000, cpu.sp = $FD, foo = <unknown>, ram($2000) = $00".into()),
                 FormattedTrace("index = $00".into()),
                 FormattedTrace("index = $01".into()),
             ]

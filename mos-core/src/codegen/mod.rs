@@ -1,6 +1,7 @@
 mod analysis;
 mod config_extractor;
 mod config_validator;
+mod evaluator;
 mod opcodes;
 mod program_counter;
 mod source_map;
@@ -8,6 +9,7 @@ mod symbols;
 mod text_encoding;
 
 pub use analysis::*;
+pub use evaluator::*;
 pub use program_counter::*;
 pub use source_map::*;
 pub use symbols::*;
@@ -19,9 +21,8 @@ use crate::codegen::text_encoding::encode_text;
 use crate::errors::{CoreError, CoreResult};
 use crate::parser::code_map::Span;
 use crate::parser::{
-    AddressModifier, AddressingMode, ArgItem, Block, DataSize, Expression, ExpressionFactor,
-    ExpressionFactorFlags, Identifier, IdentifierPath, ImportArgs, Located, Mnemonic, ParseTree,
-    TextEncoding, Token, VariableType,
+    AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath, ImportArgs, Located,
+    Mnemonic, ParseTree, TextEncoding, Token, VariableType,
 };
 use fs_err as fs;
 use itertools::Itertools;
@@ -29,7 +30,7 @@ use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct CodegenOptions {
@@ -214,15 +215,6 @@ pub struct MacroDefinition {
     block: Vec<Token>,
 }
 
-pub trait FunctionCallback {
-    fn expected_args(&self) -> usize;
-    fn apply(
-        &self,
-        ctx: &mut CodegenContext,
-        args: &[&Located<Expression>],
-    ) -> CoreResult<Option<i64>>;
-}
-
 pub struct CodegenContext {
     tree: Arc<ParseTree>,
     options: CodegenOptions,
@@ -234,11 +226,10 @@ pub struct CodegenContext {
     segments: HashMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
 
-    functions: HashMap<String, Arc<dyn FunctionCallback + Send + Sync>>,
+    functions: FunctionMap,
 
     symbols: SymbolTable<Symbol>,
-    undefined: Arc<Mutex<HashSet<UndefinedSymbol>>>,
-    suppress_undefined_symbol_registration: bool,
+    undefined: HashSet<UndefinedSymbol>,
     current_scope: IdentifierPath,
     current_scope_nx: SymbolIndex,
 
@@ -254,24 +245,20 @@ pub struct UndefinedSymbol {
     span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq)]
 pub enum TestElement {
     Assertion(Assertion),
     Trace(Trace),
 }
 
-#[derive(Clone, Debug, PartialEq)]
 pub struct Assertion {
-    pub pc: ProgramCounter,
-    pub expression: Located<Expression>,
+    pub expr: Located<Expression>,
+    pub extracted_evaluator: ExtractedEvaluator,
     pub failure_message: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
 pub struct Trace {
-    pub pc: ProgramCounter,
-    pub args: Vec<ArgItem<Expression>>,
-    pub evaluated: Vec<Option<i64>>,
+    pub exprs: Vec<Located<Expression>>,
+    pub extracted_evaluator: ExtractedEvaluator,
 }
 
 impl CodegenContext {
@@ -287,8 +274,7 @@ impl CodegenContext {
             current_segment: None,
             functions: HashMap::new(),
             symbols: SymbolTable::default(),
-            undefined: Arc::new(Mutex::new(HashSet::new())),
-            suppress_undefined_symbol_registration: false,
+            undefined: HashSet::new(),
             current_scope: IdentifierPath::empty(),
             current_scope_nx: SymbolIndex::new(0),
             test_elements: vec![],
@@ -304,6 +290,10 @@ impl CodegenContext {
         &self.segments
     }
 
+    pub fn functions(&self) -> &FunctionMap {
+        &self.functions
+    }
+
     pub fn symbols(&self) -> &SymbolTable<Symbol> {
         &self.symbols
     }
@@ -316,8 +306,8 @@ impl CodegenContext {
         &self.tree
     }
 
-    pub fn test_elements(&self) -> &[TestElement] {
-        &self.test_elements
+    pub fn remove_test_elements(&mut self) -> Vec<TestElement> {
+        std::mem::replace(&mut self.test_elements, vec![])
     }
 
     pub fn source_map(&self) -> &SourceMap {
@@ -363,7 +353,7 @@ impl CodegenContext {
 
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
-        self.undefined.lock().unwrap().clear();
+        self.undefined.clear();
         self.test_elements.clear();
         self.source_map.clear();
     }
@@ -395,6 +385,7 @@ impl CodegenContext {
         let span = symbol.span;
         let id = id.into();
         let path = self.current_scope.join(&id);
+        let ty = symbol.ty.clone();
         log::trace!(
             "Inserting symbol: '{}' with value '{:?}' (inside scope '{}')",
             &id,
@@ -402,7 +393,7 @@ impl CodegenContext {
             &self.current_scope
         );
 
-        let mut should_mark_as_undefined = false;
+        let mut maybe_require_new_pass = false;
         let symbol_nx = self.symbols.try_index(self.current_scope_nx, &id);
         log::trace!("Trying to lookup symbol '{}': {:?}", &id, symbol_nx);
         let symbol_nx = match symbol_nx {
@@ -427,13 +418,7 @@ impl CodegenContext {
                                 existing
                             );
 
-                            should_mark_as_undefined = match &symbol.ty {
-                                SymbolType::Label => true,
-                                SymbolType::TestCase => true,
-                                SymbolType::Variable => false,
-                                SymbolType::Constant => true,
-                                SymbolType::MacroArgument => false,
-                            };
+                            maybe_require_new_pass = true;
                         }
 
                         log::trace!("Symbol was updated with index: {:?}", symbol_nx);
@@ -445,6 +430,7 @@ impl CodegenContext {
                             symbol_nx
                         );
                         self.symbols.update_data(symbol_nx, symbol);
+                        maybe_require_new_pass = true;
                     }
                 }
 
@@ -460,8 +446,21 @@ impl CodegenContext {
         };
 
         if let Some(span) = span {
-            if should_mark_as_undefined {
-                self.mark_undefined(span, &id);
+            if maybe_require_new_pass {
+                let require_new_pass = match ty {
+                    SymbolType::Label => true,
+                    SymbolType::TestCase => true,
+                    SymbolType::Variable => false, // variables can change without requiring a new pass
+                    SymbolType::Constant => true,
+                    SymbolType::MacroArgument => false, // macro arguments will never change anyway
+                };
+                if require_new_pass {
+                    self.undefined.insert(UndefinedSymbol {
+                        scope_nx: self.current_scope_nx,
+                        id,
+                        span,
+                    });
+                }
             }
 
             log::trace!(
@@ -484,48 +483,13 @@ impl CodegenContext {
         self.symbols.remove(nx);
     }
 
-    pub fn get_symbol(
-        &self,
-        scope_nx: SymbolIndex,
-        id: &IdentifierPath,
-    ) -> Option<(SymbolIndex, &Symbol)> {
-        log::trace!("Trying to get symbol value: {}", id);
-        if let Some(nx) = self.symbols.query(scope_nx, id) {
-            return self.symbols.try_get(nx).map(|s| (nx, s));
-        }
-
-        None
-    }
-
-    fn get_symbol_data<I: Into<IdentifierPath>>(&self, span: Span, id: I) -> Option<&SymbolData> {
-        let id = id.into();
-        match self.get_symbol(self.current_scope_nx, &id) {
-            Some((_, s)) => Some(&s.data),
-            None => {
-                // Undefined symbol!
-                if !self.suppress_undefined_symbol_registration {
-                    self.mark_undefined(span, id);
-                }
-
-                None
-            }
-        }
-    }
-
-    fn mark_undefined<I: Into<IdentifierPath>>(&self, span: Span, id: I) {
-        if !self.suppress_undefined_symbol_registration {
-            let id = id.into();
-            log::trace!(
-                "Marking '{}' as undefined within scope: '{}'.",
-                &id,
-                self.current_scope
-            );
-            self.undefined.lock().unwrap().insert(UndefinedSymbol {
-                scope_nx: self.current_scope_nx,
-                id,
-                span,
-            });
-        }
+    pub fn get_evaluator(&self) -> Evaluator {
+        Evaluator::new(
+            self.current_scope_nx,
+            &self.symbols,
+            &self.functions,
+            self.try_current_target_pc(),
+        )
     }
 
     fn error<T, M: Into<String>>(&self, span: Span, message: M) -> CoreResult<T> {
@@ -575,7 +539,7 @@ impl CodegenContext {
         match token {
             Token::Align { value, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    if let Some(align) = self.evaluate_expression(value)? {
+                    if let Some(align) = self.evaluate_expression(value, true)? {
                         let padding = (align - (pc.as_i64() % align)) as usize;
                         let mut bytes = Vec::new();
                         bytes.resize(padding, 0u8);
@@ -588,10 +552,12 @@ impl CodegenContext {
                 failure_message,
                 ..
             } => {
-                if let Some(pc) = self.try_current_target_pc() {
+                if self.try_current_target_pc().is_some() {
+                    let extracted_evaluator = self.get_evaluator().extract();
+
                     self.test_elements.push(TestElement::Assertion(Assertion {
-                        pc,
-                        expression: value.clone(),
+                        expr: value.clone(),
+                        extracted_evaluator,
                         failure_message: failure_message.as_ref().map(|f| f.text.data.clone()),
                     }));
                 }
@@ -602,7 +568,7 @@ impl CodegenContext {
             Token::Data { values, size } => {
                 let exprs = values.iter().map(|(expr, _comma)| expr).collect_vec();
                 for expr in exprs {
-                    if let Some(value) = self.evaluate_expression(expr)? {
+                    if let Some(value) = self.evaluate_expression(expr, true)? {
                         let bytes = match &size.data {
                             DataSize::Byte => vec![value as u8],
                             DataSize::Word => (value as u16).to_le_bytes().to_vec(),
@@ -688,7 +654,7 @@ impl CodegenContext {
             Token::If {
                 value, if_, else_, ..
             } => {
-                if let Some(value) = self.evaluate_expression(value)? {
+                if let Some(value) = self.evaluate_expression(value, true)? {
                     if value != 0 {
                         self.emit_tokens(&if_.inner)?;
                     } else if let Some(e) = else_ {
@@ -784,7 +750,11 @@ impl CodegenContext {
                                             ));
                                         }
                                         None => {
-                                            self.mark_undefined(arg.span, original_path);
+                                            self.undefined.insert(UndefinedSymbol {
+                                                scope_nx: self.current_scope_nx,
+                                                id: original_path.clone(),
+                                                span: arg.span,
+                                            });
                                         }
                                     }
                                 }
@@ -826,7 +796,7 @@ impl CodegenContext {
                 }
 
                 let data = match &i.operand {
-                    Some(op) => self.evaluate_expression(&op.expr)?.map(|value| {
+                    Some(op) => self.evaluate_expression(&op.expr, true)?.map(|value| {
                         let register_suffix = op.suffix.as_ref().map(|s| s.register.data);
                         (value, op.addressing_mode, register_suffix)
                     }),
@@ -900,7 +870,7 @@ impl CodegenContext {
                 block,
                 ..
             } => {
-                if let Some(loop_count) = self.evaluate_expression(expr)? {
+                if let Some(loop_count) = self.evaluate_expression(expr, true)? {
                     for index in 0..loop_count {
                         self.with_scope(loop_scope, Some(block), |s| {
                             s.add_symbol(
@@ -933,15 +903,18 @@ impl CodegenContext {
             }
             Token::MacroInvocation { id: name, args, .. } => {
                 let def = self
-                    .get_symbol_data(name.span, &name.data)
-                    .map(|d| d.as_macro_definition().clone());
+                    .get_evaluator()
+                    .get_symbol(self.current_scope_nx, &IdentifierPath::from(&name.data))
+                    .map(|(_, symbol)| symbol.data.as_macro_definition().clone());
 
                 if let Some(def) = def {
-                    self.expect_args(name.span, args.len(), def.args.len())?;
+                    self.get_evaluator()
+                        .expect_args(name.span, args.len(), def.args.len())
+                        .map_err(|e| self.map_evaluation_error(e))?;
                     self.with_scope(&name.data, None, |s| {
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
-                            if let Some(value) = s.evaluate_expression(expr)? {
+                            if let Some(value) = s.evaluate_expression(expr, true)? {
                                 s.add_symbol(
                                     &arg_name.data,
                                     s.symbol(arg_name.span, value, SymbolType::MacroArgument),
@@ -960,7 +933,7 @@ impl CodegenContext {
                 }
             }
             Token::ProgramCounterDefinition { value, .. } => {
-                if let Some(pc) = self.evaluate_expression(value)? {
+                if let Some(pc) = self.evaluate_expression(value, true)? {
                     if let Some(seg) = self.try_current_segment_mut() {
                         seg.pc = pc.into();
                     }
@@ -1014,25 +987,18 @@ impl CodegenContext {
                 self.emit(text.text.span, &encode_text(&text.text.data, encoding))?;
             }
             Token::Trace { args, .. } => {
-                if let Some(pc) = self.try_current_target_pc() {
-                    // Try to evaluate arguments already, in case they are only temporarily available
-                    let mut evaluated = vec![];
-                    for (expr, _) in args {
-                        let val = self.with_suppressed_undefined_registration(|s| {
-                            s.evaluate_expression(expr)
-                        });
-                        evaluated.push(val.ok().flatten());
-                    }
+                if self.try_current_target_pc().is_some() {
+                    let exprs = args.iter().map(|a| a.0.clone()).collect_vec();
+                    let extracted_evaluator = self.get_evaluator().extract();
 
                     self.test_elements.push(TestElement::Trace(Trace {
-                        pc,
-                        args: args.clone(),
-                        evaluated,
+                        exprs,
+                        extracted_evaluator,
                     }));
                 }
             }
             Token::VariableDefinition { ty, id, value, .. } => {
-                if let Some(value) = self.evaluate_expression(&value)? {
+                if let Some(value) = self.evaluate_expression(&value, true)? {
                     let ty = match &ty.data {
                         VariableType::Constant => SymbolType::Constant,
                         VariableType::Variable => SymbolType::Variable,
@@ -1046,101 +1012,47 @@ impl CodegenContext {
         Ok(())
     }
 
-    pub fn evaluate_expression(&mut self, expr: &Located<Expression>) -> CoreResult<Option<i64>> {
-        match &expr.data {
-            Expression::Factor { factor, flags, .. } => {
-                match self.evaluate_expression_factor(factor)? {
-                    Some(mut value) => {
-                        if flags.contains(ExpressionFactorFlags::NOT) {
-                            if value == 0 {
-                                value = 1
-                            } else {
-                                value = 0
-                            }
-                        }
-                        if flags.contains(ExpressionFactorFlags::NEG) {
-                            value = -value;
-                        }
-                        Ok(Some(value))
-                    }
-                    None => Ok(None),
-                }
-            }
-            Expression::BinaryExpression(bin) => {
-                let lhs = self.evaluate_expression(&bin.lhs)?;
-                let rhs = self.evaluate_expression(&bin.rhs)?;
-                match (lhs, rhs) {
-                    (Some(lhs), Some(rhs)) => Ok(Some(bin.op.data.apply(lhs, rhs))),
-                    _ => Ok(None),
-                }
-            }
+    fn map_evaluation_error(&self, error: EvaluationError) -> CoreError {
+        let location = self.tree.code_map.look_up_span(error.span);
+        CoreError::Codegen {
+            location,
+            message: error.message,
         }
     }
 
-    fn expect_args(&self, span: Span, actual: usize, expected: usize) -> CoreResult<()> {
-        if actual != expected {
-            self.error(
-                span,
-                format!("expected {} arguments, got {}", expected, actual),
-            )
-        } else {
-            Ok(())
-        }
-    }
-
-    fn evaluate_expression_factor(
+    pub fn evaluate_expression(
         &mut self,
-        factor: &Located<ExpressionFactor>,
+        expr: &Located<Expression>,
+        track_usage: bool,
     ) -> CoreResult<Option<i64>> {
-        match &factor.data {
-            ExpressionFactor::CurrentProgramCounter(_) => Ok(Some(
-                self.try_current_target_pc().unwrap_or_default().as_i64(),
-            )),
-            ExpressionFactor::ExprParens { inner, .. } => self.evaluate_expression(inner),
-            ExpressionFactor::FunctionCall { name, args, .. } => {
-                match self.functions.get(name.data.as_str()) {
-                    Some(callback) => {
-                        let callback = callback.clone();
-                        self.expect_args(name.span, args.len(), callback.expected_args())?;
-                        callback.apply(self, &args.iter().map(|(expr, _)| expr).collect_vec())
-                    }
-                    None => self.error(name.span, format!("unknown function: {}", &name.data)),
-                }
-            }
-            ExpressionFactor::IdentifierValue { path, modifier } => {
+        let ctx = self.get_evaluator();
+        let result = ctx
+            .evaluate_expression(expr, track_usage)
+            .map_err(|e| self.map_evaluation_error(e))?;
+        if track_usage {
+            for usage in ctx.usages() {
                 self.analysis.add_symbol_usage(
                     &self.symbols,
                     self.current_scope_nx,
-                    &path.data,
-                    path.span,
+                    &usage.path.data,
+                    usage.path.span,
                 );
 
-                Ok(self
-                    .get_symbol_data(path.span, &path.data)
-                    .map(|d| d.as_i64())
-                    .map(|val| match modifier.as_ref().map(|m| &m.data) {
-                        Some(AddressModifier::HighByte) => (val >> 8) & 255,
-                        Some(AddressModifier::LowByte) => val & 255,
-                        _ => val,
-                    }))
+                if usage.symbol_index.is_none() {
+                    self.undefined.insert(UndefinedSymbol {
+                        scope_nx: self.current_scope_nx,
+                        id: usage.path.data,
+                        span: usage.path.span,
+                    });
+                }
             }
-            ExpressionFactor::Number { value: number, .. } => Ok(Some(number.data.value())),
         }
+        Ok(result)
     }
 
     fn symbol_definition(&mut self, symbol_nx: SymbolIndex) -> &mut Definition {
         self.analysis
             .get_or_create_definition_mut(DefinitionType::Symbol(symbol_nx))
-    }
-
-    fn with_suppressed_undefined_registration<F: FnOnce(&mut Self) -> CoreResult<Option<i64>>>(
-        &mut self,
-        f: F,
-    ) -> CoreResult<Option<i64>> {
-        self.suppress_undefined_symbol_registration = true;
-        let result = f(self);
-        self.suppress_undefined_symbol_registration = false;
-        result
     }
 
     fn with_scope<F: FnOnce(&mut Self) -> CoreResult<()>>(
@@ -1197,11 +1109,11 @@ impl CodegenContext {
 
             fn apply(
                 &self,
-                ctx: &mut CodegenContext,
+                ctx: &Evaluator,
                 args: &[&Located<Expression>],
-            ) -> CoreResult<Option<i64>> {
+            ) -> EvaluationResult<Option<i64>> {
                 let expr = args.first().unwrap();
-                match ctx.with_suppressed_undefined_registration(|s| s.evaluate_expression(expr)) {
+                match ctx.evaluate_expression(expr, false) {
                     Ok(result) => {
                         if result.is_some() {
                             Ok(Some(1))
@@ -1262,7 +1174,7 @@ pub fn codegen(
             // There were segments, so we have emitted something.
 
             // Nothing undefined anymore? Then we're done!
-            if ctx.undefined.lock().unwrap().is_empty() {
+            if ctx.undefined.is_empty() {
                 break;
             }
 
@@ -1270,12 +1182,14 @@ pub fn codegen(
             // If not, it is truly undefined.
             let errors = ctx
                 .undefined
-                .lock()
-                .unwrap()
                 .iter()
                 .sorted_by_key(|k| k.id.to_string())
                 .filter_map(|item| {
-                    if ctx.get_symbol(item.scope_nx, &item.id).is_none() {
+                    if ctx
+                        .get_evaluator()
+                        .get_symbol(item.scope_nx, &item.id)
+                        .is_none()
+                    {
                         Some(CoreError::Codegen {
                             location: ctx.tree.code_map.look_up_span(item.span),
                             message: format!("unknown identifier: {}", item.id),
@@ -1303,6 +1217,7 @@ mod tests {
     use crate::errors::CoreResult;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
+    use mos_testing::enable_default_tracing;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -1773,6 +1688,7 @@ mod tests {
 
     #[test]
     fn can_modify_addresses() -> CoreResult<()> {
+        enable_default_tracing();
         let ctx = test_codegen("lda #<my_label\nlda #>my_label\nmy_label: nop")?;
         assert_eq!(
             ctx.current_segment().range_data(),

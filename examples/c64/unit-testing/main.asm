@@ -17,10 +17,10 @@
 
                     .test will_fail {
                         .loop 2 {
-                            .trace (index, cpu.pc, ram($2000))
+                            .trace (index, *, ram($2000))
                         }
                         .trace
-                        .assert cpu.pc == $1234
+                        .assert * == $1234
 
                         // will never be reached
                         nop

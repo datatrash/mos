@@ -64,7 +64,9 @@ impl<'a> ConfigExtractor<'a> {
     pub fn try_get_i64(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<Option<i64>> {
         match self.try_get_located_token(key) {
             Some(lt) => match &lt.data {
-                Token::Expression(expr) => Ok(ctx.evaluate_expression(&lt.map(|_| expr.clone()))?),
+                Token::Expression(expr) => {
+                    Ok(ctx.evaluate_expression(&lt.map(|_| expr.clone()), true)?)
+                }
                 _ => Ok(None),
             },
             None => Ok(None),
