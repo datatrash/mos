@@ -185,7 +185,7 @@ impl SymbolData {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SymbolType {
     Label,
     TestCase,
@@ -383,9 +383,9 @@ impl CodegenContext {
         symbol: Symbol,
     ) -> CoreResult<SymbolIndex> {
         let span = symbol.span;
+        let ty = symbol.ty.clone();
         let id = id.into();
         let path = self.current_scope.join(&id);
-        let ty = symbol.ty.clone();
         log::trace!(
             "Inserting symbol: '{}' with value '{:?}' (inside scope '{}')",
             &id,
@@ -446,21 +446,14 @@ impl CodegenContext {
         };
 
         if let Some(span) = span {
-            if maybe_require_new_pass {
-                let require_new_pass = match ty {
-                    SymbolType::Label => true,
-                    SymbolType::TestCase => true,
-                    SymbolType::Variable => false, // variables can change without requiring a new pass
-                    SymbolType::Constant => true,
-                    SymbolType::MacroArgument => false, // macro arguments will never change anyway
-                };
-                if require_new_pass {
-                    self.undefined.insert(UndefinedSymbol {
-                        scope_nx: self.current_scope_nx,
-                        id,
-                        span,
-                    });
-                }
+            // Variables don't require a new pass, since if they update somewhere in the assembly process
+            // they would keep triggering new passes
+            if maybe_require_new_pass && ty != SymbolType::Variable {
+                self.undefined.insert(UndefinedSymbol {
+                    scope_nx: self.current_scope_nx,
+                    id,
+                    span,
+                });
             }
 
             log::trace!(
@@ -922,12 +915,14 @@ impl CodegenContext {
                     self.with_scope(&name.data, None, |s| {
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
-                            if let Some(value) = s.evaluate_expression(expr, true)? {
-                                s.add_symbol(
-                                    &arg_name.data,
-                                    s.symbol(arg_name.span, value, SymbolType::MacroArgument),
-                                )?;
-                            }
+
+                            // Regardless if evaluation succeeds, we should create the macro argument symbol here, because
+                            // it will be undefined otherwise
+                            let value = s.evaluate_expression(expr, true)?.unwrap_or_default();
+                            s.add_symbol(
+                                &arg_name.data,
+                                s.symbol(arg_name.span, value, SymbolType::MacroArgument),
+                            )?;
                         }
 
                         s.emit_tokens(&def.block)?;
@@ -1655,6 +1650,7 @@ mod tests {
 
     #[test]
     fn can_access_forward_declared_labels() -> CoreResult<()> {
+        enable_default_tracing();
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(
             ctx.current_segment().range_data(),
@@ -1778,6 +1774,24 @@ mod tests {
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xad, 0x04, 0xc0, 0x00]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_macros_across_files() -> CoreResult<()> {
+        let src = InMemoryParsingSource::new()
+            .add(
+                "test.asm",
+                ".import * from \"bar\"\nmy_macro(foo)\nfoo: nop",
+            )
+            .add("bar", ".macro my_macro(arg) {\n   lda arg\n}")
+            .into();
+
+        let ctx = test_codegen_parsing_source(src, CodegenOptions::default())?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xad, 0x03, 0xc0, 0xea]
         );
         Ok(())
     }
