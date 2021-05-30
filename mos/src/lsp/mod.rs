@@ -2,6 +2,7 @@ mod code_lens;
 mod completion;
 mod documents;
 mod formatting;
+mod hover;
 mod references;
 mod rename;
 mod semantic_highlighting;
@@ -17,6 +18,7 @@ use crate::lsp::documents::{
     DidChangeTextDocumentHandler, DidCloseTextDocumentHandler, DidOpenTextDocumentHandler,
 };
 use crate::lsp::formatting::{FormattingRequestHandler, OnTypeFormattingRequestHandler};
+use crate::lsp::hover::HoverRequestHandler;
 use crate::lsp::references::{
     DocumentHighlightRequestHandler, FindReferencesHandler, GoToDefinitionHandler,
 };
@@ -26,8 +28,9 @@ use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    CodeLensOptions, CompletionOptions, DocumentOnTypeFormattingOptions, InitializeParams, OneOf,
-    RenameOptions, ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
+    CodeLensOptions, CompletionOptions, DocumentOnTypeFormattingOptions, HoverClientCapabilities,
+    HoverProviderCapability, InitializeParams, MarkupKind, OneOf, RenameOptions,
+    ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
 };
 use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
 use mos_core::errors::{CoreError, CoreResult};
@@ -320,6 +323,7 @@ impl LspServer {
         lsp.register_request_handler(RenameHandler {});
         lsp.register_request_handler(CompletionHandler {});
         lsp.register_request_handler(CodeLensRequestHandler {});
+        lsp.register_request_handler(HoverRequestHandler {});
         lsp.register_notification_handler(DidOpenTextDocumentHandler {});
         lsp.register_notification_handler(DidChangeTextDocumentHandler {});
         lsp.register_notification_handler(DidCloseTextDocumentHandler {});
@@ -360,6 +364,7 @@ impl LspServer {
             code_lens_provider: Some(CodeLensOptions {
                 resolve_provider: None,
             }),
+            hover_provider: Some(HoverProviderCapability::Simple(true)),
             ..Default::default()
         };
         let server_capabilities = serde_json::to_value(&caps).unwrap();

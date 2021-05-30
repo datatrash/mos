@@ -139,7 +139,7 @@ impl State {
 }
 
 /// Any trivia we may encounter during parsing
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Trivia {
     /// One or more spaces or tabs
     Whitespace(String),

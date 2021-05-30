@@ -470,7 +470,11 @@ impl CodegenContext {
             );
             let parent_scope = self.current_scope_nx;
             self.symbol_definition(symbol_nx)
-                .set_location(DefinitionLocation { parent_scope, span });
+                .set_location(DefinitionLocation {
+                    parent_scope,
+                    span,
+                    trivia: vec![],
+                });
         }
 
         Ok(symbol_nx)
@@ -479,8 +483,9 @@ impl CodegenContext {
     fn remove_symbol<I: Into<IdentifierPath>>(&mut self, id: I) {
         let id = id.into();
         let path = self.current_scope.join(&id);
-        let nx = self.symbols.index(self.symbols.root, path);
-        self.symbols.remove(nx);
+        if let Some(nx) = self.symbols.try_index(self.symbols.root, path) {
+            self.symbols.remove(nx);
+        }
     }
 
     pub fn get_evaluator(&self) -> Evaluator {
@@ -682,10 +687,12 @@ impl CodegenContext {
                     def.set_location(DefinitionLocation {
                         parent_scope: self.current_scope_nx,
                         span: imported_file.file.span,
+                        trivia: vec![],
                     });
                     def.add_usage(DefinitionLocation {
                         parent_scope: self.current_scope_nx,
                         span: filename.text.span,
+                        trivia: vec![],
                     });
 
                     self.with_scope(import_scope, block.as_ref(), |s| {
@@ -773,6 +780,7 @@ impl CodegenContext {
                                         DefinitionLocation {
                                             parent_scope: new_parent_nx,
                                             span,
+                                            trivia: vec![],
                                         },
                                     );
                                 }
