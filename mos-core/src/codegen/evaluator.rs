@@ -40,13 +40,13 @@ pub struct SymbolUsage {
     pub path: Located<IdentifierPath>,
 }
 
-pub struct ExtractedEvaluator {
+pub struct SymbolSnapshot {
     pub current_scope_nx: SymbolIndex,
     pub symbols: SymbolTable<Symbol>,
     pub pc: ProgramCounter,
 }
 
-impl ExtractedEvaluator {
+impl SymbolSnapshot {
     pub fn get_evaluator<'a>(&'a self, functions: &'a FunctionMap) -> Evaluator<'a> {
         Evaluator::new(
             self.current_scope_nx,
@@ -78,9 +78,9 @@ impl<'a> Evaluator<'a> {
         Mutex::into_inner(u).unwrap()
     }
 
-    pub fn extract(&self) -> ExtractedEvaluator {
+    pub fn snapshot(&self) -> SymbolSnapshot {
         let symbols = self.symbols.clone();
-        ExtractedEvaluator {
+        SymbolSnapshot {
             symbols,
             current_scope_nx: self.current_scope_nx,
             pc: self.pc.unwrap(),

@@ -288,16 +288,14 @@ impl TestRunner {
         let mut active_assertions = vec![];
         let mut idx = 0;
         while idx < self.test_elements.len() {
-            let should_extract = match &self.test_elements[idx] {
+            let should_remove = match &self.test_elements[idx] {
                 TestElement::Assertion(e) => {
-                    e.extracted_evaluator.pc.as_u16() == self.cpu.get_program_counter()
+                    e.snapshot.pc.as_u16() == self.cpu.get_program_counter()
                 }
-                TestElement::Trace(e) => {
-                    e.extracted_evaluator.pc.as_u16() == self.cpu.get_program_counter()
-                }
+                TestElement::Trace(e) => e.snapshot.pc.as_u16() == self.cpu.get_program_counter(),
             };
 
-            if should_extract {
+            if should_remove {
                 match self.test_elements.remove(idx) {
                     TestElement::Assertion(a) => {
                         active_assertions.push(a);
@@ -315,7 +313,7 @@ impl TestRunner {
             let fmt = match trace.exprs.is_empty() {
                 true => format_cpu_details(&self.cpu, false),
                 false => {
-                    self.add_symbols(&mut trace.extracted_evaluator.symbols);
+                    self.add_symbols(&mut trace.snapshot.symbols);
                     format_trace(trace, &self.ctx.lock().unwrap())?
                 }
             };
@@ -323,11 +321,9 @@ impl TestRunner {
         }
 
         for mut assertion in active_assertions {
-            self.add_symbols(&mut assertion.extracted_evaluator.symbols);
+            self.add_symbols(&mut assertion.snapshot.symbols);
             let ctx = self.ctx.lock().unwrap();
-            let evaluator = assertion
-                .extracted_evaluator
-                .get_evaluator(&ctx.functions());
+            let evaluator = assertion.snapshot.get_evaluator(&ctx.functions());
             let eval_result = evaluator
                 .evaluate_expression(&assertion.expr, false)
                 .ok()
@@ -498,7 +494,7 @@ impl TestRunner {
 fn format_trace(trace: Trace, ctx: &CodegenContext) -> MosResult<String> {
     let mut eval = vec![];
     for expr in &trace.exprs {
-        let evaluator = trace.extracted_evaluator.get_evaluator(ctx.functions());
+        let evaluator = trace.snapshot.get_evaluator(ctx.functions());
         let value = evaluator.evaluate_expression(expr, false).ok().flatten();
 
         let value = match value {

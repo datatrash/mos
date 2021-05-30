@@ -252,13 +252,13 @@ pub enum TestElement {
 
 pub struct Assertion {
     pub expr: Located<Expression>,
-    pub extracted_evaluator: ExtractedEvaluator,
+    pub snapshot: SymbolSnapshot,
     pub failure_message: Option<String>,
 }
 
 pub struct Trace {
     pub exprs: Vec<Located<Expression>>,
-    pub extracted_evaluator: ExtractedEvaluator,
+    pub snapshot: SymbolSnapshot,
 }
 
 impl CodegenContext {
@@ -552,12 +552,12 @@ impl CodegenContext {
                 failure_message,
                 ..
             } => {
-                if self.try_current_target_pc().is_some() {
-                    let extracted_evaluator = self.get_evaluator().extract();
+                if self.try_current_target_pc().is_some() && self.options.active_test.is_some() {
+                    let extracted_evaluator = self.get_evaluator().snapshot();
 
                     self.test_elements.push(TestElement::Assertion(Assertion {
                         expr: value.clone(),
-                        extracted_evaluator,
+                        snapshot: extracted_evaluator,
                         failure_message: failure_message.as_ref().map(|f| f.text.data.clone()),
                     }));
                 }
@@ -987,13 +987,13 @@ impl CodegenContext {
                 self.emit(text.text.span, &encode_text(&text.text.data, encoding))?;
             }
             Token::Trace { args, .. } => {
-                if self.try_current_target_pc().is_some() {
+                if self.try_current_target_pc().is_some() && self.options.active_test.is_some() {
                     let exprs = args.iter().map(|a| a.0.clone()).collect_vec();
-                    let extracted_evaluator = self.get_evaluator().extract();
+                    let extracted_evaluator = self.get_evaluator().snapshot();
 
                     self.test_elements.push(TestElement::Trace(Trace {
                         exprs,
-                        extracted_evaluator,
+                        snapshot: extracted_evaluator,
                     }));
                 }
             }
@@ -2010,14 +2010,21 @@ mod tests {
 
     #[test]
     fn no_tests_compiled_when_no_active_test_specified() -> CoreResult<()> {
-        let ctx = test_codegen_with_options(
-            ".test a { nop }\nasl",
+        let mut ctx = test_codegen_with_options(
+            r"
+            .test a {
+                nop
+                .trace
+                .assert foo
+            }
+            asl",
             CodegenOptions {
                 active_test: None,
                 ..Default::default()
             },
         )?;
         assert_eq!(ctx.current_segment().range_data(), vec![0x0a]);
+        assert_eq!(ctx.remove_test_elements().len(), 0);
 
         Ok(())
     }
