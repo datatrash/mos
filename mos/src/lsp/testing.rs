@@ -2,12 +2,12 @@ use crate::errors::MosResult;
 use crate::lsp::{LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
 use lsp_types::request::{
-    Completion, GotoDefinition, PrepareRenameRequest, References, Rename, Request,
+    Completion, GotoDefinition, HoverRequest, PrepareRenameRequest, References, Rename, Request,
 };
 use lsp_types::{
     CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
-    GotoDefinitionResponse, Position, ReferenceContext, ReferenceParams, RenameParams,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
+    GotoDefinitionResponse, Hover, HoverParams, Position, ReferenceContext, ReferenceParams,
+    RenameParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
 };
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
@@ -109,6 +109,23 @@ impl LspServer {
             context: ReferenceContext {
                 include_declaration,
             },
+        }))?;
+        Ok(self.lock_context().pop_response())
+    }
+
+    pub fn hover<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        position: Position,
+    ) -> MosResult<Option<Hover>> {
+        self.handle_message(request::<HoverRequest>(HoverParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier {
+                    uri: Url::from_file_path(path)?,
+                },
+                position,
+            },
+            work_done_progress_params: Default::default(),
         }))?;
         Ok(self.lock_context().pop_response())
     }

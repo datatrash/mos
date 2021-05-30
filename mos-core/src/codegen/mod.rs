@@ -463,11 +463,7 @@ impl CodegenContext {
             );
             let parent_scope = self.current_scope_nx;
             self.symbol_definition(symbol_nx)
-                .set_location(DefinitionLocation {
-                    parent_scope,
-                    span,
-                    trivia: vec![],
-                });
+                .set_location(DefinitionLocation { parent_scope, span });
         }
 
         Ok(symbol_nx)
@@ -680,12 +676,10 @@ impl CodegenContext {
                     def.set_location(DefinitionLocation {
                         parent_scope: self.current_scope_nx,
                         span: imported_file.file.span,
-                        trivia: vec![],
                     });
                     def.add_usage(DefinitionLocation {
                         parent_scope: self.current_scope_nx,
                         span: filename.text.span,
-                        trivia: vec![],
                     });
 
                     self.with_scope(import_scope, block.as_ref(), |s| {
@@ -773,7 +767,6 @@ impl CodegenContext {
                                         DefinitionLocation {
                                             parent_scope: new_parent_nx,
                                             span,
-                                            trivia: vec![],
                                         },
                                     );
                                 }

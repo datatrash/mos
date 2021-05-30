@@ -28,9 +28,9 @@ use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
 use lsp_types::{
-    CodeLensOptions, CompletionOptions, DocumentOnTypeFormattingOptions, HoverClientCapabilities,
-    HoverProviderCapability, InitializeParams, MarkupKind, OneOf, RenameOptions,
-    ServerCapabilities, TextDocumentPositionParams, TextDocumentSyncKind, Url,
+    CodeLensOptions, CompletionOptions, DocumentOnTypeFormattingOptions, HoverProviderCapability,
+    InitializeParams, OneOf, RenameOptions, ServerCapabilities, TextDocumentPositionParams,
+    TextDocumentSyncKind, Url,
 };
 use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
 use mos_core::errors::{CoreError, CoreResult};

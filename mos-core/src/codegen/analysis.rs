@@ -1,7 +1,7 @@
 use crate::codegen::symbols::SymbolIndex;
 use crate::codegen::{QueryTraversalStep, Symbol, SymbolTable};
 use crate::parser::code_map::{LineCol, Span, SpanLoc};
-use crate::parser::{IdentifierPath, ParseTree, Trivia};
+use crate::parser::{IdentifierPath, ParseTree};
 use itertools::Itertools;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -19,7 +19,6 @@ pub struct Definition {
 pub struct DefinitionLocation {
     pub parent_scope: SymbolIndex,
     pub span: Span,
-    pub trivia: Vec<Trivia>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -156,7 +155,6 @@ impl Analysis {
                     def.add_usage(DefinitionLocation {
                         parent_scope,
                         span: span.subspan(pos, pos + id.len() as u64),
-                        trivia: vec![],
                     });
                 }
                 pos += id.len() as u64 + 1; // add 1 for the dot separator in the path
