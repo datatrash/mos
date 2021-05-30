@@ -254,7 +254,7 @@ fn emit_semantic_ast(ast: &[Token]) -> Vec<SemTok> {
 fn emit_semantic(token: &Token) -> SemTokBuilder {
     let b = SemTokBuilder::new();
 
-    match &token {
+    match token {
         Token::Align { tag: _, value } => b.expression(&value.data),
         Token::Assert {
             tag: _,

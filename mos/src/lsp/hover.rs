@@ -3,7 +3,6 @@ use crate::impl_request_handler;
 use crate::lsp::{LspContext, RequestHandler};
 use lsp_types::request::HoverRequest;
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind};
-use mos_core::LINE_ENDING;
 
 pub struct HoverRequestHandler;
 
@@ -39,7 +38,7 @@ impl RequestHandler<HoverRequest> for HoverRequestHandler {
                 return if comments.is_empty() {
                     Ok(None)
                 } else {
-                    let value = comments.join(LINE_ENDING);
+                    let value = comments.join("\n");
 
                     Ok(Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {

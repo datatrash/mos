@@ -6,6 +6,7 @@ mod hover;
 mod references;
 mod rename;
 mod semantic_highlighting;
+mod symbols;
 #[cfg(test)]
 mod testing;
 mod traits;
@@ -24,6 +25,7 @@ use crate::lsp::references::{
 };
 use crate::lsp::rename::*;
 use crate::lsp::semantic_highlighting::SemanticTokensFullRequestHandler;
+use crate::lsp::symbols::DocumentSymbolRequestHandler;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Connection, IoThreads, Message, RequestId};
 use lsp_types::notification::Notification;
@@ -324,6 +326,7 @@ impl LspServer {
         lsp.register_request_handler(CompletionHandler {});
         lsp.register_request_handler(CodeLensRequestHandler {});
         lsp.register_request_handler(HoverRequestHandler {});
+        lsp.register_request_handler(DocumentSymbolRequestHandler {});
         lsp.register_notification_handler(DidOpenTextDocumentHandler {});
         lsp.register_notification_handler(DidChangeTextDocumentHandler {});
         lsp.register_notification_handler(DidCloseTextDocumentHandler {});
@@ -352,6 +355,7 @@ impl LspServer {
                 more_trigger_character: None,
             }),
             document_highlight_provider: Some(OneOf::Left(true)),
+            document_symbol_provider: Some(OneOf::Left(true)),
             rename_provider: Some(OneOf::Right(RenameOptions {
                 prepare_provider: Some(true),
                 work_done_progress_options: Default::default(),
