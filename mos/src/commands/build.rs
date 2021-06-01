@@ -119,13 +119,12 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use anyhow::Result;
-    use itertools::Itertools;
-
     use crate::commands::{build_command, BuildOptions, SymbolType};
     use crate::config::Config;
+    use anyhow::Result;
+    use itertools::Itertools;
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
 
     #[test]
     fn can_invoke_build() -> Result<()> {
@@ -159,6 +158,44 @@ mod tests {
     #[test]
     fn build_include() -> Result<()> {
         build_and_compare("include.asm")
+    }
+
+    #[test]
+    fn build_all_examples() -> Result<()> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("examples");
+        build_all_examples_in(path)
+    }
+
+    fn build_all_examples_in(path: PathBuf) -> Result<()> {
+        log::trace!("Enumerating: {:?}", &path);
+        for item in std::fs::read_dir(&path)? {
+            let item = item?;
+
+            // Contains mos.toml?
+            if item.path().is_file() && item.path().file_name() == Some(OsStr::new("mos.toml")) {
+                // Yes, so build
+                log::trace!("`--> Running a build in: {:?}", &path);
+                let toml = std::fs::read_to_string(item.path())?;
+                build_command(&path, &Config::from_toml(toml.as_str())?)?;
+            }
+
+            // Recurse further
+            if item.path().is_dir()
+                && !item
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with(".")
+                && item.path().file_name() != Some(OsStr::new("target"))
+            {
+                build_all_examples_in(item.path())?;
+            }
+        }
+        Ok(())
     }
 
     fn build_and_compare(input: &str) -> Result<()> {
