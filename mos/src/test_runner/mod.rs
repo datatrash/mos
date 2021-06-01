@@ -1,16 +1,16 @@
 use crate::errors::{MosError, MosResult};
+use crate::memory_accessor::{ensure_ram_fn, MemoryAccessor};
 use crate::utils::paint;
 use ansi_term::Colour;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
-    codegen, Assertion, CodegenContext, CodegenOptions, EvaluationResult, Evaluator,
-    FunctionCallback, Symbol, SymbolIndex, SymbolTable, SymbolType, TestElement, Trace,
+    codegen, Assertion, CodegenContext, CodegenOptions, SymbolType, TestElement, Trace,
 };
 use mos_core::parser;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
-use mos_core::parser::{Expression, IdentifierPath, Located};
+use mos_core::parser::IdentifierPath;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::DerefMut;
@@ -122,22 +122,15 @@ pub fn enumerate_test_cases(
             ..Default::default()
         },
     )?;
-    struct DummyFn;
-    impl FunctionCallback for DummyFn {
-        fn expected_args(&self) -> usize {
-            1
+    struct DummyMemoryAccessor;
+    impl MemoryAccessor for DummyMemoryAccessor {
+        fn read(&mut self, _: u16, _: usize) -> Vec<u8> {
+            vec![]
         }
 
-        fn apply(
-            &self,
-            _: &Evaluator,
-            _: &[&Located<Expression>],
-        ) -> EvaluationResult<Option<i64>> {
-            Ok(None)
-        }
+        fn write(&mut self, _: u16, _: &[u8]) {}
     }
-    ctx.register_fn("ram", DummyFn {});
-    ctx.register_fn("ram16", DummyFn {});
+    ensure_ram_fn(&mut ctx, Box::new(DummyMemoryAccessor {}));
     let test_cases = ctx
         .symbols()
         .all()
@@ -197,51 +190,19 @@ impl TestRunner {
         let mut cpu = MOS6502::new();
         cpu.set_program_counter(test_pc as u16);
 
-        struct RamFn {
+        struct RamMemoryAccessor {
             ram: Arc<Mutex<BasicRam>>,
-            word: bool,
         }
-        impl FunctionCallback for RamFn {
-            fn expected_args(&self) -> usize {
-                1
+        impl MemoryAccessor for RamMemoryAccessor {
+            fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
+                self.ram.lock().unwrap().ram[address as usize..address as usize + len].to_vec()
             }
 
-            fn apply(
-                &self,
-                ctx: &Evaluator,
-                args: &[&Located<Expression>],
-            ) -> EvaluationResult<Option<i64>> {
-                let expr = args.first().unwrap();
-                match ctx.evaluate_expression(expr, false) {
-                    Ok(result) => Ok(result.map(|address| {
-                        let address = address as usize;
-                        let ram = &self.ram.lock().unwrap().ram;
-                        if self.word {
-                            let lo = ram.get(address).cloned().unwrap_or_default() as i64;
-                            let hi = ram.get(address + 1).cloned().unwrap_or_default() as i64;
-                            hi * 256 + lo
-                        } else {
-                            ram.get(address).cloned().unwrap_or_default() as i64
-                        }
-                    })),
-                    Err(_) => Ok(None),
-                }
+            fn write(&mut self, _address: u16, _bytes: &[u8]) {
+                todo!()
             }
         }
-        ctx.register_fn(
-            "ram",
-            RamFn {
-                ram: ram.clone(),
-                word: false,
-            },
-        );
-        ctx.register_fn(
-            "ram16",
-            RamFn {
-                ram: ram.clone(),
-                word: true,
-            },
-        );
+        ensure_ram_fn(&mut ctx, Box::new(RamMemoryAccessor { ram: ram.clone() }));
 
         let test_elements = ctx.remove_test_elements();
         Ok(Self {
@@ -256,6 +217,10 @@ impl TestRunner {
 
     pub fn cpu(&self) -> &MOS6502 {
         &self.cpu
+    }
+
+    pub fn ram(&self) -> Vec<u8> {
+        self.ram.lock().unwrap().ram.clone()
     }
 
     pub fn num_cycles(&self) -> usize {
@@ -313,7 +278,10 @@ impl TestRunner {
             let fmt = match trace.exprs.is_empty() {
                 true => format_cpu_details(&self.cpu, false),
                 false => {
-                    self.add_symbols(&mut trace.snapshot.symbols);
+                    trace
+                        .snapshot
+                        .symbols
+                        .ensure_cpu_symbols(self.registers(), self.cpu.get_status_register());
                     format_trace(trace, &self.ctx.lock().unwrap())?
                 }
             };
@@ -321,7 +289,10 @@ impl TestRunner {
         }
 
         for mut assertion in active_assertions {
-            self.add_symbols(&mut assertion.snapshot.symbols);
+            assertion
+                .snapshot
+                .symbols
+                .ensure_cpu_symbols(self.registers(), self.cpu.get_status_register());
             let ctx = self.ctx.lock().unwrap();
             let evaluator = assertion.snapshot.get_evaluator(&ctx.functions());
             let eval_result = evaluator
@@ -359,6 +330,15 @@ impl TestRunner {
             .execute_instruction(self.ram.lock().unwrap().deref_mut());
 
         Ok(ExecuteResult::Running)
+    }
+
+    pub fn registers(&self) -> HashMap<String, i64> {
+        let mut r = HashMap::new();
+        r.insert("SP".into(), self.cpu.get_stack_pointer() as i64);
+        r.insert("A".into(), self.cpu.get_accumulator() as i64);
+        r.insert("X".into(), self.cpu.get_x_register() as i64);
+        r.insert("Y".into(), self.cpu.get_y_register() as i64);
+        r
     }
 
     pub fn step_over(&mut self) -> MosResult<ExecuteResult> {
@@ -410,84 +390,6 @@ impl TestRunner {
                 }
             }
         }
-    }
-
-    fn add_symbols(&self, symbols: &mut SymbolTable<Symbol>) {
-        let root = symbols.root;
-        let cpu_nx = symbols.ensure_index(root, "cpu");
-        let cpu_flags_nx = symbols.ensure_index(cpu_nx, "flags");
-
-        let mut add = |parent_nx: SymbolIndex, id: &str, data: i64, ty: SymbolType| {
-            let symbol = Symbol {
-                pass_idx: 0,
-                span: None,
-                data: data.into(),
-                ty,
-            };
-            symbols.insert(parent_nx, id, symbol);
-        };
-
-        add(
-            cpu_nx,
-            "sp",
-            self.cpu.get_stack_pointer() as i64,
-            SymbolType::Label,
-        );
-        add(
-            cpu_nx,
-            "a",
-            self.cpu.get_accumulator() as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_nx,
-            "x",
-            self.cpu.get_x_register() as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_nx,
-            "y",
-            self.cpu.get_y_register() as i64,
-            SymbolType::Constant,
-        );
-
-        add(
-            cpu_flags_nx,
-            "carry",
-            (self.cpu.get_status_register() & 1) as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_flags_nx,
-            "zero",
-            (self.cpu.get_status_register() & 2) as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_flags_nx,
-            "interrupt_disable",
-            (self.cpu.get_status_register() & 4) as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_flags_nx,
-            "decimal",
-            (self.cpu.get_status_register() & 8) as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_flags_nx,
-            "overflow",
-            (self.cpu.get_status_register() & 64) as i64,
-            SymbolType::Constant,
-        );
-        add(
-            cpu_flags_nx,
-            "negative",
-            (self.cpu.get_status_register() & 128) as i64,
-            SymbolType::Constant,
-        );
     }
 }
 

@@ -3,6 +3,7 @@ pub mod vice;
 
 use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::{MosError, MosResult};
+use crate::memory_accessor::MemoryAccessor;
 use crossbeam_channel::{bounded, Receiver, TryRecvError};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
 use mos_core::parser::code_map::SpanLoc;
@@ -12,26 +13,24 @@ use std::net::TcpStream;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub struct Machine {
-    adapter: Arc<Mutex<Box<dyn MachineAdapter + Send>>>,
+    adapter: Arc<RwLock<Box<dyn MachineAdapter + Send + Sync>>>,
     poller: JoinHandle<MosResult<()>>,
 }
 
 impl Machine {
-    pub fn new(adapter: Box<dyn MachineAdapter + Send>) -> Self {
-        let adapter = Arc::new(Mutex::new(adapter));
-
+    pub fn new(adapter: Arc<RwLock<Box<dyn MachineAdapter + Send + Sync>>>) -> Self {
         let adap = adapter.clone();
         let poller = thread::spawn(move || {
             log::debug!("Starting machine poller thread.");
             loop {
                 {
-                    let mut adap = adap.lock().unwrap();
+                    let mut adap = adap.write().unwrap();
                     if !adap.is_connected()? {
                         break;
                     }
@@ -47,8 +46,12 @@ impl Machine {
         Self { adapter, poller }
     }
 
-    pub fn adapter(&self) -> MutexGuard<Box<dyn MachineAdapter + Send>> {
-        self.adapter.lock().unwrap()
+    pub fn adapter(&self) -> RwLockReadGuard<Box<dyn MachineAdapter + Send + Sync>> {
+        self.adapter.read().unwrap()
+    }
+
+    pub fn adapter_mut(&self) -> RwLockWriteGuard<Box<dyn MachineAdapter + Send + Sync>> {
+        self.adapter.write().unwrap()
     }
 
     pub fn join(self) {
@@ -69,7 +72,7 @@ pub enum MachineEvent {
     Disconnected,
 }
 
-pub trait MachineAdapter {
+pub trait MachineAdapter: MemoryAccessor {
     /// If the adapter is doing its own code generation instead of the one that the LSP is doing, we can grab that here
     /// to generate the breakpoint mappings etc
     fn codegen(&self) -> Option<Arc<Mutex<CodegenContext>>>;

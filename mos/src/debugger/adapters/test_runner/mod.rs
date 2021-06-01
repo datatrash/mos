@@ -4,6 +4,7 @@ use crate::debugger::adapters::{
 };
 use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::MosResult;
+use crate::memory_accessor::MemoryAccessor;
 use crate::test_runner::{format_cpu_details, ExecuteResult, TestRunner};
 use crate::utils::paint;
 use ansi_term::Colour;
@@ -155,7 +156,7 @@ impl TestRunnerAdapter {
         parsing_source: Arc<Mutex<dyn ParsingSource>>,
         source_path: P,
         test_case_path: &IdentifierPath,
-    ) -> MosResult<Box<dyn MachineAdapter + Send>> {
+    ) -> MosResult<Box<dyn MachineAdapter + Send + Sync>> {
         Ok(Box::new(Self::new(
             launch_args.no_debug.unwrap_or_default(),
             parsing_source,
@@ -171,6 +172,16 @@ impl TestRunnerAdapter {
         self.event_sender
             .send(MachineEvent::RunningStateChanged { old, new })?;
         Ok(())
+    }
+}
+
+impl MemoryAccessor for TestRunnerAdapter {
+    fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
+        self.runner.lock().unwrap().ram()[address as usize..address as usize + len].to_vec()
+    }
+
+    fn write(&mut self, _address: u16, _bytes: &[u8]) {
+        unimplemented!()
     }
 }
 

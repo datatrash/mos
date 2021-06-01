@@ -13,6 +13,7 @@ use crate::debugger::protocol::{Event, EventMessage, ProtocolMessage, Request, R
 use crate::debugger::types::*;
 use crate::errors::{MosError, MosResult};
 use crate::lsp::LspContext;
+use crate::memory_accessor::{ensure_ram_fn, MemoryAccessor};
 use crossbeam_channel::Select;
 use itertools::Itertools;
 use mos_core::codegen::{CodegenContext, ProgramCounter, SymbolIndex};
@@ -23,7 +24,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::JoinHandle;
 
 pub struct DebugServer {
@@ -70,16 +71,30 @@ impl DebugServer {
     }
 }
 
-#[allow(dead_code)]
 pub struct DebugSession {
     lsp: Arc<Mutex<LspContext>>,
     machine: Option<Machine>,
+    codegen: Option<Arc<Mutex<CodegenContext>>>,
     port: u16,
     conn: Option<Arc<DebugConnection>>,
     pending_events: Vec<ProtocolMessage>,
     no_debug: bool,
     lines_start_at_1: bool,
     columns_start_at_1: bool,
+}
+
+struct MachineAdapterMemoryAccessor {
+    adapter: Arc<RwLock<Box<dyn MachineAdapter + Send + Sync>>>,
+}
+
+impl MemoryAccessor for MachineAdapterMemoryAccessor {
+    fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
+        self.adapter.write().unwrap().read(address, len)
+    }
+
+    fn write(&mut self, _address: u16, _bytes: &[u8]) {
+        unimplemented!()
+    }
 }
 
 trait Handler<R: Request> {
@@ -128,7 +143,7 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
                 &tr.test_case_name.as_str().into(),
             ) {
                 Ok(adapter) => {
-                    conn.machine = Some(Machine::new(adapter));
+                    conn.create_machine(adapter);
                     Ok(())
                 }
                 Err(e) => {
@@ -142,7 +157,7 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
         } else if args.vice_path.is_some() {
             match ViceAdapter::launch(&args, prg_path) {
                 Ok(adapter) => {
-                    conn.machine = Some(Machine::new(adapter));
+                    conn.create_machine(adapter);
                     Ok(())
                 }
                 Err(e) => {
@@ -164,7 +179,7 @@ struct ConfigurationDoneRequestHandler {}
 
 impl Handler<ConfigurationDoneRequest> for ConfigurationDoneRequestHandler {
     fn handle(&self, conn: &mut DebugSession, _args: ()) -> MosResult<()> {
-        conn.machine_adapter()?.start()?;
+        conn.machine_adapter_mut()?.start()?;
         Ok(())
     }
 }
@@ -173,7 +188,7 @@ struct DisconnectRequestHandler {}
 
 impl Handler<DisconnectRequest> for DisconnectRequestHandler {
     fn handle(&self, conn: &mut DebugSession, _args: DisconnectRequestArguments) -> MosResult<()> {
-        conn.machine_adapter()?.stop()?;
+        conn.machine_adapter_mut()?.stop()?;
         log::debug!("Machine adapter is STOPPED");
         let machine = std::mem::replace(&mut conn.machine, None);
         machine.unwrap().join();
@@ -190,7 +205,7 @@ impl Handler<ContinueRequest> for ContinueRequestHandler {
         conn: &mut DebugSession,
         _args: ContinueArguments,
     ) -> MosResult<ContinueResponse> {
-        conn.machine_adapter()?.resume()?;
+        conn.machine_adapter_mut()?.resume()?;
         Ok(ContinueResponse {
             all_threads_continued: Some(true),
         })
@@ -222,8 +237,7 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
         let mut stack_frames = vec![];
         let state = conn.machine_adapter()?.running_state()?;
         if let MachineRunningState::Stopped(pc) = state {
-            if let Some(codegen) = conn.codegen().as_ref() {
-                let codegen = codegen.lock().unwrap();
+            if let Some(codegen) = conn.codegen() {
                 if let Some(offset) = codegen.source_map().address_to_offset(pc) {
                     let sl = codegen.tree().code_map.look_up_span(offset.span);
 
@@ -292,8 +306,7 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
                         // Locals
                         let mut result = HashMap::new();
                         let state = conn.machine_adapter()?.running_state()?;
-                        if let Some(codegen) = conn.codegen().as_ref() {
-                            let codegen = codegen.lock().unwrap();
+                        if let Some(codegen) = conn.codegen() {
                             if let Some(scope) = current_scope(&state, &codegen)? {
                                 for (id, symbol_nx) in
                                     codegen.symbols().visible_symbols(scope, true)
@@ -390,21 +403,13 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
                     .map(|c| if conn.columns_start_at_1 { c - 1 } else { c });
 
                 // A single location may result in multiple breakpoints
-                let pcs = match conn.codegen().as_ref() {
-                    Some(codegen) => {
-                        let codegen = codegen.lock().unwrap();
-                        codegen
-                            .source_map()
-                            .line_col_to_offsets(
-                                &codegen.tree().code_map,
-                                &source_path,
-                                line,
-                                column,
-                            )
-                            .into_iter()
-                            .map(|o| ProgramCounter::new(o.pc.start)..ProgramCounter::new(o.pc.end))
-                            .collect_vec()
-                    }
+                let pcs = match conn.codegen() {
+                    Some(codegen) => codegen
+                        .source_map()
+                        .line_col_to_offsets(&codegen.tree().code_map, &source_path, line, column)
+                        .into_iter()
+                        .map(|o| ProgramCounter::new(o.pc.start)..ProgramCounter::new(o.pc.end))
+                        .collect_vec(),
                     None => vec![],
                 };
 
@@ -424,7 +429,9 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
             .flatten()
             .collect();
 
-        let validated = conn.machine_adapter()?.set_breakpoints(&source_path, bps)?;
+        let validated = conn
+            .machine_adapter_mut()?
+            .set_breakpoints(&source_path, bps)?;
 
         let breakpoints = validated
             .into_iter()
@@ -448,7 +455,7 @@ struct NextRequestHandler {}
 
 impl Handler<NextRequest> for NextRequestHandler {
     fn handle(&self, conn: &mut DebugSession, _args: NextArguments) -> MosResult<()> {
-        conn.machine_adapter()?.next()?;
+        conn.machine_adapter_mut()?.next()?;
         Ok(())
     }
 }
@@ -457,7 +464,7 @@ struct StepInRequestHandler {}
 
 impl Handler<StepInRequest> for StepInRequestHandler {
     fn handle(&self, conn: &mut DebugSession, _args: StepInArguments) -> MosResult<()> {
-        conn.machine_adapter()?.step_in()?;
+        conn.machine_adapter_mut()?.step_in()?;
         Ok(())
     }
 }
@@ -466,7 +473,7 @@ struct StepOutRequestHandler {}
 
 impl Handler<StepOutRequest> for StepOutRequestHandler {
     fn handle(&self, conn: &mut DebugSession, _args: StepOutArguments) -> MosResult<()> {
-        conn.machine_adapter()?.step_out()?;
+        conn.machine_adapter_mut()?.step_out()?;
         Ok(())
     }
 }
@@ -475,7 +482,7 @@ struct PauseRequestHandler {}
 
 impl Handler<PauseRequest> for PauseRequestHandler {
     fn handle(&self, conn: &mut DebugSession, _args: PauseArguments) -> MosResult<()> {
-        conn.machine_adapter()?.pause()?;
+        conn.machine_adapter_mut()?.pause()?;
         Ok(())
     }
 }
@@ -484,9 +491,16 @@ struct EvaluateRequestHandler {}
 
 impl EvaluateRequestHandler {
     fn evaluate(&self, conn: &mut DebugSession, expr: &str) -> MosResult<EvaluateResponse> {
-        let state = conn.machine_adapter()?.running_state()?;
-        if let Some(codegen) = conn.codegen().as_ref() {
-            let codegen = codegen.lock().unwrap();
+        let (registers, flags, state) = {
+            let adapter = conn.machine_adapter()?;
+            let registers = adapter.registers()?;
+            let flags = adapter.flags()?;
+            let state = adapter.running_state()?;
+            (registers, flags, state)
+        };
+
+        if let Some(mut codegen) = conn.codegen() {
+            codegen.symbols_mut().ensure_cpu_symbols(registers, flags);
             if let Some(scope) = current_scope(&state, &codegen)? {
                 let expression = parse_expression(&expr)?;
                 let evaluator = codegen.get_evaluator_for_scope(scope);
@@ -541,37 +555,11 @@ fn current_scope(
     Ok(None)
 }
 
-enum CodegenRef<'a> {
-    Adapter(
-        (
-            MutexGuard<'a, Box<dyn MachineAdapter + Send>>,
-            MutexGuard<'a, LspContext>,
-        ),
-    ),
-    Lsp(MutexGuard<'a, LspContext>),
-}
-
-impl<'a> CodegenRef<'a> {
-    fn as_ref(&'a self) -> Option<Arc<Mutex<CodegenContext>>> {
-        match self {
-            CodegenRef::Adapter((machine, lsp)) => {
-                match machine.codegen() {
-                    Some(c) => Some(c),
-                    None => {
-                        // machine adapter has no codegen, fall back to LSP
-                        lsp.codegen()
-                    }
-                }
-            }
-            CodegenRef::Lsp(lsp) => lsp.codegen(),
-        }
-    }
-}
-
 impl DebugSession {
     pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
         Self {
             lsp,
+            codegen: None,
             machine: None,
             port,
             conn: None,
@@ -580,6 +568,27 @@ impl DebugSession {
             lines_start_at_1: false,
             columns_start_at_1: false,
         }
+    }
+
+    fn create_machine(&mut self, adapter: Box<dyn MachineAdapter + Send + Sync>) {
+        if let Some(cg) = adapter.codegen() {
+            self.codegen = Some(cg);
+        } else {
+            self.codegen = self.lsp.lock().unwrap().codegen();
+        }
+        let adapter = Arc::new(RwLock::new(adapter));
+
+        if let Some(codegen) = &self.codegen {
+            let mut codegen = codegen.lock().unwrap();
+            ensure_ram_fn(
+                &mut codegen,
+                Box::new(MachineAdapterMemoryAccessor {
+                    adapter: adapter.clone(),
+                }),
+            );
+        }
+
+        self.machine = Some(Machine::new(adapter));
     }
 
     fn line(&self, line: usize) -> usize {
@@ -602,17 +611,22 @@ impl DebugSession {
         self.lsp.lock().unwrap()
     }
 
-    fn codegen(&self) -> CodegenRef {
-        if let Some(machine) = self.machine.as_ref() {
-            CodegenRef::Adapter((machine.adapter(), self.lock_lsp()))
-        } else {
-            CodegenRef::Lsp(self.lock_lsp())
+    fn codegen(&self) -> Option<MutexGuard<CodegenContext>> {
+        self.codegen.as_ref().map(|cg| cg.lock().unwrap())
+    }
+
+    fn machine_adapter(&self) -> MosResult<RwLockReadGuard<Box<dyn MachineAdapter + Send + Sync>>> {
+        match self.machine.as_ref() {
+            Some(m) => Ok(m.adapter()),
+            None => Err(MosError::Unknown),
         }
     }
 
-    fn machine_adapter(&self) -> MosResult<MutexGuard<Box<dyn MachineAdapter + Send>>> {
+    fn machine_adapter_mut(
+        &self,
+    ) -> MosResult<RwLockWriteGuard<Box<dyn MachineAdapter + Send + Sync>>> {
         match self.machine.as_ref() {
-            Some(m) => Ok(m.adapter()),
+            Some(m) => Ok(m.adapter_mut()),
             None => Err(MosError::Unknown),
         }
     }
@@ -875,12 +889,15 @@ mod tests {
     use super::*;
     use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
+    use mos_testing::enable_default_tracing;
     use std::thread;
     use std::time::Duration;
 
     #[test]
     fn evaluate() -> MosResult<()> {
+        enable_default_tracing();
         let src = r".test a {
+                         ldx #123
                          foo: nop
                          {
                              foo: asl
@@ -890,21 +907,24 @@ mod tests {
         let mut session = launch_session_and_break(
             src,
             vec![MachineBreakpoint {
-                line: 1,
+                line: 2,
                 column: None,
-                range: ProgramCounter::new(0x2000)..ProgramCounter::new(0x2000),
+                range: ProgramCounter::new(0x2002)..ProgramCounter::new(0x2002),
             }],
         )?;
 
         let response = EvaluateRequestHandler {}.evaluate(&mut session, "ram(foo)")?;
         assert_eq!(response.result, "234".to_string()); // 234 = 'nop'
 
+        let response = EvaluateRequestHandler {}.evaluate(&mut session, "cpu.x")?;
+        assert_eq!(response.result, "123".to_string());
+
         let mut session = launch_session_and_break(
             src,
             vec![MachineBreakpoint {
-                line: 3,
+                line: 4,
                 column: None,
-                range: ProgramCounter::new(0x2001)..ProgramCounter::new(0x2001),
+                range: ProgramCounter::new(0x2003)..ProgramCounter::new(0x2003),
             }],
         )?;
 
@@ -940,7 +960,7 @@ mod tests {
         )?;
 
         session
-            .machine_adapter()?
+            .machine_adapter_mut()?
             .set_breakpoints("main.asm", breakpoints)?;
 
         ConfigurationDoneRequestHandler {}.handle(&mut session, ())?;

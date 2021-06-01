@@ -21,6 +21,8 @@ mod debugger;
 mod errors;
 /// Language Server Protocol implementation
 mod lsp;
+/// MemoryAccessor trait
+mod memory_accessor;
 /// Unit Test runner
 mod test_runner;
 /// Miscellaneous utility methods

@@ -2,6 +2,7 @@ pub mod protocol;
 
 use crate::debugger::adapters::vice::protocol::*;
 use crate::debugger::adapters::*;
+use crate::memory_accessor::MemoryAccessor;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -25,6 +26,7 @@ pub struct ViceAdapter {
     breakpoints: Vec<ViceBreakpoint>,
     event_sender: Sender<MachineEvent>,
     event_receiver: Receiver<MachineEvent>,
+    received_memory: Vec<u8>,
 }
 
 #[derive(Clone)]
@@ -33,6 +35,26 @@ struct ViceBreakpoint {
     source_path: String,
     requested: MachineBreakpoint,
     range: Range<u16>,
+}
+
+impl MemoryAccessor for ViceAdapter {
+    fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
+        let _ = self.send(ViceRequest::MemoryGet(MemoryDescriptor {
+            cause_side_effects: false,
+            start: address,
+            end: address + len as u16 - 1,
+            memory_space: 0,
+            bank_id: 0,
+        }));
+        while self.received_memory.is_empty() {
+            let _ = self.handle_responses(true);
+        }
+        std::mem::replace(&mut self.received_memory, vec![])
+    }
+
+    fn write(&mut self, _address: u16, _bytes: &[u8]) {
+        unimplemented!()
+    }
 }
 
 impl MachineAdapter for ViceAdapter {
@@ -220,6 +242,7 @@ impl ViceAdapter {
             breakpoints: vec![],
             event_sender,
             event_receiver,
+            received_memory: vec![],
         };
 
         Box::new(adapter)
@@ -228,7 +251,7 @@ impl ViceAdapter {
     pub fn launch<P: Into<PathBuf>>(
         launch_args: &LaunchRequestArguments,
         binary_path: P,
-    ) -> MosResult<Box<dyn MachineAdapter + Send>> {
+    ) -> MosResult<Box<dyn MachineAdapter + Send + Sync>> {
         let binary_path = binary_path.into();
         let port = find_available_port();
         let monitor_address = format!("ip4://127.0.0.1:{}", port);
@@ -339,6 +362,9 @@ impl ViceAdapter {
             }
             ViceResponse::Registers(map) => {
                 self.current_register_values = map;
+            }
+            ViceResponse::MemoryGet(bytes) => {
+                self.received_memory = bytes;
             }
             ViceResponse::Exit => {
                 let old = self.running_state;

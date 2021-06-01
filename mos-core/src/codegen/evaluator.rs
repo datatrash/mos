@@ -15,12 +15,12 @@ pub struct EvaluationError {
     pub message: String,
 }
 
-pub type FunctionMap = HashMap<String, Arc<dyn FunctionCallback + Send + Sync>>;
+pub type FunctionMap = HashMap<String, Arc<Mutex<dyn FunctionCallback + Send + Sync>>>;
 
 pub trait FunctionCallback {
     fn expected_args(&self) -> usize;
     fn apply(
-        &self,
+        &mut self,
         ctx: &Evaluator,
         args: &[&Located<Expression>],
     ) -> EvaluationResult<Option<i64>>;
@@ -150,7 +150,7 @@ impl<'a> Evaluator<'a> {
             ExpressionFactor::FunctionCall { name, args, .. } => {
                 match self.functions.get(name.data.as_str()) {
                     Some(callback) => {
-                        let callback = callback.clone();
+                        let mut callback = callback.lock().unwrap();
                         self.expect_args(name.span, args.len(), callback.expected_args())?;
                         callback.apply(self, &args.iter().map(|(expr, _)| expr).collect_vec())
                     }

@@ -31,7 +31,7 @@ use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, Range};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct CodegenOptions {
@@ -1098,7 +1098,8 @@ impl CodegenContext {
         name: &str,
         function: F,
     ) {
-        self.functions.insert(name.into(), Arc::new(function));
+        self.functions
+            .insert(name.into(), Arc::new(Mutex::new(function)));
     }
 
     fn register_default_fns(&mut self) {
@@ -1109,7 +1110,7 @@ impl CodegenContext {
             }
 
             fn apply(
-                &self,
+                &mut self,
                 ctx: &Evaluator,
                 args: &[&Located<Expression>],
             ) -> EvaluationResult<Option<i64>> {

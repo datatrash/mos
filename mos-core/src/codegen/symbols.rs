@@ -1,3 +1,4 @@
+use crate::codegen::{Symbol, SymbolType};
 use crate::parser::{Identifier, IdentifierPath};
 use itertools::Itertools;
 use petgraph::graph::NodeIndex;
@@ -356,6 +357,73 @@ impl<S: Clone + Debug> SymbolTable<S> {
         for (child_id, child_nx) in self.children(nx) {
             self.all_impl(map, child_nx, path.join(child_id));
         }
+    }
+}
+
+impl SymbolTable<Symbol> {
+    pub fn ensure_cpu_symbols(&mut self, registers: HashMap<String, i64>, flags: u8) {
+        let root = self.root;
+        let cpu_nx = self.ensure_index(root, "cpu");
+        let cpu_flags_nx = self.ensure_index(cpu_nx, "flags");
+
+        let mut add = |parent_nx: SymbolIndex, id: &str, data: Option<&i64>, ty: SymbolType| {
+            if let Some(data) = data {
+                let symbol = Symbol {
+                    pass_idx: 0,
+                    span: None,
+                    data: (*data).into(),
+                    ty,
+                };
+
+                if let Some(symbol_nx) = self.try_index(parent_nx, id) {
+                    self.update_data(symbol_nx, symbol);
+                } else {
+                    self.insert(parent_nx, id, symbol);
+                }
+            }
+        };
+
+        add(cpu_nx, "sp", registers.get("SP"), SymbolType::Label);
+        add(cpu_nx, "a", registers.get("A"), SymbolType::Constant);
+        add(cpu_nx, "x", registers.get("X"), SymbolType::Constant);
+        add(cpu_nx, "y", registers.get("Y"), SymbolType::Constant);
+
+        add(
+            cpu_flags_nx,
+            "carry",
+            Some(&((flags & 1) as i64)),
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "zero",
+            Some(&((flags & 2) as i64)),
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "interrupt_disable",
+            Some(&((flags & 4) as i64)),
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "decimal",
+            Some(&((flags & 8) as i64)),
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "overflow",
+            Some(&((flags & 64) as i64)),
+            SymbolType::Constant,
+        );
+        add(
+            cpu_flags_nx,
+            "negative",
+            Some(&((flags & 128) as i64)),
+            SymbolType::Constant,
+        );
     }
 }
 
