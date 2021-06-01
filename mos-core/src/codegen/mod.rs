@@ -479,8 +479,12 @@ impl CodegenContext {
     }
 
     pub fn get_evaluator(&self) -> Evaluator {
+        self.get_evaluator_for_scope(self.current_scope_nx)
+    }
+
+    pub fn get_evaluator_for_scope(&self, scope_nx: SymbolIndex) -> Evaluator {
         Evaluator::new(
-            self.current_scope_nx,
+            scope_nx,
             &self.symbols,
             &self.functions,
             self.try_current_target_pc(),

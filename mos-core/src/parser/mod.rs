@@ -1,6 +1,6 @@
 use crate::errors::{CoreError, CoreResult};
 use crate::parser::code_map::{Span, SpanLoc};
-use crate::parser::source::ParsingSource;
+use crate::parser::source::{InMemoryParsingSource, ParsingSource};
 use anyhow::Context;
 pub use ast::*;
 pub use config_map::*;
@@ -1117,6 +1117,27 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
     Ok((input, fold_expressions(initial, remainder)))
 }
 
+/// Parses a standalone expression
+pub fn parse_expression(source: &str) -> CoreResult<Located<Expression>> {
+    let parsing_source = InMemoryParsingSource::new();
+    let parsing_source = parsing_source.add("expression.asm", source);
+    let state = State::new(parsing_source.into());
+    let state = Arc::new(Mutex::new(state));
+    {
+        let file = state.lock().unwrap().add_file("expression.asm")?;
+        let instance = ParserInstance::new(state.clone(), file);
+        let input = LocatedSpan::new_extra(source, instance);
+        let result = expression(input);
+        if result.is_ok() {
+            let (_, expr) = result.ok().unwrap();
+            return Ok(expr);
+        }
+    }
+
+    let state = Arc::try_unwrap(state).ok().unwrap().into_inner().unwrap();
+    Err(CoreError::Multiple(state.errors))
+}
+
 /// Parses an input file and returns a hopefully parsed file
 pub fn parse(
     filename: &Path,
@@ -1235,7 +1256,7 @@ mod test {
     }
 
     #[test]
-    fn parse_expression() {
+    fn parse_expressions() {
         check("lda #1 + 2", "LDA #1 + 2");
         check("lda #1     +    2", "LDA #1     +    2");
         check("lda #(1   +   2)", "LDA #(1   +   2)");
@@ -1251,6 +1272,17 @@ mod test {
         check(
             "lda  %11101   +   (  $ff  * -12367 ) / foo",
             "LDA  %11101   +   (  $ff  * -12367 ) / foo",
+        );
+    }
+
+    #[test]
+    fn parse_standalone_expression() {
+        let expr = parse_expression("lda  %11101   +   (  $ff  * -12367 ) / foo")
+            .ok()
+            .unwrap();
+        assert_eq!(
+            expr.data.to_string(),
+            "lda  %11101   +   (  $ff  * -12367 ) / foo"
         );
     }
 

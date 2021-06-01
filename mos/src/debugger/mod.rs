@@ -17,7 +17,7 @@ use crossbeam_channel::Select;
 use itertools::Itertools;
 use mos_core::codegen::{CodegenContext, ProgramCounter, SymbolIndex};
 use mos_core::errors::{format_error, ErrorFormattingOptions};
-use mos_core::parser::IdentifierPath;
+use mos_core::parser::parse_expression;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -488,26 +488,33 @@ impl EvaluateRequestHandler {
         if let Some(codegen) = conn.codegen().as_ref() {
             let codegen = codegen.lock().unwrap();
             if let Some(scope) = current_scope(&state, &codegen)? {
-                let expr_path = IdentifierPath::from(expr);
-                if let Some(symbol_nx) = codegen.symbols().query(scope, expr_path) {
-                    if let Some(symbol) = codegen.symbols().try_get(symbol_nx) {
-                        if let Some(val) = symbol.data.try_as_i64() {
-                            return Ok(EvaluateResponse {
-                                result: val.to_string(),
-                                ty: None,
-                                presentation_hint: None,
-                                variables_reference: 0,
-                                named_variables: None,
-                                indexed_variables: None,
-                                memory_reference: None,
-                            });
-                        }
+                let expression = parse_expression(&expr)?;
+                let evaluator = codegen.get_evaluator_for_scope(scope);
+                let result = match evaluator.evaluate_expression(&expression, true) {
+                    Ok(Some(val)) => val.to_string(),
+                    Ok(None) => {
+                        let ids = evaluator
+                            .usages()
+                            .into_iter()
+                            .map(|u| u.path.data.to_string())
+                            .join(", ");
+                        format!("unknown identifier(s): {}", ids)
                     }
-                }
+                    Err(e) => e.message,
+                };
+                return Ok(EvaluateResponse {
+                    result,
+                    ty: None,
+                    presentation_hint: None,
+                    variables_reference: 0,
+                    named_variables: None,
+                    indexed_variables: None,
+                    memory_reference: None,
+                });
             }
         }
 
-        Err(MosError::DebugAdapter("not available".into()))
+        Err(MosError::DebugAdapter("could not evaluate".into()))
     }
 }
 
@@ -873,8 +880,15 @@ mod tests {
 
     #[test]
     fn evaluate() -> MosResult<()> {
+        let src = r".test a {
+                         foo: nop
+                         {
+                             foo: asl
+                         }
+                         brk
+                     }";
         let mut session = launch_session_and_break(
-            ".test a {\nfoo: nop\nbrk\n}",
+            src,
             vec![MachineBreakpoint {
                 line: 1,
                 column: None,
@@ -882,8 +896,26 @@ mod tests {
             }],
         )?;
 
-        let response = EvaluateRequestHandler {}.evaluate(&mut session, "foo")?;
-        assert_eq!(response.result, "8192".to_string());
+        let response = EvaluateRequestHandler {}.evaluate(&mut session, "ram(foo)")?;
+        assert_eq!(response.result, "234".to_string()); // 234 = 'nop'
+
+        let mut session = launch_session_and_break(
+            src,
+            vec![MachineBreakpoint {
+                line: 3,
+                column: None,
+                range: ProgramCounter::new(0x2001)..ProgramCounter::new(0x2001),
+            }],
+        )?;
+
+        let response = EvaluateRequestHandler {}.evaluate(&mut session, "ram(foo)")?;
+        assert_eq!(response.result, "10".to_string()); // 10 = 'asl'
+
+        let response = EvaluateRequestHandler {}.evaluate(&mut session, "invalid")?;
+        assert_eq!(
+            response.result,
+            "unknown identifier(s): invalid".to_string()
+        );
 
         Ok(())
     }

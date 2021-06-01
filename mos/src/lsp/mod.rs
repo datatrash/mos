@@ -211,7 +211,7 @@ impl LspContext {
         self.parsing_source
             .lock()
             .unwrap()
-            .try_get_contents(&Path::new("mos.toml"))
+            .try_get_contents(&self.working_directory().join("mos.toml"))
             .map(|toml| Config::from_toml(&toml).ok())
             .flatten()
     }
