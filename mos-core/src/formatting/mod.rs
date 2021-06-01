@@ -25,7 +25,7 @@ impl Casing {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct MnemonicOptions {
     pub casing: Casing,
     pub register_casing: Casing,
@@ -41,14 +41,14 @@ impl Default for MnemonicOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum BracePosition {
     SameLine,
     NewLine,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct BraceOptions {
     pub position: BracePosition,
 }
@@ -62,7 +62,7 @@ impl Default for BraceOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct WhitespaceOptions {
     pub indent: usize,
     pub label_margin: usize,
@@ -80,7 +80,7 @@ impl Default for WhitespaceOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FormattingOptions {
     pub mnemonics: MnemonicOptions,
     pub braces: BraceOptions,
@@ -279,10 +279,19 @@ impl CodeFormatter {
                     .fmt(if_);
 
                 if let Some(tag_else) = tag_else {
-                    self.push(" ")
-                        .fmt(tag_else.as_ref())
-                        .push(" ")
-                        .fmt(else_.as_ref().unwrap());
+                    match self.options.braces.position {
+                        BracePosition::SameLine => {
+                            self.push(" ")
+                                .fmt(tag_else.as_ref())
+                                .push(" ")
+                                .fmt(else_.as_ref().unwrap());
+                        }
+                        BracePosition::NewLine => {
+                            self.push("\n")
+                                .fmt(tag_else.as_ref())
+                                .fmt(else_.as_ref().unwrap());
+                        }
+                    }
                 }
             }
             Token::Import {
@@ -431,7 +440,10 @@ impl CodeFormatter {
     }
 
     fn format_block(&mut self, block: &Block) {
-        self.push(&block.lparen.data).push("\n");
+        match self.options.braces.position {
+            BracePosition::SameLine => self.push(&block.lparen.data).push("\n"),
+            BracePosition::NewLine => self.push("\n").push(&block.lparen.data).push("\n"),
+        };
 
         // Since we want to deal with tokens and the trivia _after_ the token,
         // we have to grab the trivia from the 'rparen' and attach it to the inner token,
@@ -899,6 +911,37 @@ mod tests {
         let ast = parse_or_err("test.asm".as_ref(), get_source(source))?;
         let actual = format("test.asm", ast, FormattingOptions::default());
         xplat_eq(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn braces_newline() -> CoreResult<()> {
+        let ast = parse_or_err(
+            "test.asm".as_ref(),
+            get_source(".if 1 { nop } else { asl }"),
+        )?;
+        let actual = format(
+            "test.asm",
+            ast,
+            FormattingOptions {
+                braces: BraceOptions {
+                    position: BracePosition::NewLine,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        xplat_eq(
+            actual,
+            r"                    .if 1
+                    {
+                        nop
+                    }
+                    else
+                    {
+                        asl
+                    }",
+        );
         Ok(())
     }
 

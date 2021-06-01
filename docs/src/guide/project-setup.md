@@ -15,14 +15,14 @@ These are the default options under the `build` section in `mos.toml`:
 ```toml
 [build]
 entry = "main.asm"
-target_directory = "target"
+target-directory = "target"
 symbols = []
 ```
 
 | Key | Type | Description |
 | --- | ---- | ----------- |
 | `entry` | file name | The source file from which MOS should start assembling |
-| `target_directory` | directory name | The directory in which all output (binaries, symbols) is placed
+| `target-directory` | directory name | The directory in which all output (binaries, symbols) is placed
 | `symbols` | array | Which symbol files to generate. Currently only `"vice"` is supported.
 
 So, if you want to leave all defaults as-is, but would want to generate symbols for Vice, the `build` section in your `mos.toml` would look like this:

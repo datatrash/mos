@@ -14,7 +14,7 @@ use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct BuildOptions {
     pub entry: String,
     pub target_directory: String,
@@ -32,7 +32,7 @@ impl Default for BuildOptions {
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub enum SymbolType {
     Vice,
 }

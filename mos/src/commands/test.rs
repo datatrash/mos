@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct TestOptions {
     pub name: Option<String>,
     pub filter: Option<String>,
