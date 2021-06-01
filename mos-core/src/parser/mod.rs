@@ -1,6 +1,7 @@
 use crate::errors::{CoreError, CoreResult};
 use crate::parser::code_map::{Span, SpanLoc};
 use crate::parser::source::ParsingSource;
+use anyhow::Context;
 pub use ast::*;
 pub use config_map::*;
 pub use identifier::*;
@@ -1121,6 +1122,10 @@ pub fn parse(
     filename: &Path,
     source: Arc<Mutex<dyn ParsingSource>>,
 ) -> (Option<Arc<ParseTree>>, Option<CoreError>) {
+    if !source.lock().unwrap().exists(filename) {
+        return (None, Some(CoreError::BuildError(format!("Could not find '{}'. Tip: You can configure the build entrypoint in your mos.toml file, in the [build] section.", filename.to_str().expect("<could not parse>")))));
+    }
+
     let state = State::new(source);
     let state = Arc::new(Mutex::new(state));
 
@@ -1149,7 +1154,7 @@ pub fn parse(
 
         let file = state.lock().unwrap().add_file(to_import.clone());
         if file.is_err() {
-            return (None, file.err().unwrap().into());
+            return (None, file.err().with_context(|| "foe!").unwrap().into());
         }
         let file = file.ok().unwrap();
 
