@@ -8,7 +8,7 @@ mod rename;
 mod semantic_highlighting;
 mod symbols;
 #[cfg(test)]
-mod testing;
+pub mod testing;
 mod traits;
 
 use crate::config::Config;

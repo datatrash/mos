@@ -482,17 +482,13 @@ impl Handler<PauseRequest> for PauseRequestHandler {
 
 struct EvaluateRequestHandler {}
 
-impl Handler<EvaluateRequest> for EvaluateRequestHandler {
-    fn handle(
-        &self,
-        conn: &mut DebugSession,
-        args: EvaluateArguments,
-    ) -> MosResult<EvaluateResponse> {
+impl EvaluateRequestHandler {
+    fn evaluate(&self, conn: &mut DebugSession, expr: &str) -> MosResult<EvaluateResponse> {
         let state = conn.machine_adapter()?.running_state()?;
         if let Some(codegen) = conn.codegen().as_ref() {
             let codegen = codegen.lock().unwrap();
             if let Some(scope) = current_scope(&state, &codegen)? {
-                let expr_path = IdentifierPath::from(args.expression.as_str());
+                let expr_path = IdentifierPath::from(expr);
                 if let Some(symbol_nx) = codegen.symbols().query(scope, expr_path) {
                     if let Some(symbol) = codegen.symbols().try_get(symbol_nx) {
                         if let Some(val) = symbol.data.try_as_i64() {
@@ -512,6 +508,16 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
         }
 
         Err(MosError::DebugAdapter("not available".into()))
+    }
+}
+
+impl Handler<EvaluateRequest> for EvaluateRequestHandler {
+    fn handle(
+        &self,
+        conn: &mut DebugSession,
+        args: EvaluateArguments,
+    ) -> MosResult<EvaluateResponse> {
+        self.evaluate(conn, &args.expression)
     }
 }
 
@@ -854,5 +860,78 @@ impl DebugSession {
         }
         self.pending_events.clear();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp::testing::test_root;
+    use crate::lsp::LspServer;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn evaluate() -> MosResult<()> {
+        let mut session = launch_session_and_break(
+            ".test a {\nfoo: nop\nbrk\n}",
+            vec![MachineBreakpoint {
+                line: 1,
+                column: None,
+                range: ProgramCounter::new(0x2000)..ProgramCounter::new(0x2000),
+            }],
+        )?;
+
+        let response = EvaluateRequestHandler {}.evaluate(&mut session, "foo")?;
+        assert_eq!(response.result, "8192".to_string());
+
+        Ok(())
+    }
+
+    fn launch_session_and_break(
+        source: &str,
+        breakpoints: Vec<MachineBreakpoint>,
+    ) -> MosResult<DebugSession> {
+        let server = get_lsp(source)?;
+        let mut session = DebugSession::new(server.context(), 0);
+
+        LaunchRequestHandler {}.handle(
+            &mut session,
+            LaunchRequestArguments {
+                no_debug: None,
+                workspace: test_root().to_str().unwrap().into(),
+                vice_path: None,
+                test_runner: Some(TestRunnerArguments {
+                    test_case_name: "a".to_string(),
+                }),
+            },
+        )?;
+
+        session
+            .machine_adapter()?
+            .set_breakpoints("main.asm", breakpoints)?;
+
+        ConfigurationDoneRequestHandler {}.handle(&mut session, ())?;
+
+        // Wait for breakpoint to hit
+        while !matches!(
+            session.machine_adapter()?.running_state()?,
+            MachineRunningState::Stopped(_)
+        ) {
+            thread::sleep(Duration::from_millis(50));
+        }
+
+        Ok(session)
+    }
+
+    fn get_lsp(source: &str) -> MosResult<LspServer> {
+        let ctx = LspContext::new();
+        ctx.parsing_source()
+            .lock()
+            .unwrap()
+            .insert(&test_root().join("mos.toml"), "");
+        let mut server = LspServer::new(ctx);
+        server.did_open_text_document(test_root().join("main.asm"), source)?;
+        Ok(server)
     }
 }
