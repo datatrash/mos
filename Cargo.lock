@@ -409,6 +409,7 @@ dependencies = [
  "bitflags",
  "derive_more",
  "fs-err",
+ "indexmap",
  "itertools",
  "log",
  "loggerv",

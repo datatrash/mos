@@ -25,6 +25,7 @@ use crate::parser::{
     Mnemonic, ParseTree, TextEncoding, Token, VariableType,
 };
 use fs_err as fs;
+use indexmap::map::IndexMap;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
@@ -223,7 +224,7 @@ pub struct CodegenContext {
 
     pass_idx: usize,
 
-    segments: HashMap<Identifier, Segment>,
+    segments: IndexMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
 
     functions: FunctionMap,
@@ -270,7 +271,7 @@ impl CodegenContext {
             options,
             analysis,
             pass_idx: 0,
-            segments: HashMap::new(),
+            segments: IndexMap::new(),
             current_segment: None,
             functions: HashMap::new(),
             symbols: SymbolTable::default(),
@@ -286,7 +287,7 @@ impl CodegenContext {
         &self.analysis
     }
 
-    pub fn segments(&self) -> &HashMap<Identifier, Segment> {
+    pub fn segments(&self) -> &IndexMap<Identifier, Segment> {
         &self.segments
     }
 
@@ -497,7 +498,7 @@ impl CodegenContext {
     fn emit(&mut self, span: Span, bytes: &[u8]) -> CoreResult<()> {
         match &self.current_segment {
             Some(name) => {
-                let segment = self.segments.get_mut(&name).unwrap();
+                let segment = self.segments.get_mut(name).unwrap();
                 log::trace!(
                     "Emitting to segment '{}' {}: {:?}",
                     name,
@@ -1228,7 +1229,7 @@ mod tests {
 
         pub fn current_segment(&self) -> &Segment {
             self.segments
-                .get(&self.current_segment.as_ref().unwrap())
+                .get(self.current_segment.as_ref().unwrap())
                 .unwrap()
         }
     }
