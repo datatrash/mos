@@ -42,6 +42,7 @@ mnemonics.register-casing = 'lowercase'
 braces.position = 'same-line'
 whitespace.indent = 4
 whitespace.label-margin = 20
+whitespace.label-alignment = right
 whitespace.code-margin = 30
 ```
 
@@ -52,4 +53,5 @@ whitespace.code-margin = 30
 | braces.position | `same_line`, `new_line` | Where to place the braces in things like if statements |
 | whitespace.indent | number | How many spaces (no tabs yet... :innocent:) to indent in block statements |
 | whitespace.label-margin | number | How many characters to reserve for labels |
+| whitespace.label-alignment | `left`, `right` | How to align labels |
 | whitespace.code-margin | number | How many characters to reserve for code (the rest is reserved for comments) |

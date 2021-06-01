@@ -66,7 +66,15 @@ impl Default for BraceOptions {
 pub struct WhitespaceOptions {
     pub indent: usize,
     pub label_margin: usize,
+    pub label_alignment: Alignment,
     pub code_margin: usize,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub enum Alignment {
+    Left,
+    Right,
 }
 
 impl Default for WhitespaceOptions {
@@ -74,6 +82,7 @@ impl Default for WhitespaceOptions {
         Self {
             indent: 4,
             label_margin: 20,
+            label_alignment: Alignment::Right,
             code_margin: 30,
         }
     }
@@ -765,12 +774,23 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
                     if line.len() > options.whitespace.label_margin {
                         line += format!("{} ", str).as_str();
                     } else {
-                        line += format!(
-                            "{:>width$}",
-                            format!("{} ", str),
-                            width = options.whitespace.label_margin
-                        )
-                        .as_str();
+                        let fmt = match options.whitespace.label_alignment {
+                            Alignment::Left => {
+                                format!(
+                                    "{:<width$}",
+                                    format!("{} ", str),
+                                    width = options.whitespace.label_margin
+                                )
+                            }
+                            Alignment::Right => {
+                                format!(
+                                    "{:>width$}",
+                                    format!("{} ", str),
+                                    width = options.whitespace.label_margin
+                                )
+                            }
+                        };
+                        line += fmt.as_str();
                     }
                 }
                 None => {
@@ -942,6 +962,24 @@ mod tests {
                         asl
                     }",
         );
+        Ok(())
+    }
+
+    #[test]
+    fn label_alignment_left() -> CoreResult<()> {
+        let ast = parse_or_err("test.asm".as_ref(), get_source("foo: nop"))?;
+        let actual = format(
+            "test.asm",
+            ast,
+            FormattingOptions {
+                whitespace: WhitespaceOptions {
+                    label_alignment: Alignment::Left,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        xplat_eq(actual, r"foo:                nop");
         Ok(())
     }
 
