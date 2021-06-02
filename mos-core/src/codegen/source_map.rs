@@ -20,11 +20,15 @@ impl SourceMap {
         self.offsets.clear();
     }
 
+    pub fn offsets(&self) -> &Vec<SourceMapOffset> {
+        &self.offsets
+    }
+
     pub fn add(&mut self, scope: SymbolIndex, span: Span, pc: ProgramCounter, len: usize) {
         let offset = SourceMapOffset {
             scope,
             span,
-            pc: pc.as_usize()..(pc.as_usize() + len - 1),
+            pc: pc.as_usize()..(pc.as_usize() + len),
         };
         self.offsets.push(offset);
     }
@@ -33,7 +37,7 @@ impl SourceMap {
         let pc = pc.into().as_usize();
         self.offsets
             .iter()
-            .find(|offset| pc >= offset.pc.start && pc <= offset.pc.end)
+            .find(|offset| pc >= offset.pc.start && pc < offset.pc.end)
     }
 
     // A single line may map to multiple addresses, since it could be an import compiled with different parameters

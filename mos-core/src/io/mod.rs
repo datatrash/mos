@@ -1,7 +1,10 @@
+pub use listing::*;
 pub use segment_merger::*;
 pub use vice::*;
 
-/// Contains code related to the merging of segments when creating the final output binaries
+/// Listing files, containing disassembled code
+mod listing;
+/// Merging of segments when creating the final output binaries
 mod segment_merger;
-/// Contains code related to IO with the VICE emulator
+/// IO with the VICE emulator
 mod vice;

@@ -889,13 +889,11 @@ mod tests {
     use super::*;
     use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
-    use mos_testing::enable_default_tracing;
     use std::thread;
     use std::time::Duration;
 
     #[test]
     fn evaluate() -> MosResult<()> {
-        enable_default_tracing();
         let src = r".test a {
                          ldx #123
                          foo: nop
@@ -909,7 +907,7 @@ mod tests {
             vec![MachineBreakpoint {
                 line: 2,
                 column: None,
-                range: ProgramCounter::new(0x2002)..ProgramCounter::new(0x2002),
+                range: ProgramCounter::new(0x2002)..ProgramCounter::new(0x2003),
             }],
         )?;
 
@@ -924,7 +922,7 @@ mod tests {
             vec![MachineBreakpoint {
                 line: 4,
                 column: None,
-                range: ProgramCounter::new(0x2003)..ProgramCounter::new(0x2003),
+                range: ProgramCounter::new(0x2003)..ProgramCounter::new(0x2004),
             }],
         )?;
 

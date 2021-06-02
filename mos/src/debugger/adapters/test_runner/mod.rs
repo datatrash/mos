@@ -71,7 +71,7 @@ impl TestRunnerAdapter {
                                 let bps = thread_breakpoints.lock().unwrap();
                                 if bps
                                     .iter()
-                                    .any(|bp| bp.range.start <= pc && bp.range.end >= pc)
+                                    .any(|bp| bp.range.start <= pc && bp.range.end > pc)
                                 {
                                     let mut state = thread_state.lock().unwrap();
                                     let old = *state;
@@ -314,7 +314,7 @@ mod tests {
             vec![MachineBreakpoint {
                 line: 2,
                 column: None,
-                range: ProgramCounter::new(0x2001)..ProgramCounter::new(0x2001),
+                range: ProgramCounter::new(0x2001)..ProgramCounter::new(0x2002),
             }],
         )?;
         adapter.start()?;

@@ -1222,7 +1222,7 @@ pub fn codegen(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
     use crate::codegen::{Segment, SegmentOptions};
     use crate::errors::CoreResult;
@@ -1993,7 +1993,7 @@ mod tests {
         let ctx = test_codegen("lda $d020\nsta $d021")?;
         let offset = ctx.source_map().address_to_offset(0xc003).unwrap();
         let sl = ctx.tree.code_map.look_up_span(offset.span);
-        assert_eq!(offset.pc, 0xc003..0xc005);
+        assert_eq!(offset.pc, 0xc003..0xc006);
         assert_eq!(sl.file.name(), "test.asm");
         assert_eq!(sl.begin.line, 1);
         assert_eq!(sl.begin.column, 0);
@@ -2005,7 +2005,7 @@ mod tests {
             .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, 4);
         let offset = offsets[0];
         let sl = ctx.tree.code_map.look_up_span(offset.span);
-        assert_eq!(offset.pc, 0xc003..0xc005);
+        assert_eq!(offset.pc, 0xc003..0xc006);
         assert_eq!(sl.file.name(), "test.asm");
         assert_eq!(sl.begin.line, 1);
         assert_eq!(sl.begin.column, 0);
@@ -2059,7 +2059,7 @@ mod tests {
         Ok(())
     }
 
-    pub(super) fn test_codegen(code: &str) -> CoreResult<CodegenContext> {
+    pub fn test_codegen(code: &str) -> CoreResult<CodegenContext> {
         test_codegen_parsing_source(
             InMemoryParsingSource::new().add("test.asm", &code).into(),
             CodegenOptions::default(),

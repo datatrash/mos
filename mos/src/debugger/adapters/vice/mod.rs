@@ -164,7 +164,7 @@ impl MachineAdapter for ViceAdapter {
         for bp in breakpoints {
             let cs = CheckpointSet {
                 start: bp.range.start.as_u16(),
-                end: bp.range.end.as_u16(),
+                end: bp.range.end.as_u16() - 1, // Vice 'Checkpoint' ranges are inclusive
                 stop_when_hit: true,
                 enabled: true,
                 cpu_operation: 4,
@@ -350,7 +350,10 @@ impl ViceAdapter {
                 let bp = self
                     .breakpoints
                     .iter_mut()
-                    .find(|bp| bp.range.start == cp.start && bp.range.end == cp.end)
+                    .find(|bp| {
+                        // cp.end + 1 because Vice 'Checkpoint' ranges are inclusive, and our 'bp.range' is exclusive
+                        bp.range.start == cp.start && bp.range.end == cp.end + 1
+                    })
                     .expect("Received a response for an unknown checkpoint");
                 bp.id = Some(cp.number);
             }
@@ -618,12 +621,12 @@ mod tests {
 
         // Create two breakpoints for source file "a"
         mock.enqueue(
-            ViceRequest::CheckpointSet(cp(10..15)),
-            &[ViceResponse::CheckpointResponse(cr(10..15, 1))],
+            ViceRequest::CheckpointSet(cp(10..14)),
+            &[ViceResponse::CheckpointResponse(cr(10..14, 1))],
         );
         mock.enqueue(
-            ViceRequest::CheckpointSet(cp(20..25)),
-            &[ViceResponse::CheckpointResponse(cr(20..25, 2))],
+            ViceRequest::CheckpointSet(cp(20..24)),
+            &[ViceResponse::CheckpointResponse(cr(20..24, 2))],
         );
 
         let mut a_bps = vec![
@@ -654,8 +657,8 @@ mod tests {
 
         // Create breakpoints for source file "b"
         mock.enqueue(
-            ViceRequest::CheckpointSet(cp(30..35)),
-            &[ViceResponse::CheckpointResponse(cr(30..35, 3))],
+            ViceRequest::CheckpointSet(cp(30..34)),
+            &[ViceResponse::CheckpointResponse(cr(30..34, 3))],
         );
 
         let b_bps = vec![MachineBreakpoint {
@@ -682,8 +685,8 @@ mod tests {
             &[ViceResponse::CheckpointDelete],
         );
         mock.enqueue(
-            ViceRequest::CheckpointSet(cp(10..15)),
-            &[ViceResponse::CheckpointResponse(cr(10..15, 1))],
+            ViceRequest::CheckpointSet(cp(10..14)),
+            &[ViceResponse::CheckpointResponse(cr(10..14, 1))],
         );
 
         a_bps.remove(1);

@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::errors::MosResult;
 use mos_core::codegen::{codegen, CodegenOptions};
 use mos_core::errors::CoreError;
-use mos_core::io::{to_vice_symbols, SegmentMerger};
+use mos_core::io::{to_listing, to_vice_symbols, SegmentMerger};
 use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
 
@@ -18,6 +18,7 @@ use mos_core::parser::source::FileSystemParsingSource;
 pub struct BuildOptions {
     pub entry: String,
     pub target_directory: String,
+    pub listing: bool,
     pub symbols: Vec<SymbolType>,
 }
 
@@ -26,6 +27,7 @@ impl Default for BuildOptions {
         Self {
             entry: "main.asm".into(),
             target_directory: "target".into(),
+            listing: false,
             symbols: vec![],
         }
     }
@@ -103,6 +105,15 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
         out.write_all(&m.range_data())?;
     }
 
+    if cfg.build.listing {
+        for (source_path, contents) in to_listing(&generated_code)? {
+            let listing_path =
+                format!("{}.lst", source_path.file_stem().unwrap().to_string_lossy());
+            let mut out = fs::File::create(target_dir.join(listing_path))?;
+            out.write_all(contents.as_bytes())?;
+        }
+    }
+
     for symbol_type in &cfg.build.symbols {
         match symbol_type {
             SymbolType::Vice => {
@@ -133,6 +144,7 @@ mod tests {
             build: BuildOptions {
                 entry: entry.clone().to_string_lossy().into(),
                 target_directory: target().to_string_lossy().into(),
+                listing: true,
                 symbols: vec![SymbolType::Vice],
             },
             ..Default::default()
@@ -146,6 +158,9 @@ mod tests {
         let vs_bytes = std::fs::read_to_string(target().join("valid.vs"))?;
         let vs_lines = vs_bytes.lines().collect_vec();
         assert_eq!(vs_lines, vec!["al C:2007 .data"]);
+
+        let lst_bytes = std::fs::read_to_string(target().join("valid.lst"))?;
+        assert!(!lst_bytes.is_empty());
 
         Ok(())
     }
