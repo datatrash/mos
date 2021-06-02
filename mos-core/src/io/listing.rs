@@ -78,10 +78,11 @@ foo: nop",
         )?;
         assert_eq!(
             to_listing(&ctx)?.get(&PathBuf::from("test.asm")).unwrap(),
-            r"    1 C000: AD 20 D0    lda $d020
+            &r"    1 C000: AD 20 D0    lda $d020
     2                   // hello
     3 C003: 4C 06 C0    jmp foo
     4 C006: EA          foo: nop"
+                .replace("\n", LINE_ENDING)
         );
 
         Ok(())
