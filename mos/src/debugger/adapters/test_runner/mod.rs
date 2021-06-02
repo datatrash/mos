@@ -5,7 +5,7 @@ use crate::debugger::adapters::{
 use crate::debugger::types::LaunchRequestArguments;
 use crate::errors::MosResult;
 use crate::memory_accessor::MemoryAccessor;
-use crate::test_runner::{format_cpu_details, ExecuteResult, TestRunner};
+use crate::test_runner::{format_cpu_details, ExecuteResult, TestRunner, TestRunnerMemoryAccessor};
 use crate::utils::paint;
 use ansi_term::Colour;
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -15,14 +15,15 @@ use mos_core::parser::IdentifierPath;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
 pub struct TestRunnerAdapter {
     is_connected: Arc<AtomicBool>,
     state: Arc<Mutex<MachineRunningState>>,
-    runner: Arc<Mutex<TestRunner>>,
+    runner: Arc<RwLock<TestRunner>>,
+    memory_accessor: TestRunnerMemoryAccessor,
     ctx: Arc<Mutex<CodegenContext>>,
     event_sender: Sender<MachineEvent>,
     event_receiver: Receiver<MachineEvent>,
@@ -41,11 +42,10 @@ impl TestRunnerAdapter {
         let breakpoints: Arc<Mutex<Vec<MachineBreakpoint>>> = Arc::new(Mutex::new(vec![]));
 
         let (event_sender, event_receiver) = unbounded();
-        let runner = Arc::new(Mutex::new(TestRunner::new(
-            parsing_source,
-            &source_path.into(),
-            test_case_path,
-        )?));
+
+        let runner = TestRunner::new(parsing_source, &source_path.into(), test_case_path)?;
+        let memory_accessor = TestRunnerMemoryAccessor::new(&runner);
+        let runner = Arc::new(RwLock::new(runner));
 
         let thread_is_connected = is_connected.clone();
         let thread_state = state.clone();
@@ -62,76 +62,81 @@ impl TestRunnerAdapter {
                         thread::sleep(Duration::from_millis(50));
                     }
                     MachineRunningState::Running => {
-                        let mut runner = thread_runner.lock().unwrap();
-
-                        let pc = ProgramCounter::new(runner.cpu().get_program_counter() as usize);
-                        if last_checked_pc != Some(pc) && !no_debug {
-                            last_checked_pc = Some(pc);
-                            let bps = thread_breakpoints.lock().unwrap();
-                            if bps
-                                .iter()
-                                .any(|bp| bp.range.start <= pc && bp.range.end >= pc)
-                            {
-                                let mut state = thread_state.lock().unwrap();
-                                let old = *state;
-                                let new = MachineRunningState::Stopped(pc);
-                                *state = new;
-                                thread_sender
-                                    .send(MachineEvent::RunningStateChanged { old, new })
-                                    .unwrap();
-                                continue;
+                        {
+                            let runner = thread_runner.read().unwrap();
+                            let pc =
+                                ProgramCounter::new(runner.cpu().get_program_counter() as usize);
+                            if last_checked_pc != Some(pc) && !no_debug {
+                                last_checked_pc = Some(pc);
+                                let bps = thread_breakpoints.lock().unwrap();
+                                if bps
+                                    .iter()
+                                    .any(|bp| bp.range.start <= pc && bp.range.end >= pc)
+                                {
+                                    let mut state = thread_state.lock().unwrap();
+                                    let old = *state;
+                                    let new = MachineRunningState::Stopped(pc);
+                                    *state = new;
+                                    thread_sender
+                                        .send(MachineEvent::RunningStateChanged { old, new })
+                                        .unwrap();
+                                    continue;
+                                }
                             }
                         }
 
-                        match runner.execute_instruction() {
-                            Ok(result) => {
-                                // Give rest of core a chance to do something
-                                thread::sleep(Duration::from_millis(0));
+                        {
+                            let mut runner = thread_runner.write().unwrap();
+                            match runner.execute_instruction() {
+                                Ok(result) => {
+                                    // Give rest of core a chance to do something
+                                    thread::sleep(Duration::from_millis(0));
 
-                                match result {
-                                    ExecuteResult::Running => {}
-                                    ExecuteResult::TestFailed(cycles, failure) => {
-                                        let _ = thread_sender.send(MachineEvent::Message {
-                                            output: format!(
-                                                "test {} {} {}: {}\n{}",
-                                                thread_test_case_path,
-                                                paint(true, Colour::Red, "FAILED"),
-                                                paint(
-                                                    true,
-                                                    Colour::Yellow,
-                                                    format!("({} cycles)", cycles)
+                                    match result {
+                                        ExecuteResult::Running => {}
+                                        ExecuteResult::TestFailed(cycles, failure) => {
+                                            let _ = thread_sender.send(MachineEvent::Message {
+                                                output: format!(
+                                                    "test {} {} {}: {}\n{}",
+                                                    thread_test_case_path,
+                                                    paint(true, Colour::Red, "FAILED"),
+                                                    paint(
+                                                        true,
+                                                        Colour::Yellow,
+                                                        format!("({} cycles)", cycles)
+                                                    ),
+                                                    failure.message,
+                                                    format_cpu_details(&failure.cpu, true)
                                                 ),
-                                                failure.message,
-                                                format_cpu_details(&failure.cpu, true)
-                                            ),
-                                            location: failure.location,
-                                        });
-                                        let _ = thread_sender.send(MachineEvent::Disconnected);
-                                        thread_is_connected.store(false, Ordering::Relaxed);
-                                    }
-                                    ExecuteResult::TestSuccess(cycles) => {
-                                        let _ = thread_sender.send(MachineEvent::Message {
-                                            output: format!(
-                                                "test {} {} {}",
-                                                thread_test_case_path,
-                                                paint(true, Colour::Green, "ok"),
-                                                paint(
-                                                    true,
-                                                    Colour::Yellow,
-                                                    format!("({} cycles)", cycles)
-                                                )
-                                            ),
-                                            location: None,
-                                        });
-                                        let _ = thread_sender.send(MachineEvent::Disconnected);
-                                        thread_is_connected.store(false, Ordering::Relaxed);
+                                                location: failure.location,
+                                            });
+                                            let _ = thread_sender.send(MachineEvent::Disconnected);
+                                            thread_is_connected.store(false, Ordering::Relaxed);
+                                        }
+                                        ExecuteResult::TestSuccess(cycles) => {
+                                            let _ = thread_sender.send(MachineEvent::Message {
+                                                output: format!(
+                                                    "test {} {} {}",
+                                                    thread_test_case_path,
+                                                    paint(true, Colour::Green, "ok"),
+                                                    paint(
+                                                        true,
+                                                        Colour::Yellow,
+                                                        format!("({} cycles)", cycles)
+                                                    )
+                                                ),
+                                                location: None,
+                                            });
+                                            let _ = thread_sender.send(MachineEvent::Disconnected);
+                                            thread_is_connected.store(false, Ordering::Relaxed);
+                                        }
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                log::error!("Error when executing instructions: {}", e);
-                                let _ = thread_sender.send(MachineEvent::Disconnected);
-                                thread_is_connected.store(false, Ordering::Relaxed);
+                                Err(e) => {
+                                    log::error!("Error when executing instructions: {}", e);
+                                    let _ = thread_sender.send(MachineEvent::Disconnected);
+                                    thread_is_connected.store(false, Ordering::Relaxed);
+                                }
                             }
                         }
                     }
@@ -139,11 +144,12 @@ impl TestRunnerAdapter {
             }
         });
 
-        let ctx = runner.lock().unwrap().codegen();
+        let ctx = runner.read().unwrap().codegen();
         Ok(Self {
             is_connected,
             state,
             runner,
+            memory_accessor,
             ctx,
             event_sender,
             event_receiver,
@@ -177,11 +183,11 @@ impl TestRunnerAdapter {
 
 impl MemoryAccessor for TestRunnerAdapter {
     fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
-        self.runner.lock().unwrap().ram()[address as usize..address as usize + len].to_vec()
+        self.memory_accessor.read(address, len)
     }
 
-    fn write(&mut self, _address: u16, _bytes: &[u8]) {
-        unimplemented!()
+    fn write(&mut self, address: u16, bytes: &[u8]) {
+        self.memory_accessor.write(address, bytes)
     }
 }
 
@@ -222,7 +228,7 @@ impl MachineAdapter for TestRunnerAdapter {
     }
 
     fn pause(&mut self) -> MosResult<()> {
-        let pc = self.runner.lock().unwrap().cpu().get_program_counter();
+        let pc = self.runner.read().unwrap().cpu().get_program_counter();
         self.update_state(MachineRunningState::Stopped(ProgramCounter::new(
             pc as usize,
         )))?;
@@ -231,7 +237,7 @@ impl MachineAdapter for TestRunnerAdapter {
 
     fn next(&mut self) -> MosResult<()> {
         {
-            let mut runner = self.runner.lock().unwrap();
+            let mut runner = self.runner.write().unwrap();
             runner.step_over()?;
         }
         self.pause()?;
@@ -240,7 +246,7 @@ impl MachineAdapter for TestRunnerAdapter {
 
     fn step_in(&mut self) -> MosResult<()> {
         {
-            let mut runner = self.runner.lock().unwrap();
+            let mut runner = self.runner.write().unwrap();
             runner.execute_instruction()?;
         }
         self.pause()?;
@@ -249,7 +255,7 @@ impl MachineAdapter for TestRunnerAdapter {
 
     fn step_out(&mut self) -> MosResult<()> {
         {
-            let mut runner = self.runner.lock().unwrap();
+            let mut runner = self.runner.write().unwrap();
             runner.step_out()?;
         }
         self.pause()?;
@@ -275,7 +281,7 @@ impl MachineAdapter for TestRunnerAdapter {
     }
 
     fn registers(&self) -> MosResult<HashMap<String, i64>> {
-        let runner = self.runner.lock().unwrap();
+        let runner = self.runner.read().unwrap();
         let cpu = runner.cpu();
 
         let mut map = HashMap::new();
@@ -287,7 +293,7 @@ impl MachineAdapter for TestRunnerAdapter {
     }
 
     fn flags(&self) -> MosResult<u8> {
-        Ok(self.runner.lock().unwrap().cpu().get_status_register())
+        Ok(self.runner.read().unwrap().cpu().get_status_register())
     }
 }
 

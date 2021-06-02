@@ -15,12 +15,12 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::DerefMut;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 pub struct TestRunner {
     ctx: Arc<Mutex<CodegenContext>>,
     test_elements: Vec<TestElement>,
-    ram: Arc<Mutex<BasicRam>>,
+    ram: Arc<RwLock<BasicRam>>,
     cpu: MOS6502,
     num_cycles: usize,
     formatted_traces: Vec<FormattedTrace>,
@@ -181,28 +181,19 @@ impl TestRunner {
             }
         };
 
-        let ram = Arc::new(Mutex::new(BasicRam::new()));
+        let ram = Arc::new(RwLock::new(BasicRam::new()));
         for segment in ctx.segments().values() {
-            ram.lock()
+            ram.write()
                 .unwrap()
                 .load_program(segment.range().start, segment.range_data());
         }
         let mut cpu = MOS6502::new();
         cpu.set_program_counter(test_pc as u16);
 
-        struct RamMemoryAccessor {
-            ram: Arc<Mutex<BasicRam>>,
-        }
-        impl MemoryAccessor for RamMemoryAccessor {
-            fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
-                self.ram.lock().unwrap().ram[address as usize..address as usize + len].to_vec()
-            }
-
-            fn write(&mut self, _address: u16, _bytes: &[u8]) {
-                todo!()
-            }
-        }
-        ensure_ram_fn(&mut ctx, Box::new(RamMemoryAccessor { ram: ram.clone() }));
+        ensure_ram_fn(
+            &mut ctx,
+            Box::new(TestRunnerMemoryAccessor { ram: ram.clone() }),
+        );
 
         let test_elements = ctx.remove_test_elements();
         Ok(Self {
@@ -217,10 +208,6 @@ impl TestRunner {
 
     pub fn cpu(&self) -> &MOS6502 {
         &self.cpu
-    }
-
-    pub fn ram(&self) -> Vec<u8> {
-        self.ram.lock().unwrap().ram.clone()
     }
 
     pub fn num_cycles(&self) -> usize {
@@ -245,7 +232,7 @@ impl TestRunner {
         log::trace!(
             "PC: {} (ram: ${:02X})",
             self.cpu.get_program_counter(),
-            self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize]
+            self.ram.read().unwrap().ram[self.cpu.get_program_counter() as usize]
         );
 
         // Check active elements
@@ -282,7 +269,7 @@ impl TestRunner {
                         .snapshot
                         .symbols
                         .ensure_cpu_symbols(self.registers(), self.cpu.get_status_register());
-                    format_trace(trace, &self.ctx.lock().unwrap())?
+                    format_trace(trace, &self.ctx.lock().unwrap())
                 }
             };
             self.formatted_traces.push(FormattedTrace(fmt));
@@ -319,15 +306,15 @@ impl TestRunner {
             }
         }
 
-        if self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize] == 0 {
+        if self.ram.read().unwrap().ram[self.cpu.get_program_counter() as usize] == 0 {
             // BRK, test succeeded
             return Ok(ExecuteResult::TestSuccess(self.num_cycles));
         }
 
-        self.cpu.cycle(self.ram.lock().unwrap().deref_mut());
+        self.cpu.cycle(self.ram.write().unwrap().deref_mut());
         self.num_cycles += 1 + self.cpu.get_remaining_cycles() as usize;
         self.cpu
-            .execute_instruction(self.ram.lock().unwrap().deref_mut());
+            .execute_instruction(self.ram.write().unwrap().deref_mut());
 
         Ok(ExecuteResult::Running)
     }
@@ -342,7 +329,7 @@ impl TestRunner {
     }
 
     pub fn step_over(&mut self) -> MosResult<ExecuteResult> {
-        let opcode = self.ram.lock().unwrap().ram[self.cpu.get_program_counter() as usize];
+        let opcode = self.ram.read().unwrap().ram[self.cpu.get_program_counter() as usize];
         match opcode {
             0x20 => {
                 // jsr
@@ -373,9 +360,9 @@ impl TestRunner {
         }
 
         let sp_lo =
-            self.ram.lock().unwrap().ram[256 + self.cpu.get_stack_pointer() as usize + 1] as usize;
+            self.ram.read().unwrap().ram[256 + self.cpu.get_stack_pointer() as usize + 1] as usize;
         let sp_hi =
-            self.ram.lock().unwrap().ram[256 + self.cpu.get_stack_pointer() as usize + 2] as usize;
+            self.ram.read().unwrap().ram[256 + self.cpu.get_stack_pointer() as usize + 2] as usize;
         let will_return_to = 1 + sp_lo + 256 * sp_hi;
 
         loop {
@@ -393,7 +380,7 @@ impl TestRunner {
     }
 }
 
-fn format_trace(trace: Trace, ctx: &CodegenContext) -> MosResult<String> {
+fn format_trace(trace: Trace, ctx: &CodegenContext) -> String {
     let mut eval = vec![];
     for expr in &trace.exprs {
         let evaluator = trace.snapshot.get_evaluator(ctx.functions());
@@ -411,7 +398,7 @@ fn format_trace(trace: Trace, ctx: &CodegenContext) -> MosResult<String> {
         };
         eval.push(format!("{} = {}", &expr.data, value));
     }
-    Ok(eval.join(", "))
+    eval.join(", ")
 }
 
 fn generate(
@@ -444,6 +431,28 @@ impl BasicRam {
 
     fn load_program(&mut self, start: usize, data: &[u8]) {
         self.ram[start..start + data.len()].clone_from_slice(data);
+    }
+}
+
+pub struct TestRunnerMemoryAccessor {
+    ram: Arc<RwLock<BasicRam>>,
+}
+
+impl TestRunnerMemoryAccessor {
+    pub fn new(runner: &TestRunner) -> Self {
+        Self {
+            ram: runner.ram.clone(),
+        }
+    }
+}
+
+impl MemoryAccessor for TestRunnerMemoryAccessor {
+    fn read(&mut self, address: u16, len: usize) -> Vec<u8> {
+        self.ram.read().unwrap().ram[address as usize..address as usize + len].to_vec()
+    }
+
+    fn write(&mut self, _address: u16, _bytes: &[u8]) {
+        todo!()
     }
 }
 
