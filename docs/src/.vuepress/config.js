@@ -47,7 +47,8 @@ module.exports = {
             '',
             'project-setup',
             'assembler',
-            'advanced'
+            'advanced',
+            'unit-testing'
           ]
         },
         {
