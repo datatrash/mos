@@ -151,7 +151,7 @@ jobs:
           staging="mos-${{ env.RELEASE_VERSION }}-${{ matrix.target }}"
           mkdir -p "$staging"
 
-          cp {LICENSE,README.md} "$staging/"
+          cp {CHANGELOG.md,LICENSE,README.md} "$staging/"
           cp -R examples "$staging/"
 
           if [ "${{ matrix.os }}" = "windows-2019" ]; then
