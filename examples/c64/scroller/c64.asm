@@ -1,9 +1,25 @@
+                    /// Color of the cursor (taken into effect when clearing screen)
                     .const cursor_color = $0286
 
                vic: {
+                        /// The low-byte of the raster position
                         .const raster_pos = $d012
+
+                        /// Bits 7-6: Unused
+                        ///
+                        /// Bit 5: Reset-Bit
+                        ///
+                        /// Bit 4: Multi-Color Mode
+                        ///
+                        /// Bit 3: 38/40 column (1 = 40 cols)
+                        ///
+                        /// Bit 2-0: Smooth scroll
                         .const xscroll = $d016
+
+                        /// Background color
                         .const background = $d020
+
+                        /// Foreground color
                         .const foreground = $d021
                     }
 
@@ -27,10 +43,11 @@
                     }
 
             kernal: {
+                        /// Clears the screen in the current cursor color
                         .const clrscr = $e544
                     }
 
-                    // Constructs a '0 sys*' basic line
+                    /// Constructs a `0 sys*` basic line
                     .macro basic_start(address) {
                         * = $0801
 
