@@ -166,6 +166,30 @@ mod tests {
     }
 
     #[test]
+    fn can_go_to_macro_reference() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            ".macro foo(arg) { nop }\nfoo(123)",
+        )?;
+        // Look up 'foo'
+        let response =
+            server.go_to_definition(test_root().join("main.asm"), Position::new(1, 0))?;
+        let location = match &response {
+            GotoDefinitionResponse::Link(links) => links.first().unwrap(),
+            _ => panic!(),
+        };
+        assert_eq!(
+            location.target_uri.to_file_path()?.to_string_lossy(),
+            test_root().join("main.asm").to_string_lossy()
+        );
+        assert_eq!(location.target_range, range(0, 7, 0, 10));
+        assert_eq!(location.target_selection_range, range(0, 7, 0, 10));
+        assert_eq!(location.origin_selection_range, Some(range(1, 0, 1, 3)));
+        Ok(())
+    }
+
+    #[test]
     fn can_go_to_const_reference_in_other_file() -> MosResult<()> {
         let mut server = LspServer::new(LspContext::new());
         server.did_open_text_document(

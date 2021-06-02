@@ -904,9 +904,18 @@ impl CodegenContext {
                 let def = self
                     .get_evaluator()
                     .get_symbol(self.current_scope_nx, &IdentifierPath::from(&name.data))
-                    .map(|(_, symbol)| symbol.data.as_macro_definition().clone());
+                    .map(|(symbol_nx, symbol)| {
+                        (symbol_nx, symbol.data.as_macro_definition().clone())
+                    });
 
-                if let Some(def) = def {
+                if let Some((macro_nx, def)) = def {
+                    let parent_scope = self.current_scope_nx;
+                    self.symbol_definition(macro_nx)
+                        .add_usage(DefinitionLocation {
+                            parent_scope,
+                            span: name.span,
+                        });
+
                     self.get_evaluator()
                         .expect_args(name.span, args.len(), def.args.len())
                         .map_err(|e| self.map_evaluation_error(e))?;
