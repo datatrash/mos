@@ -1,4 +1,4 @@
-                    // Some tests taken from the c64unit examples
+                    // Based on a c64unit example
                     .test stack_pointer {
                         lda #6
                         pha
