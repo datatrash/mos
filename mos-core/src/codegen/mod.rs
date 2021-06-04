@@ -906,10 +906,7 @@ impl CodegenContext {
                     .get_symbol_filtered(
                         self.current_scope_nx,
                         &IdentifierPath::from(&name.data),
-                        |s| match s.data {
-                            SymbolData::MacroDefinition(_) => true,
-                            _ => false,
-                        },
+                        |s| matches!(s.data, SymbolData::MacroDefinition(_)),
                     )
                     .map(|(symbol_nx, symbol)| {
                         (symbol_nx, symbol.data.as_macro_definition().clone())
