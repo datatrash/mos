@@ -18,14 +18,17 @@ entry = "main.asm"
 target-directory = "target"
 listing = false
 symbols = []
+output-format = "prg"
 ```
 
 | Key | Type | Description |
 | --- | ---- | ----------- |
-| `entry` | file name | The source file from which MOS should start assembling |
+| `entry` | filename | The source file from which MOS should start assembling |
 | `target-directory` | directory name | The directory in which all output (binaries, symbols) is placed
 | `listing` | boolean | Generate listing files, containing disassembled code? |
 | `symbols` | array | Which symbol files to generate. Currently only `"vice"` is supported.
+| output-filenaame | string | In case the output format results in a single file, you can specify the output filename here. Otherwise the name of the entry source file will be used. (with a different extension). |
+| output-format | `"prg`", `"bin`", `"bin-segments"` | See below for details. |
 
 So, if you want to leave all defaults as-is, but would want to generate symbols for Vice, the `build` section in your `mos.toml` would look like this:
 
@@ -33,6 +36,15 @@ So, if you want to leave all defaults as-is, but would want to generate symbols 
 [build]
 symbols = ["vice"]
 ```
+
+### Output format
+The available output formats are:
+
+| Format | Description |
+| ------ | ----------- |
+| `"prg"` | This will write all segments merged together in one file, with a 2-byte header indicating the load address. |
+| `"bin"` | This will write all segments merged together in one file without any kind of header. |
+| `"bin-segments"` | This will write all segments to separate files, unless a segment's filename is explicitly specified. In that case all segments that share the same filename will be merged together. |
 
 ## Formatting options
 The formatter has a few options you can tweak, but it is not extensive yet. The following `mos.toml` represents the default formatting options:

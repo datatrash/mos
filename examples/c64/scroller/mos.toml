@@ -1,3 +1,4 @@
 [build]
 entry = "main.asm"
 listing = true
+output-format = "prg"

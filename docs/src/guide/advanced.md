@@ -200,6 +200,7 @@ For instance, to have a segment start where another segment ends, you could do s
 | `start` | address | Where to place the resulting segment in memory. |
 | `pc` | address | Use a program counter that is different from `start`. See [below](#the-pc-option) for details. |
 | `write` | `true`, `false` | You can disable writing the contents of the segment to disk by setting `write` to `false` |
+| `filename` | string | The filename of the file the segment should be written to. Only applies when using the `bin-segments` output format. |
 
 #### The `pc` option
 It is possible to change the program counter that is used when assembling, for example if the segment will later be relocated. The program counter to use can be set with `pc`.
