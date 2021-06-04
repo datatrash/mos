@@ -160,25 +160,27 @@ mod tests {
     use itertools::Itertools;
     use std::ffi::OsStr;
     use std::io::Read;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use tempfile::tempdir;
 
     #[test]
     fn can_invoke_default_build() -> Result<()> {
+        let target = tempdir().unwrap();
         let entry = test_cli_build().join("valid.asm");
-        let mut cfg = config(entry);
+        let mut cfg = config(entry, target.path());
         cfg.build.listing = true;
         cfg.build.symbols = vec![SymbolType::Vice];
         build_command(root().as_path(), &cfg)?;
 
-        let out_bytes = std::fs::read(target().join("valid.prg"))?;
+        let out_bytes = std::fs::read(target.path().join("valid.prg"))?;
         let prg_bytes = std::fs::read(test_cli_build().join("valid.prg"))?;
         assert_eq!(out_bytes, prg_bytes);
 
-        let vs_bytes = std::fs::read_to_string(target().join("valid.vs"))?;
+        let vs_bytes = std::fs::read_to_string(target.path().join("valid.vs"))?;
         let vs_lines = vs_bytes.lines().collect_vec();
         assert_eq!(vs_lines, vec!["al C:2007 .data"]);
 
-        let lst_bytes = std::fs::read_to_string(target().join("valid.lst"))?;
+        let lst_bytes = std::fs::read_to_string(target.path().join("valid.lst"))?;
         assert!(!lst_bytes.is_empty());
 
         Ok(())
@@ -191,13 +193,14 @@ mod tests {
 
     #[test]
     fn can_invoke_prg_build_with_filename() -> Result<()> {
+        let target = tempdir().unwrap();
         let entry = test_cli_build().join("valid.asm");
-        let mut cfg = config(entry);
+        let mut cfg = config(entry, target.path());
         cfg.build.output_format = OutputFormat::Prg;
         cfg.build.output_filename = Some("bob.foo".into());
         build_command(root().as_path(), &cfg)?;
 
-        let out_bytes = std::fs::read(target().join("bob.foo"))?;
+        let out_bytes = std::fs::read(target.path().join("bob.foo"))?;
         let prg_bytes = std::fs::read(test_cli_build().join("valid.prg"))?;
         assert_eq!(out_bytes, prg_bytes);
 
@@ -206,12 +209,13 @@ mod tests {
 
     #[test]
     fn can_invoke_bin_build() -> Result<()> {
+        let target = tempdir().unwrap();
         let entry = test_cli_build().join("valid.asm");
-        let mut cfg = config(entry);
+        let mut cfg = config(entry, target.path());
         cfg.build.output_format = OutputFormat::Bin;
         build_command(root().as_path(), &cfg)?;
 
-        let out_bytes = std::fs::read(target().join("valid.bin"))?;
+        let out_bytes = std::fs::read(target.path().join("valid.bin"))?;
         let prg_bytes = std::fs::read(test_cli_build().join("valid.prg"))?;
         assert_eq!(out_bytes, prg_bytes[2..]);
 
@@ -220,17 +224,18 @@ mod tests {
 
     #[test]
     fn can_invoke_bin_segments_build() -> Result<()> {
+        let target = tempdir()?;
         let entry = test_cli_build().join("multiple_segments.asm");
-        let mut cfg = config(entry);
+        let mut cfg = config(entry, target.path());
         cfg.build.output_format = OutputFormat::BinSegments;
         build_command(root().as_path(), &cfg)?;
 
-        assert!(target().join("a.bin").exists());
-        assert!(target().join("bc.seg").exists());
+        assert!(target.path().join("a.bin").exists());
+        assert!(target.path().join("bc.seg").exists());
 
         // 'bc.seg' should contain merged segments 'b' and 'c' containing NOP and ASL
         let mut buffer = vec![];
-        File::open(target().join("bc.seg"))
+        File::open(target.path().join("bc.seg"))
             .unwrap()
             .read_to_end(&mut buffer)
             .unwrap();
@@ -283,19 +288,22 @@ mod tests {
     }
 
     fn build_and_compare(input: &str) -> Result<()> {
+        let target = tempdir().unwrap();
         let entry = test_cli_build().join(input);
 
         let cfg = Config {
             build: BuildOptions {
                 entry: entry.clone().to_string_lossy().into(),
-                target_directory: target().to_string_lossy().into(),
+                target_directory: target.path().to_string_lossy().into(),
                 ..Default::default()
             },
             ..Default::default()
         };
         build_command(root().as_path(), &cfg)?;
 
-        let actual_path = target().join(PathBuf::from(input).with_extension("prg"));
+        let actual_path = target
+            .path()
+            .join(PathBuf::from(input).with_extension("prg"));
         let actual_bytes = std::fs::read(actual_path)?;
         let expected_prg_path = PathBuf::from(entry).with_extension("prg").into_os_string();
         let expected_prg_bytes = std::fs::read(expected_prg_path)?;
@@ -308,15 +316,11 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
     }
 
-    fn target() -> PathBuf {
-        root().join(PathBuf::from("target"))
-    }
-
-    fn config(entry: PathBuf) -> Config {
+    fn config(entry: PathBuf, target: &Path) -> Config {
         Config {
             build: BuildOptions {
                 entry: entry.clone().to_string_lossy().into(),
-                target_directory: target().to_string_lossy().into(),
+                target_directory: target.to_string_lossy().into(),
                 ..Default::default()
             },
             ..Default::default()
