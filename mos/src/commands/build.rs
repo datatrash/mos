@@ -1,17 +1,16 @@
-use clap::App;
-use fs_err as fs;
-use serde::Deserialize;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-
 use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
+use clap::App;
+use fs_err as fs;
 use mos_core::codegen::{codegen, CodegenOptions};
 use mos_core::errors::map_io_error;
 use mos_core::io::{to_listing, to_vice_symbols, SegmentMerger};
 use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
+use serde::Deserialize;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use strum::EnumString;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
@@ -20,6 +19,8 @@ pub struct BuildOptions {
     pub target_directory: String,
     pub listing: bool,
     pub symbols: Vec<SymbolType>,
+    pub output_format: OutputFormat,
+    pub output_filename: Option<String>,
 }
 
 impl Default for BuildOptions {
@@ -29,25 +30,24 @@ impl Default for BuildOptions {
             target_directory: "target".into(),
             listing: false,
             symbols: vec![],
+            output_format: OutputFormat::Prg,
+            output_filename: None,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, EnumString)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub enum OutputFormat {
+    Prg,
+    Bin,
+    BinSegments,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, EnumString)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub enum SymbolType {
     Vice,
-}
-
-impl FromStr for SymbolType {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "vice" => Ok(SymbolType::Vice),
-            _ => Err("no match"),
-        }
-    }
 }
 
 pub fn build_app() -> App<'static> {
@@ -59,10 +59,6 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     fs::create_dir_all(&target_dir)?;
 
     let input_path = root.join(PathBuf::from(&cfg.build.entry));
-    let output_path = target_dir.join(format!(
-        "{}.prg",
-        input_path.file_stem().unwrap().to_string_lossy()
-    ));
 
     let source = FileSystemParsingSource::new();
     let (tree, error) = parser::parse(&input_path, source.into());
@@ -83,10 +79,29 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     }
     let generated_code = generated_code.unwrap();
 
+    let ext = match cfg.build.output_format {
+        OutputFormat::Prg => "prg",
+        OutputFormat::Bin | OutputFormat::BinSegments => "bin",
+    };
+
+    // Do we want to ignore the segment filename and just group everything together into one file?
+    let merge_to_single_segment = cfg.build.output_format == OutputFormat::Prg
+        || cfg.build.output_format == OutputFormat::Bin;
+
+    let filename = match cfg.build.output_filename.as_ref() {
+        Some(f) => f.clone(),
+        None => format!(
+            "{}.{}",
+            input_path.file_stem().unwrap().to_string_lossy(),
+            ext
+        ),
+    };
+    let output_path = target_dir.join(filename);
+
     let mut merger = SegmentMerger::new(output_path);
     for (segment_name, segment) in generated_code.segments() {
         if segment.options().write {
-            merger.merge(segment_name, segment)?;
+            merger.merge(segment_name, segment, merge_to_single_segment)?;
         }
     }
 
@@ -102,8 +117,10 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
         );
         log::trace!("Writing: {:?}", m.range_data());
         let mut out = fs::File::create(target_dir.join(path)).map_err(map_io_error)?;
-        out.write_all(&(m.range().start as u16).to_le_bytes())
-            .map_err(map_io_error)?;
+        if cfg.build.output_format == OutputFormat::Prg {
+            out.write_all(&(m.range().start as u16).to_le_bytes())
+                .map_err(map_io_error)?;
+        }
         out.write_all(&m.range_data()).map_err(map_io_error)?;
     }
 
@@ -136,25 +153,21 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{build_command, BuildOptions, SymbolType};
+    use crate::commands::{build_command, BuildOptions, OutputFormat, SymbolType};
     use crate::config::Config;
     use anyhow::Result;
+    use fs_err::File;
     use itertools::Itertools;
     use std::ffi::OsStr;
+    use std::io::Read;
     use std::path::PathBuf;
 
     #[test]
-    fn can_invoke_build() -> Result<()> {
+    fn can_invoke_default_build() -> Result<()> {
         let entry = test_cli_build().join("valid.asm");
-        let cfg = Config {
-            build: BuildOptions {
-                entry: entry.clone().to_string_lossy().into(),
-                target_directory: target().to_string_lossy().into(),
-                listing: true,
-                symbols: vec![SymbolType::Vice],
-            },
-            ..Default::default()
-        };
+        let mut cfg = config(entry);
+        cfg.build.listing = true;
+        cfg.build.symbols = vec![SymbolType::Vice];
         build_command(root().as_path(), &cfg)?;
 
         let out_bytes = std::fs::read(target().join("valid.prg"))?;
@@ -174,6 +187,56 @@ mod tests {
     #[test]
     fn build_multiple_segments() -> Result<()> {
         build_and_compare("multiple_segments.asm")
+    }
+
+    #[test]
+    fn can_invoke_prg_build_with_filename() -> Result<()> {
+        let entry = test_cli_build().join("valid.asm");
+        let mut cfg = config(entry);
+        cfg.build.output_format = OutputFormat::Prg;
+        cfg.build.output_filename = Some("bob.foo".into());
+        build_command(root().as_path(), &cfg)?;
+
+        let out_bytes = std::fs::read(target().join("bob.foo"))?;
+        let prg_bytes = std::fs::read(test_cli_build().join("valid.prg"))?;
+        assert_eq!(out_bytes, prg_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn can_invoke_bin_build() -> Result<()> {
+        let entry = test_cli_build().join("valid.asm");
+        let mut cfg = config(entry);
+        cfg.build.output_format = OutputFormat::Bin;
+        build_command(root().as_path(), &cfg)?;
+
+        let out_bytes = std::fs::read(target().join("valid.bin"))?;
+        let prg_bytes = std::fs::read(test_cli_build().join("valid.prg"))?;
+        assert_eq!(out_bytes, prg_bytes[2..]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn can_invoke_bin_segments_build() -> Result<()> {
+        let entry = test_cli_build().join("multiple_segments.asm");
+        let mut cfg = config(entry);
+        cfg.build.output_format = OutputFormat::BinSegments;
+        build_command(root().as_path(), &cfg)?;
+
+        assert!(target().join("a.bin").exists());
+        assert!(target().join("bc.seg").exists());
+
+        // 'bc.seg' should contain merged segments 'b' and 'c' containing NOP and ASL
+        let mut buffer = vec![];
+        File::open(target().join("bc.seg"))
+            .unwrap()
+            .read_to_end(&mut buffer)
+            .unwrap();
+        assert_eq!(buffer, vec![0xea, 0x0a]);
+
+        Ok(())
     }
 
     #[test]
@@ -247,6 +310,17 @@ mod tests {
 
     fn target() -> PathBuf {
         root().join(PathBuf::from("target"))
+    }
+
+    fn config(entry: PathBuf) -> Config {
+        Config {
+            build: BuildOptions {
+                entry: entry.clone().to_string_lossy().into(),
+                target_directory: target().to_string_lossy().into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
     }
 
     fn test_cli_build() -> PathBuf {

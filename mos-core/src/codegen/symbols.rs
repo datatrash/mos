@@ -3,18 +3,20 @@ use crate::parser::{Identifier, IdentifierPath};
 use itertools::Itertools;
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
-use petgraph::{Direction, Graph};
+use petgraph::stable_graph::{NodeIndices, StableGraph};
+use petgraph::Direction;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 #[derive(Clone)]
 pub struct SymbolTable<S: Clone + Debug> {
-    graph: Graph<Item<S>, Identifier>,
+    graph: StableGraph<Item<S>, Identifier>,
     pub root: SymbolIndex,
 }
 
 pub type SymbolIndex = NodeIndex;
+pub type SymbolIndices<'a, S> = NodeIndices<'a, Item<S>>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum QueryTraversalStep {
@@ -35,7 +37,7 @@ impl<S: Clone + Debug> Item<S> {
 
 impl<S: Clone + Debug> Default for SymbolTable<S> {
     fn default() -> Self {
-        let mut graph = Graph::new();
+        let mut graph = StableGraph::new();
         let root = graph.add_node(Item::new(None));
 
         Self { graph, root }
@@ -43,6 +45,14 @@ impl<S: Clone + Debug> Default for SymbolTable<S> {
 }
 
 impl<S: Clone + Debug> SymbolTable<S> {
+    pub fn indices(&self) -> SymbolIndices<S> {
+        self.graph.node_indices()
+    }
+
+    pub fn get(&self, nx: SymbolIndex) -> &Option<S> {
+        &self.graph[nx].data
+    }
+
     pub fn try_get(&self, nx: SymbolIndex) -> Option<&S> {
         self.graph
             .node_weight(nx)

@@ -66,6 +66,7 @@ pub struct Segment {
 }
 
 pub struct SegmentOptions {
+    pub filename: Option<String>,
     pub initial_pc: ProgramCounter,
     pub write: bool,
     pub target_address: ProgramCounter,
@@ -74,6 +75,7 @@ pub struct SegmentOptions {
 impl Default for SegmentOptions {
     fn default() -> Self {
         Self {
+            filename: None,
             initial_pc: 0x2000.into(),
             write: true,
             target_address: 0x2000.into(),
@@ -251,7 +253,7 @@ pub struct CodegenContext {
 pub struct UndefinedSymbol {
     scope_nx: SymbolIndex,
     id: IdentifierPath,
-    span: Span,
+    span: Option<Span>,
 }
 
 pub enum TestElement {
@@ -323,24 +325,31 @@ impl CodegenContext {
         &self.source_map
     }
 
-    fn after_pass(&mut self) {
+    fn register_all_segment_symbols(&mut self) -> CoreResult<()> {
         // Register symbols for all segments
         let path: IdentifierPath = "segments".into();
-        let segs = self
-            .segments
-            .iter()
-            .map(|(name, segment)| (path.join(name), segment.range()))
-            .collect_vec();
-        for (path, range) in segs {
-            let _ = self.add_symbol(
+
+        let segments = std::mem::replace(&mut self.segments, IndexMap::new());
+        for (name, segment) in &segments {
+            let path = path.join(name);
+
+            self.add_symbol(
                 path.join("start"),
-                self.symbol(None, range.start as i64, SymbolType::Constant),
-            );
-            let _ = self.add_symbol(
+                self.symbol(None, segment.range.start as i64, SymbolType::Constant),
+            )?;
+
+            self.add_symbol(
                 path.join("end"),
-                self.symbol(None, range.end as i64, SymbolType::Constant),
-            );
+                self.symbol(None, segment.range.end as i64, SymbolType::Constant),
+            )?;
         }
+        self.segments = segments;
+        Ok(())
+    }
+
+    fn after_pass(&mut self) -> CoreResult<()> {
+        self.register_all_segment_symbols()?;
+        Ok(())
     }
 
     pub fn symbol<S: Into<Option<Span>>, D: Into<SymbolData>>(
@@ -457,17 +466,17 @@ impl CodegenContext {
             }
         };
 
-        if let Some(span) = span {
-            // Variables don't require a new pass, since if they update somewhere in the assembly process
-            // they would keep triggering new passes
-            if maybe_require_new_pass && ty != SymbolType::Variable {
-                self.undefined.insert(UndefinedSymbol {
-                    scope_nx: self.current_scope_nx,
-                    id,
-                    span,
-                });
-            }
+        // Variables don't require a new pass, since if they update somewhere in the assembly process
+        // they would keep triggering new passes
+        if maybe_require_new_pass && ty != SymbolType::Variable {
+            self.undefined.insert(UndefinedSymbol {
+                scope_nx: self.current_scope_nx,
+                id,
+                span,
+            });
+        }
 
+        if let Some(span) = span {
             log::trace!(
                 "Setting location for definition '{}' ({:?})",
                 &path,
@@ -607,14 +616,26 @@ impl CodegenContext {
                                 .required("start")
                                 .allowed("pc")
                                 .allowed("write")
+                                .allowed("filename")
                                 .extract(id.span, &kvps)?;
 
                             let mut opts = SegmentOptions::default();
                             let name = extractor.get_identifier("name")?;
                             match extractor.try_get_i64(self, "start")? {
-                                Some(val) => opts.initial_pc = val.into(),
-                                None => {
+                                Some(val) => {
+                                    log::trace!(
+                                        "Segment '{}' was able to evaluate the 'start' to: {}",
+                                        name,
+                                        val
+                                    );
+                                    opts.initial_pc = val.into()
+                                }
+                                _ => {
                                     // Will be marked as undefined and retried later
+                                    log::trace!(
+                                        "Segment '{}' was not able to evaluate the 'start'",
+                                        name
+                                    );
                                     opts.initial_pc = 0.into();
                                 }
                             }
@@ -627,6 +648,7 @@ impl CodegenContext {
                                         )])]
                                 })?;
                             }
+                            opts.filename = extractor.try_get_string("filename");
                             match extractor.try_get_i64(self, "pc")? {
                                 Some(target) => opts.target_address = target.into(),
                                 None => opts.target_address = opts.initial_pc,
@@ -767,7 +789,7 @@ impl CodegenContext {
                                             self.undefined.insert(UndefinedSymbol {
                                                 scope_nx: self.current_scope_nx,
                                                 id: original_path.clone(),
-                                                span: arg.span,
+                                                span: Some(arg.span),
                                             });
                                         }
                                     }
@@ -987,7 +1009,8 @@ impl CodegenContext {
                         .with_message(format!("unknown identifier: {}", id.data))
                         .with_labels(vec![id.span.to_label()])
                         .into());
-                }
+                };
+
                 match block {
                     Some(block) => {
                         let old_segment =
@@ -1086,7 +1109,7 @@ impl CodegenContext {
                     self.undefined.insert(UndefinedSymbol {
                         scope_nx: self.current_scope_nx,
                         id: usage.path.data,
-                        span: usage.path.span,
+                        span: Some(usage.path.span),
                     });
                 }
             }
@@ -1203,7 +1226,7 @@ pub fn codegen(
                 return (Some(ctx), e);
             }
         }
-        ctx.after_pass();
+        ctx.after_pass().expect("Could not finalize pass");
 
         // Are there no segments yet? Then create a default one.
         if ctx.segments.is_empty() {
@@ -1236,11 +1259,13 @@ pub fn codegen(
                         .get_symbol(item.scope_nx, &item.id)
                         .is_none()
                     {
-                        Some(
-                            Diagnostic::error()
-                                .with_message(format!("unknown identifier: {}", item.id))
-                                .with_labels(vec![item.span.to_label()]),
-                        )
+                        let mut diag = Diagnostic::error()
+                            .with_message(format!("unknown identifier: {}", item.id));
+                        if let Some(span) = item.span {
+                            diag = diag.with_labels(vec![span.to_label()]);
+                        }
+
+                        Some(diag)
                     } else {
                         None
                     }
@@ -1540,15 +1565,24 @@ pub mod tests {
             r"
                 .define segment { name = a start = $1000 }
                 .define segment { name = b start = segments.a.end }
+                .define segment { name = c start = segments.b.end }
+                lda data
                 nop
                 .segment b { rol }
+                .segment c { lsr }
                 asl
+                data: .byte 1
                 ",
         )?;
-        assert_eq!(ctx.get_segment("a").range_data(), vec![0xea, 0x0a]);
+        assert_eq!(ctx.get_segment("a").range(), 0x1000..0x1006);
+        assert_eq!(ctx.get_segment("b").range(), 0x1006..0x1007);
+        assert_eq!(ctx.get_segment("c").range(), 0x1007..0x1008);
+        assert_eq!(
+            ctx.get_segment("a").range_data(),
+            vec![0xad, 0x05, 0x10, 0xea, 0x0a, 0x01]
+        );
         assert_eq!(ctx.get_segment("b").range_data(), vec![0x2a]);
-        assert_eq!(ctx.get_segment("a").range(), 0x1000..0x1002);
-        assert_eq!(ctx.get_segment("b").range(), 0x1002..0x1003);
+        assert_eq!(ctx.get_segment("c").range_data(), vec![0x4a]);
         Ok(())
     }
 

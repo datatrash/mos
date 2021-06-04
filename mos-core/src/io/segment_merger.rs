@@ -106,9 +106,23 @@ impl<'a> SegmentMerger<'a> {
     }
 
     /// Merge a segment into the existing merged segments, taking care to see it doesn't overlap with already present segments
-    pub fn merge(&mut self, segment_name: &'a Identifier, segment: &'a Segment) -> CoreResult<()> {
+    pub fn merge(
+        &mut self,
+        segment_name: &'a Identifier,
+        segment: &'a Segment,
+        merge_to_single_segment: bool,
+    ) -> CoreResult<()> {
         let seg_range = segment.range();
-        let target_name = &self.default_target;
+        let target_name = if merge_to_single_segment {
+            self.default_target.clone()
+        } else {
+            segment
+                .options()
+                .filename
+                .as_ref()
+                .map(|f| PathBuf::from(f))
+                .unwrap_or(self.default_target.clone())
+        };
         let target = match self.targets.entry(target_name.clone()) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(e) => e.insert(TargetSegment {
@@ -119,7 +133,7 @@ impl<'a> SegmentMerger<'a> {
         };
 
         let overlaps = target.overlaps_with_sources(&seg_range);
-        if !overlaps.is_empty() {
+        if !overlaps.is_empty() && merge_to_single_segment {
             let overlaps = overlaps
                 .into_iter()
                 .map(|(name, segment)| {
