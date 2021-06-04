@@ -116,12 +116,11 @@ impl<'a> SegmentMerger<'a> {
         let target_name = if merge_to_single_segment {
             self.default_target.clone()
         } else {
-            segment
-                .options()
-                .filename
-                .as_ref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| self.default_target.clone())
+            let mut segment_filename = segment.options().filename.clone();
+            if segment_filename.is_none() {
+                segment_filename = Some(format!("{}.bin", segment_name));
+            }
+            PathBuf::from(segment_filename.unwrap())
         };
         let target = match self.targets.entry(target_name.clone()) {
             Entry::Occupied(o) => o.into_mut(),
