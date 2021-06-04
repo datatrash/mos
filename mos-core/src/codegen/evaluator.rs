@@ -181,7 +181,7 @@ impl<'a> Evaluator<'a> {
                     });
                 }
 
-                Ok(symbol_data.map(|d| d.as_i64()).map(|val| {
+                Ok(symbol_data.and_then(|d| d.try_as_i64()).map(|val| {
                     match modifier.as_ref().map(|m| &m.data) {
                         Some(AddressModifier::LowByte) => val & 255,
                         Some(AddressModifier::HighByte) => (val >> 8) & 255,

@@ -90,10 +90,25 @@ impl Default for WhitespaceOptions {
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct ListingOptions {
+    pub num_bytes_per_line: usize,
+}
+
+impl Default for ListingOptions {
+    fn default() -> Self {
+        Self {
+            num_bytes_per_line: 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FormattingOptions {
     pub mnemonics: MnemonicOptions,
     pub braces: BraceOptions,
     pub whitespace: WhitespaceOptions,
+    pub listing: ListingOptions,
 }
 
 impl Default for FormattingOptions {
@@ -102,6 +117,7 @@ impl Default for FormattingOptions {
             mnemonics: MnemonicOptions::default(),
             braces: BraceOptions::default(),
             whitespace: WhitespaceOptions::default(),
+            listing: ListingOptions::default(),
         }
     }
 }

@@ -4,6 +4,7 @@
 
 ### New features
 * Error formatting is improved and made configurable through the `--error-style` option
+* A listing file can be generated for every segment by specifying `listing = true` in the `[build]` section of `mos.toml`
 
 ### Bugfixes
 * Nested macros are now looked up correctly ([#168](https://github.com/datatrash/mos/issues/168))

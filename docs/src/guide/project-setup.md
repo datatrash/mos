@@ -46,6 +46,7 @@ whitespace.indent = 4
 whitespace.label-margin = 20
 whitespace.label-alignment = right
 whitespace.code-margin = 30
+listing.num-bytes-per-line = 8
 ```
 
 | Key | Type | Description |
@@ -57,3 +58,4 @@ whitespace.code-margin = 30
 | whitespace.label-margin | number | How many characters to reserve for labels |
 | whitespace.label-alignment | `left`, `right` | How to align labels |
 | whitespace.code-margin | number | How many characters to reserve for code (the rest is reserved for comments) |
+| listing.num-bytes-per-line | number | When generating a listing file, this specifies how many bytes should be emitted per line |

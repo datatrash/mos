@@ -74,6 +74,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
         tree,
         CodegenOptions {
             pc: 0x2000.into(),
+            move_macro_source_map_to_invocation: cfg.build.listing,
             ..Default::default()
         },
     );
@@ -107,7 +108,9 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     }
 
     if cfg.build.listing {
-        for (source_path, contents) in to_listing(&generated_code)? {
+        for (source_path, contents) in
+            to_listing(&generated_code, cfg.formatting.listing.num_bytes_per_line)?
+        {
             let listing_path =
                 format!("{}.lst", source_path.file_stem().unwrap().to_string_lossy());
             let mut out = fs::File::create(target_dir.join(listing_path)).map_err(map_io_error)?;

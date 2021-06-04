@@ -39,6 +39,12 @@ pub struct CodegenOptions {
     pub pc: ProgramCounter,
     pub active_test: Option<IdentifierPath>,
     pub predefined_constants: HashMap<String, i64>,
+
+    /// When invoking a macro, do we want the source map to point to the macro's _invocation_ site, instead of the _definition_?
+    /// This is useful for source map listings where every invocation will then be associated with the full macro output.
+    ///
+    /// However, if we want to be able to set breakpoints in the middle of macro code, then we do NOT want to move the source map offsets.
+    pub move_macro_source_map_to_invocation: bool,
 }
 
 impl Default for CodegenOptions {
@@ -47,6 +53,7 @@ impl Default for CodegenOptions {
             pc: ProgramCounter::new(0xc000),
             active_test: None,
             predefined_constants: HashMap::new(),
+            move_macro_source_map_to_invocation: false,
         }
     }
 }
@@ -951,6 +958,13 @@ impl CodegenContext {
                         }
 
                         s.emit_tokens(&def.block)?;
+
+                        if s.options.move_macro_source_map_to_invocation {
+                            // Move all source map offsets that refer to the macro definition's span to the macro invocation's span
+                            // to make sure that the emitted bytes show up at the invocation site when generating a listing file
+                            s.source_map
+                                .move_offsets(s.current_scope_nx, parent_scope, name.span);
+                        }
 
                         for arg_name in &def.args {
                             s.remove_symbol(&arg_name.data);
@@ -2105,7 +2119,7 @@ pub mod tests {
         )
     }
 
-    pub(super) fn test_codegen_with_options(
+    pub fn test_codegen_with_options(
         code: &str,
         options: CodegenOptions,
     ) -> CoreResult<CodegenContext> {
@@ -2115,7 +2129,7 @@ pub mod tests {
         )
     }
 
-    pub(super) fn test_codegen_parsing_source(
+    pub fn test_codegen_parsing_source(
         src: Arc<Mutex<dyn ParsingSource>>,
         options: CodegenOptions,
     ) -> CoreResult<CodegenContext> {

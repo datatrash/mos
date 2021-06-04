@@ -92,6 +92,21 @@ impl SourceMap {
             })
             .collect()
     }
+
+    pub fn move_offsets(&mut self, scope: SymbolIndex, new_scope: SymbolIndex, new_span: Span) {
+        log::trace!(
+            "Trying to move offset from scope '{:?}' to scope '{:?}'",
+            scope,
+            new_scope
+        );
+        self.offsets.iter_mut().for_each(|offset| {
+            if offset.scope == scope {
+                log::trace!("Moved");
+                offset.scope = new_scope;
+                offset.span = new_span;
+            }
+        });
+    }
 }
 
 impl Default for SourceMap {

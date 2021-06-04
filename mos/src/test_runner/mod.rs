@@ -161,6 +161,7 @@ impl TestRunner {
                 pc: 0x2000.into(),
                 active_test: Some(test_path.clone()),
                 predefined_constants,
+                ..Default::default()
             },
         )?;
 
