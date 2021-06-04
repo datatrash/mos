@@ -1,202 +1,183 @@
-use crate::parser::code_map::SpanLoc;
+use crate::parser::code_map::{CodeMap, Span, SpanLoc};
+use codespan_reporting::diagnostic::{Diagnostic, Severity};
+use codespan_reporting::files::{Error, Files};
 use itertools::Itertools;
 use pathdiff::diff_paths;
 use std::fmt::{Display, Formatter};
-use std::num::ParseIntError;
-use std::path::PathBuf;
-use std::str::ParseBoolError;
+use std::ops::Range;
 
-pub type CoreResult<T> = Result<T, CoreError>;
+pub type CoreResult<T> = Result<T, Diagnostics>;
 
-#[allow(dead_code)]
-#[derive(thiserror::Error, Debug)]
-pub enum CoreError {
-    BuildError(String),
-    Codegen { location: SpanLoc, message: String },
-    Io(#[from] std::io::Error),
-    Parser { location: SpanLoc, message: String },
-    Multiple(Vec<CoreError>),
-    Json(#[from] serde_json::Error),
-    Toml(#[from] toml::de::Error),
-    ParseBoolError(#[from] ParseBoolError),
-    ParseIntError(#[from] ParseIntError),
-    Unknown,
+#[derive(Debug, Default)]
+pub struct Diagnostics {
+    diags: Vec<Diagnostic<Span>>,
+    code_map: Option<CodeMap>,
 }
 
-impl Display for CoreError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            format_error(self, &ErrorFormattingOptions::default())
-        )
-    }
-}
-
-impl From<()> for CoreError {
-    fn from(_: ()) -> Self {
-        CoreError::Unknown
-    }
-}
-
-impl PartialEq for CoreError {
+impl PartialEq for Diagnostics {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                CoreError::Parser {
-                    location: lloc,
-                    message: lmsg,
-                    ..
-                },
-                CoreError::Parser {
-                    location: rloc,
-                    message: rmsg,
-                    ..
-                },
-            ) => lloc == rloc && lmsg == rmsg,
-            (
-                CoreError::Codegen {
-                    location: lloc,
-                    message: lmsg,
-                    ..
-                },
-                CoreError::Codegen {
-                    location: rloc,
-                    message: rmsg,
-                    ..
-                },
-            ) => lloc == rloc && lmsg == rmsg,
-            (CoreError::Multiple(lhs), CoreError::Multiple(rhs)) => lhs == rhs,
-            (CoreError::BuildError(lhs), CoreError::BuildError(rhs)) => lhs == rhs,
-            _ => false,
-        }
+        self.diags == other.diags
     }
 }
 
-impl<T: Into<CoreError>> From<Vec<T>> for CoreError {
-    fn from(errors: Vec<T>) -> Self {
-        Self::Multiple(errors.into_iter().map(|e| e.into()).collect())
+impl std::error::Error for Diagnostics {}
+
+impl Diagnostics {
+    pub fn iter(&self) -> impl Iterator<Item = &Diagnostic<Span>> {
+        self.diags.iter()
     }
-}
 
-pub struct ErrorFormattingOptions {
-    pub use_color: bool,
-    pub paths_relative_from: Option<PathBuf>,
-    pub use_prefix: bool,
-}
-
-impl Default for ErrorFormattingOptions {
-    fn default() -> Self {
-        Self {
-            use_color: false,
-            paths_relative_from: None,
-            use_prefix: true,
-        }
+    pub fn is_empty(&self) -> bool {
+        self.diags.is_empty()
     }
-}
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
-pub struct ErrorMessageLine {
-    location: Option<SpanLoc>,
-    message: String,
-}
-
-pub struct ErrorMessage {
-    pub lines: Vec<ErrorMessageLine>,
-}
-
-impl From<String> for ErrorMessage {
-    fn from(message: String) -> Self {
-        ErrorMessage {
-            lines: vec![ErrorMessageLine {
-                location: None,
-                message,
-            }],
-        }
+    pub fn len(&self) -> usize {
+        self.diags.len()
     }
-}
 
-impl From<CoreError> for ErrorMessage {
-    fn from(e: CoreError) -> Self {
-        e.message()
+    pub fn first(&self) -> Option<&Diagnostic<Span>> {
+        self.diags.first()
     }
-}
 
-impl From<&CoreError> for ErrorMessage {
-    fn from(e: &CoreError) -> Self {
-        e.message()
+    pub fn push(&mut self, diag: Diagnostic<Span>) {
+        self.diags.push(diag);
     }
-}
 
-impl CoreError {
-    fn message(&self) -> ErrorMessage {
-        match self {
-            CoreError::Codegen { location, message } | CoreError::Parser { location, message } => {
-                ErrorMessage {
-                    lines: vec![ErrorMessageLine {
-                        location: Some(location.clone()),
-                        message: message.clone(),
-                    }],
-                }
-            }
-            CoreError::Io(err) => err.to_string().into(),
-            CoreError::Json(err) => err.to_string().into(),
-            CoreError::Toml(err) => err.to_string().into(),
-            CoreError::BuildError(message) => message.to_string().into(),
-            CoreError::ParseBoolError(err) => err.to_string().into(),
-            CoreError::ParseIntError(err) => err.to_string().into(),
-            CoreError::Unknown => "unknown error".to_string().into(),
-            CoreError::Multiple(errors) => {
-                let lines = errors
-                    .iter()
-                    .map(|e| e.message().lines)
-                    .sorted()
-                    .flatten()
-                    .collect_vec();
-                ErrorMessage { lines }
-            }
-        }
+    pub fn extend(&mut self, other: Diagnostics) {
+        self.diags.extend(other.diags);
     }
-}
 
-pub fn span_loc_to_error_string(
-    location: &SpanLoc,
-    paths_relative_from: &Option<PathBuf>,
-) -> String {
-    let mut filename: PathBuf = location.file.name().into();
-    if let Some(relative_from) = paths_relative_from {
-        filename = diff_paths(filename, relative_from).unwrap();
+    pub fn code_map(&self) -> Option<&CodeMap> {
+        self.code_map.as_ref()
     }
-    format!(
-        "{}:{}:{}: ",
-        filename.to_string_lossy(),
-        location.begin.line + 1,
-        location.begin.column + 1
-    )
-}
 
-pub fn format_error<M: Into<ErrorMessage>>(message: M, options: &ErrorFormattingOptions) -> String {
-    let message = message.into();
+    pub fn with_code_map(mut self, code_map: &CodeMap) -> Self {
+        self.code_map = Some(code_map.clone());
+        self
+    }
 
-    message
-        .lines
-        .into_iter()
-        .map(|line| {
-            let location = line
-                .location
-                .map(|l| span_loc_to_error_string(&l, &options.paths_relative_from));
-
-            use ansi_term::Colour::Red;
-            let err = if options.use_prefix {
-                if options.use_color {
-                    Red.paint("error: ")
-                } else {
-                    "error: ".into()
-                }
-            } else {
-                "".into()
-            };
-            format!("{}{}{}", location.unwrap_or_default(), err, line.message)
+    pub fn location(&self) -> Option<SpanLoc> {
+        self.code_map.as_ref().and_then(|cm| {
+            self.diags.first().and_then(|diag| {
+                diag.labels
+                    .first()
+                    .map(|label| cm.look_up_span(label.file_id))
+            })
         })
-        .join("\n")
+    }
+
+    fn format(&self) -> String {
+        self.diags
+            .iter()
+            .sorted_by_key(|s| s.labels.first().map(|l| l.file_id))
+            .map(|diag| {
+                let mut msg = "".to_string();
+                if let Some(cm) = &self.code_map {
+                    if let Some(label) = diag.labels.first() {
+                        let sl = cm.look_up_span(label.file_id);
+                        msg += format!(
+                            "{}:{}:{}: ",
+                            sl.file.name(),
+                            sl.begin.line + 1,
+                            sl.begin.column + 1
+                        )
+                        .as_str();
+                    }
+                }
+                let severity = match diag.severity {
+                    Severity::Error => "error",
+                    _ => unimplemented!(),
+                };
+                msg += format!("{}: ", severity).as_str();
+                msg += diag.message.as_str();
+                msg
+            })
+            .collect_vec()
+            .join("\n")
+    }
+}
+
+impl Display for Diagnostics {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.format())
+    }
+}
+
+impl From<Vec<Diagnostic<Span>>> for Diagnostics {
+    fn from(diags: Vec<Diagnostic<Span>>) -> Self {
+        Diagnostics {
+            diags,
+            code_map: None,
+        }
+    }
+}
+
+impl From<Diagnostic<Span>> for Diagnostics {
+    fn from(diag: Diagnostic<Span>) -> Self {
+        Diagnostics {
+            diags: vec![diag],
+            code_map: None,
+        }
+    }
+}
+
+pub fn map_io_error(e: std::io::Error) -> Diagnostics {
+    Diagnostic::error().with_message(e.to_string()).into()
+}
+
+impl<'a> Files<'a> for &'a CodeMap {
+    type FileId = Span;
+    type Name = String;
+    type Source = &'a str;
+
+    fn name(&'a self, file: Span) -> Result<Self::Name, Error> {
+        let mut filename = self.find_file(file.low()).name().to_string();
+        if let Some(relative_from) = &self.paths_relative_from {
+            if let Some(path) = diff_paths(&filename, relative_from) {
+                filename = path.to_str().unwrap().into();
+            }
+        }
+        Ok(filename)
+    }
+
+    fn source(&'a self, file: Span) -> Result<Self::Source, Error> {
+        Ok(self.find_file(file.low()).source())
+    }
+
+    fn line_index(&'a self, file: Span, byte_in_file: usize) -> Result<usize, Error> {
+        let file = self.look_up_span(file).file;
+        let pos = file.span.low() + byte_in_file as u64;
+        Ok(file.find_line(pos))
+    }
+
+    fn line_range(&'a self, file: Span, line_index: usize) -> Result<Range<usize>, Error> {
+        let file = self.look_up_span(file).file;
+        let line_span = file.line_span(line_index);
+        let low = line_span.low().as_usize() - file.span.low().as_usize();
+        let high = line_span.high().as_usize() - file.span.low().as_usize();
+        Ok(low..high)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parser::code_map::CodeMap;
+    use codespan_reporting::files::Files;
+
+    #[test]
+    fn files() {
+        let mut codemap = CodeMap::default();
+        let a = codemap.add_file("a".into(), "1234567890\nabcde".into());
+        let b = codemap.add_file("b".into(), "ABCDE\nFGHIJKLMNO".into());
+
+        let cm = &codemap;
+        assert_eq!(cm.line_index(a.span, 5).unwrap(), 0);
+        assert_eq!(cm.line_index(a.span, 15).unwrap(), 1);
+        assert_eq!(cm.line_index(b.span, 3).unwrap(), 0);
+        assert_eq!(cm.line_index(b.span, 8).unwrap(), 1);
+
+        assert_eq!(cm.line_range(a.span, 0).unwrap(), 0..11);
+        assert_eq!(cm.line_range(a.span, 1).unwrap(), 11..16);
+        assert_eq!(cm.line_range(b.span, 0).unwrap(), 0..6);
+    }
 }

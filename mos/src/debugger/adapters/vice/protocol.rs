@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::collections::HashMap;
 use std::io;

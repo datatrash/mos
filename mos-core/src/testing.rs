@@ -3,7 +3,7 @@ use crate::LINE_ENDING;
 use itertools::Itertools;
 
 pub fn empty_span() -> Span {
-    let mut codemap = CodeMap::new();
+    let mut codemap = CodeMap::default();
     let f1 = codemap.add_file("test1.rs".to_string(), "abcd\nefghij\nqwerty".to_string());
     f1.span
 }

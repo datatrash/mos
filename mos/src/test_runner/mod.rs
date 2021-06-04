@@ -1,16 +1,18 @@
-use crate::errors::{MosError, MosResult};
+use crate::diagnostic_emitter::MosResult;
 use crate::memory_accessor::{ensure_ram_fn, MemoryAccessor};
 use crate::utils::paint;
 use ansi_term::Colour;
+use codespan_reporting::diagnostic::Diagnostic;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
     codegen, Assertion, CodegenContext, CodegenOptions, SymbolType, TestElement, Trace,
 };
+use mos_core::errors::Diagnostics;
 use mos_core::parser;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
-use mos_core::parser::IdentifierPath;
+use mos_core::parser::{IdentifierPath, ParseTree};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::DerefMut;
@@ -19,6 +21,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 pub struct TestRunner {
     ctx: Arc<Mutex<CodegenContext>>,
+    tree: Arc<ParseTree>,
     test_elements: Vec<TestElement>,
     ram: Arc<RwLock<BasicRam>>,
     cpu: MOS6502,
@@ -34,8 +37,7 @@ pub enum ExecuteResult {
 }
 
 pub struct TestFailure {
-    pub location: Option<SpanLoc>,
-    pub message: String,
+    pub diagnostic: Diagnostics,
     pub assertion: Option<Assertion>,
     pub cpu: MOS6502,
     pub traces: Vec<FormattedTrace>,
@@ -43,15 +45,13 @@ pub struct TestFailure {
 
 impl Debug for TestFailure {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.message)
+        write!(f, "{}", self.diagnostic.to_string())
     }
 }
 
 impl PartialEq for TestFailure {
     fn eq(&self, other: &Self) -> bool {
-        self.location == other.location
-            && self.message == other.message
-            && self.traces == other.traces
+        self.diagnostic == other.diagnostic && self.traces == other.traces
     }
 }
 
@@ -174,10 +174,10 @@ impl TestRunner {
         let test_pc = match test_pc {
             Some(pc) => pc,
             None => {
-                return Err(MosError::UnitTest(format!(
-                    "Test case not found: {}",
-                    test_path
-                )));
+                return Err(Diagnostics::from(
+                    Diagnostic::error().with_message(format!("Test case not found: {}", test_path)),
+                )
+                .into());
             }
         };
 
@@ -195,9 +195,11 @@ impl TestRunner {
             Box::new(TestRunnerMemoryAccessor { ram: ram.clone() }),
         );
 
+        let tree = ctx.tree().clone();
         let test_elements = ctx.remove_test_elements();
         Ok(Self {
             ctx: Arc::new(Mutex::new(ctx)),
+            tree,
             test_elements,
             ram,
             cpu,
@@ -287,14 +289,16 @@ impl TestRunner {
                 .ok()
                 .flatten();
             if eval_result == Some(0) || eval_result.is_none() {
-                let message = assertion
-                    .failure_message
-                    .clone()
-                    .unwrap_or_else(|| format!("{}", &assertion.expr.data).trim().into());
-                let location = ctx.analysis().look_up(assertion.expr.span);
+                let message = assertion.failure_message.clone().unwrap_or_else(|| {
+                    let expr = format!("{}", &assertion.expr.data).trim().to_string();
+                    format!("assertion failed: {}", expr)
+                });
+                let diag = Diagnostic::error()
+                    .with_message(message)
+                    .with_labels(vec![assertion.expr.span.to_label()]);
+                let diagnostic = Diagnostics::from(diag).with_code_map(&self.tree.code_map);
                 let failure = TestFailure {
-                    location: Some(location),
-                    message,
+                    diagnostic,
                     assertion: Some(assertion),
                     cpu: self.cpu.clone(),
                     traces: self.formatted_traces.clone(),
@@ -407,12 +411,12 @@ fn generate(
     options: CodegenOptions,
 ) -> MosResult<CodegenContext> {
     let (tree, error) = parser::parse(input_path, src);
-    if let Some(e) = error {
-        return Err(e.into());
+    if !error.is_empty() {
+        return Err(error.into());
     }
     let tree = tree.unwrap();
     let (generated_code, error) = codegen(tree, options);
-    if let Some(error) = error {
+    if !error.is_empty() {
         return Err(error.into());
     }
     Ok(generated_code.unwrap())
@@ -669,14 +673,20 @@ mod tests {
             ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nbrk\n}",
             idpath!("a"),
         )?;
-        assert_eq!(runner.run()?.as_failure().message, "oh no");
+        assert_eq!(
+            runner.run()?.as_failure().diagnostic.to_string(),
+            "test.asm:3:9: error: oh no"
+        );
         Ok(())
     }
 
     #[test]
     fn failing_assertion_without_message() -> MosResult<()> {
         let mut runner = get_runner(".test a {\nnop\n.assert 1 == 2\nbrk\n}", idpath!("a"))?;
-        assert_eq!(runner.run()?.as_failure().message, "1 == 2");
+        assert_eq!(
+            runner.run()?.as_failure().diagnostic.to_string(),
+            "test.asm:3:9: error: assertion failed: 1 == 2"
+        );
         Ok(())
     }
 

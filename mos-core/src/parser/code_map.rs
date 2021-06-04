@@ -1,16 +1,28 @@
 //! Copied from https://raw.githubusercontent.com/kevinmehall/codemap/master/src/lib.rs
 
 #![allow(dead_code)]
+use codespan_reporting::diagnostic::Label;
 use serde::Serialize;
 use std::cmp::{self, Ordering};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Deref, Sub};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// A small, `Copy`, value representing a position in a `CodeMap`'s file.
 #[derive(Copy, Clone, Hash, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub struct Pos(u32);
+
+impl Pos {
+    pub fn new(pos: u32) -> Self {
+        Self(pos)
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+}
 
 impl Add<u64> for Pos {
     type Output = Pos;
@@ -37,6 +49,10 @@ pub struct Span {
 }
 
 impl Span {
+    pub fn to_label(&self) -> Label<Span> {
+        Label::primary(*self, 0..0)
+    }
+
     /// Makes a span from offsets relative to the start of this span.
     ///
     /// # Panics
@@ -111,15 +127,20 @@ impl<T> Deref for Spanned<T> {
 }
 
 /// A data structure recording source code files for position lookup.
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CodeMap {
     files: Vec<Arc<File>>,
+    pub(crate) paths_relative_from: Option<PathBuf>,
 }
 
 impl CodeMap {
     /// Creates an empty `CodeMap`.
-    pub fn new() -> CodeMap {
-        Default::default()
+    pub fn new(paths_relative_from: Option<PathBuf>) -> CodeMap {
+        use path_absolutize::Absolutize;
+        CodeMap {
+            paths_relative_from: paths_relative_from.map(|p| p.absolutize().unwrap().to_path_buf()),
+            ..Default::default()
+        }
     }
 
     pub fn files(&self) -> &Vec<Arc<File>> {
@@ -400,7 +421,7 @@ impl fmt::Display for SpanLoc {
 
 #[test]
 fn test_codemap() {
-    let mut codemap = CodeMap::new();
+    let mut codemap = CodeMap::default();
     let f1 = codemap.add_file("test1.rs".to_string(), "abcd\nefghij\nqwerty".to_string());
     let f2 = codemap.add_file("test2.rs".to_string(), "foo\nbar".to_string());
 
@@ -436,7 +457,7 @@ fn test_codemap() {
 
 #[test]
 fn test_issue2() {
-    let mut codemap = CodeMap::new();
+    let mut codemap = CodeMap::default();
     let content = "a \nxyz\r\n";
     let file = codemap.add_file("<test>".to_owned(), content.to_owned());
 
@@ -457,7 +478,7 @@ fn test_issue2() {
 
 #[test]
 fn test_multibyte() {
-    let mut codemap = CodeMap::new();
+    let mut codemap = CodeMap::default();
     let content = "65°00′N 18°00′W 汉语\n🔬";
     let file = codemap.add_file("<test>".to_owned(), content.to_owned());
 

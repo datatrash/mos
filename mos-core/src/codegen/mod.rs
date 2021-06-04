@@ -18,12 +18,13 @@ use crate::codegen::config_validator::ConfigValidator;
 use crate::codegen::opcodes::get_opcode_bytes;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::text_encoding::encode_text;
-use crate::errors::{CoreError, CoreResult};
+use crate::errors::{CoreResult, Diagnostics};
 use crate::parser::code_map::Span;
 use crate::parser::{
     AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath, ImportArgs, Located,
     Mnemonic, ParseTree, TextEncoding, Token, VariableType,
 };
+use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
 use indexmap::map::IndexMap;
 use itertools::Itertools;
@@ -408,7 +409,10 @@ impl CodegenContext {
                                 && existing.read_only())
                         {
                             let span = symbol.span.expect("no span provided");
-                            return self.error(span, format!("cannot redefine symbol: {}", &path));
+                            return Err(Diagnostic::error()
+                                .with_message(format!("cannot redefine symbol: {}", &path))
+                                .with_labels(vec![span.to_label()])
+                                .into());
                         }
 
                         // If the symbol already existed but with a different value,
@@ -491,14 +495,6 @@ impl CodegenContext {
         )
     }
 
-    fn error<T, M: Into<String>>(&self, span: Span, message: M) -> CoreResult<T> {
-        let location = self.tree.code_map.look_up_span(span);
-        Err(CoreError::Codegen {
-            location,
-            message: message.into(),
-        })
-    }
-
     fn emit(&mut self, span: Span, bytes: &[u8]) -> CoreResult<()> {
         match &self.current_segment {
             Some(name) => {
@@ -514,7 +510,10 @@ impl CodegenContext {
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
-                    self.error(span, format!("segment '{}' is out of range", name))
+                    return Err(Diagnostic::error()
+                        .with_message(format!("segment '{}' is out of range", name))
+                        .with_labels(vec![span.to_label()])
+                        .into());
                 }
             }
             None => {
@@ -601,10 +600,10 @@ impl CodegenContext {
                                 .required("start")
                                 .allowed("pc")
                                 .allowed("write")
-                                .extract(self.tree.clone(), id.span, &kvps)?;
+                                .extract(id.span, &kvps)?;
 
                             let mut opts = SegmentOptions::default();
-                            let name = extractor.get_identifier(self, "name")?;
+                            let name = extractor.get_identifier("name")?;
                             match extractor.try_get_i64(self, "start")? {
                                 Some(val) => opts.initial_pc = val.into(),
                                 None => {
@@ -613,7 +612,13 @@ impl CodegenContext {
                                 }
                             }
                             if let Some(write) = extractor.try_get_string("write") {
-                                opts.write = write.parse()?;
+                                opts.write = write.parse().map_err(|_| {
+                                    vec![Diagnostic::error()
+                                        .with_message("could not parse boolean")
+                                        .with_labels(vec![id.span.to_label().with_message(
+                                            format!("expected boolean, found `{}`", write),
+                                        )])]
+                                })?;
                             }
                             match extractor.try_get_i64(self, "pc")? {
                                 Some(target) => opts.target_address = target.into(),
@@ -626,7 +631,10 @@ impl CodegenContext {
                             }
                         }
                         _ => {
-                            return self.error(id.span, "Unknown definition type");
+                            return Err(Diagnostic::error()
+                                .with_message("Unknown definition type")
+                                .with_labels(vec![id.span.to_label()])
+                                .into());
                         }
                     }
                 }
@@ -643,10 +651,10 @@ impl CodegenContext {
                         self.emit(span, &bytes)?;
                     }
                     Err(_) => {
-                        return self.error(
-                            span,
-                            &format!("file not found: {}", filename.to_string_lossy()),
-                        );
+                        return Err(Diagnostic::error()
+                            .with_message(format!("file not found: {}", filename.to_string_lossy()))
+                            .with_labels(vec![span.to_label()])
+                            .into());
                     }
                 }
             }
@@ -776,13 +784,13 @@ impl CodegenContext {
                                     );
                                 }
                             } else {
-                                return self.error(
-                                    span,
-                                    format!(
+                                return Err(Diagnostic::error()
+                                    .with_message(format!(
                                         "cannot import an already defined symbol: {}",
                                         new_path
-                                    ),
-                                );
+                                    ))
+                                    .with_labels(vec![span.to_label()])
+                                    .into());
                             }
                         }
                     }
@@ -831,7 +839,10 @@ impl CodegenContext {
                                 // We'll just return a dummy offset. This instruction will be re-emitted in a next pass anyway.
                                 0
                             } else {
-                                return self.error(i.mnemonic.span, "branch too far");
+                                return Err(Diagnostic::error()
+                                    .with_message("branch too far")
+                                    .with_labels(vec![i.mnemonic.span.to_label()])
+                                    .into());
                             }
                         }
                         _ => value,
@@ -842,7 +853,10 @@ impl CodegenContext {
                         Err(()) => {
                             // Emit 'nothing' so at least the code map gets updated
                             self.emit(full_span, &[])?;
-                            return self.error(full_span, "operand size mismatch");
+                            return Err(Diagnostic::error()
+                                .with_message("operand size mismatch")
+                                .with_labels(vec![full_span.to_label()])
+                                .into());
                         }
                     }
                 } else {
@@ -955,7 +969,10 @@ impl CodegenContext {
             }
             Token::Segment { id, block, .. } => {
                 if !self.segments.contains_key(&id.data) {
-                    return self.error(id.span, format!("unknown identifier: {}", id.data));
+                    return Err(Diagnostic::error()
+                        .with_message(format!("unknown identifier: {}", id.data))
+                        .with_labels(vec![id.span.to_label()])
+                        .into());
                 }
                 match block {
                     Some(block) => {
@@ -1026,12 +1043,11 @@ impl CodegenContext {
         Ok(())
     }
 
-    fn map_evaluation_error(&self, error: EvaluationError) -> CoreError {
-        let location = self.tree.code_map.look_up_span(error.span);
-        CoreError::Codegen {
-            location,
-            message: error.message,
-        }
+    fn map_evaluation_error(&self, error: EvaluationError) -> Diagnostics {
+        Diagnostic::error()
+            .with_message(error.message)
+            .with_labels(vec![error.span.to_label()])
+            .into()
     }
 
     pub fn evaluate_expression(
@@ -1147,7 +1163,7 @@ impl CodegenContext {
 pub fn codegen(
     ast: Arc<ParseTree>,
     options: CodegenOptions,
-) -> (Option<CodegenContext>, Option<CoreError>) {
+) -> (Option<CodegenContext>, Diagnostics) {
     let mut ctx = CodegenContext::new(ast.clone(), options.clone());
     ctx.register_default_fns();
     for (name, val) in &options.predefined_constants {
@@ -1169,7 +1185,8 @@ pub fn codegen(
         match ctx.emit_tokens(&ast.main_file().tokens) {
             Ok(()) => (),
             Err(e) => {
-                return (Some(ctx), Some(e));
+                let e = e.with_code_map(&ctx.tree.code_map);
+                return (Some(ctx), e);
             }
         }
         ctx.after_pass();
@@ -1205,24 +1222,27 @@ pub fn codegen(
                         .get_symbol(item.scope_nx, &item.id)
                         .is_none()
                     {
-                        Some(CoreError::Codegen {
-                            location: ctx.tree.code_map.look_up_span(item.span),
-                            message: format!("unknown identifier: {}", item.id),
-                        })
+                        Some(
+                            Diagnostic::error()
+                                .with_message(format!("unknown identifier: {}", item.id))
+                                .with_labels(vec![item.span.to_label()]),
+                        )
                     } else {
                         None
                     }
                 })
                 .collect_vec();
             if !errors.is_empty() {
-                return (Some(ctx), Some(CoreError::Multiple(errors)));
+                let e = Diagnostics::from(errors).with_code_map(&ctx.tree.code_map);
+                return (Some(ctx), e);
             }
         }
 
         ctx.next_pass();
     }
 
-    (Some(ctx), None)
+    let e = Diagnostics::default().with_code_map(&ctx.tree.code_map);
+    (Some(ctx), e)
 }
 
 #[cfg(test)]
@@ -1716,7 +1736,7 @@ pub mod tests {
     #[test]
     fn error_unknown_identifiers() {
         let err = test_codegen(".byte foo\n.byte foo2").err().unwrap();
-        assert_eq!(format!("{}", err), "test.asm:1:7: error: unknown identifier: foo\ntest.asm:2:7: error: unknown identifier: foo2");
+        assert_eq!(err.to_string(), "test.asm:1:7: error: unknown identifier: foo\ntest.asm:2:7: error: unknown identifier: foo2");
     }
 
     #[test]
@@ -1845,11 +1865,8 @@ pub mod tests {
             &Path::new("test.asm"),
             InMemoryParsingSource::new().add("test.asm", &src).into(),
         )?;
-        let (_, err) = codegen(ast, CodegenOptions::default());
-        assert_eq!(
-            format!("{}", err.unwrap()),
-            "test.asm:141:1: error: branch too far"
-        );
+        let (_, err) = codegen(ast.clone(), CodegenOptions::default());
+        assert_eq!(err.to_string(), "test.asm:141:1: error: branch too far");
         Ok(())
     }
 
@@ -2104,9 +2121,10 @@ pub mod tests {
     ) -> CoreResult<CodegenContext> {
         let ast = parse_or_err(&Path::new("test.asm"), src)?;
         let (ctx, err) = codegen(ast, options);
-        match err {
-            Some(e) => Err(e),
-            None => Ok(ctx.unwrap()),
+        if err.is_empty() {
+            Ok(ctx.unwrap())
+        } else {
+            Err(err)
         }
     }
 }

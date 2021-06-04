@@ -1,10 +1,10 @@
 use crate::codegen::config_extractor::ConfigExtractor;
-use crate::errors::{CoreError, CoreResult};
+use crate::errors::CoreResult;
 use crate::parser::code_map::Span;
-use crate::parser::{Located, ParseTree, Token};
+use crate::parser::{Located, Token};
+use codespan_reporting::diagnostic::Diagnostic;
 use itertools::Itertools;
 use std::collections::HashSet;
-use std::sync::Arc;
 
 pub struct ConfigValidator {
     required: HashSet<String>,
@@ -31,7 +31,6 @@ impl ConfigValidator {
 
     pub fn extract<'a>(
         self,
-        tree: Arc<ParseTree>,
         config_span: Span,
         kvps: &'a [(&'a Located<String>, &'a Located<Token>)],
     ) -> CoreResult<ConfigExtractor<'a>> {
@@ -53,14 +52,15 @@ impl ConfigValidator {
 
         let errors = errors
             .into_iter()
-            .map(|(span, message)| CoreError::Codegen {
-                location: tree.code_map.look_up_span(span.unwrap_or(config_span)),
-                message,
+            .map(|(span, message)| {
+                Diagnostic::error()
+                    .with_message(message)
+                    .with_labels(vec![span.unwrap_or(config_span).to_label()])
             })
             .collect_vec();
         match errors.is_empty() {
             true => Ok(ConfigExtractor::new(kvps)),
-            false => Err(CoreError::Multiple(errors)),
+            false => Err(errors.into()),
         }
     }
 }

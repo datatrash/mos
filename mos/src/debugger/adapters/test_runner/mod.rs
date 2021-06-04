@@ -3,7 +3,7 @@ use crate::debugger::adapters::{
     MachineValidatedBreakpoint,
 };
 use crate::debugger::types::LaunchRequestArguments;
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::memory_accessor::MemoryAccessor;
 use crate::test_runner::{format_cpu_details, ExecuteResult, TestRunner, TestRunnerMemoryAccessor};
 use crate::utils::paint;
@@ -105,10 +105,10 @@ impl TestRunnerAdapter {
                                                         Colour::Yellow,
                                                         format!("({} cycles)", cycles)
                                                     ),
-                                                    failure.message,
+                                                    failure.diagnostic.to_string(),
                                                     format_cpu_details(&failure.cpu, true)
                                                 ),
-                                                location: failure.location,
+                                                location: failure.diagnostic.location(),
                                             });
                                             let _ = thread_sender.send(MachineEvent::Disconnected);
                                             thread_is_connected.store(false, Ordering::Relaxed);

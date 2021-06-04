@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
 use crate::lsp::{to_location, LspContext, RequestHandler};
 use itertools::Itertools;
@@ -204,7 +204,7 @@ impl RequestHandler<Rename> for RenameHandler {
 
 #[cfg(test)]
 mod tests {
-    use crate::errors::MosResult;
+    use crate::diagnostic_emitter::MosResult;
     use crate::lsp::testing::{response, test_root};
     use crate::lsp::{LspContext, LspServer};
     use lsp_types::request::{PrepareRenameRequest, Rename};
@@ -256,7 +256,7 @@ mod tests {
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm"))?,
+            Url::from_file_path(test_root().join("main.asm")).unwrap(),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 14), Position::new(0, 17)),
@@ -295,7 +295,7 @@ mod tests {
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm"))?,
+            Url::from_file_path(test_root().join("main.asm")).unwrap(),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 0), Position::new(0, 3)),
@@ -335,14 +335,14 @@ mod tests {
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm"))?,
+            Url::from_file_path(test_root().join("main.asm")).unwrap(),
             vec![TextEdit {
                 range: Range::new(Position::new(2, 4), Position::new(2, 7)),
                 new_text: "foz".to_string(),
             }],
         );
         expected_changes.insert(
-            Url::from_file_path(test_root().join("other.asm"))?,
+            Url::from_file_path(test_root().join("other.asm")).unwrap(),
             vec![TextEdit {
                 range: Range::new(Position::new(0, 0), Position::new(0, 3)),
                 new_text: "foz".to_string(),
@@ -375,7 +375,7 @@ mod tests {
 
         let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm"))?,
+            Url::from_file_path(test_root().join("main.asm")).unwrap(),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 0), Position::new(0, 3)),

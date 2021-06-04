@@ -1,10 +1,9 @@
 use crate::config::Config;
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::{DiagnosticEmitter, MosResult};
 use crate::test_runner::{enumerate_test_cases, format_cpu_details, ExecuteResult, TestRunner};
 use crate::utils::paint;
 use ansi_term::Colour;
-use clap::App;
-use mos_core::errors::span_loc_to_error_string;
+use clap::{App, ArgMatches};
 use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -30,7 +29,8 @@ pub fn test_app() -> App<'static> {
     App::new("test").about("Runs unit test(s)")
 }
 
-pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32> {
+pub fn test_command(args: &ArgMatches, root: &Path, cfg: &Config) -> MosResult<i32> {
+    let use_color = !args.is_present("no-color");
     let src: Arc<Mutex<dyn ParsingSource>> = FileSystemParsingSource::new().into();
     let input_path = root.join(PathBuf::from(&cfg.build.entry));
     let mut test_cases = enumerate_test_cases(src.clone(), &input_path)?;
@@ -90,24 +90,10 @@ pub fn test_command(use_color: bool, root: &Path, cfg: &Config) -> MosResult<i32
     if !failed.is_empty() {
         log::info!("failed tests:");
         log::info!("");
+        let mut emitter = DiagnosticEmitter::stdout(&args);
         for (failed_test_name, failure) in &failed {
-            let location = failure
-                .location
-                .as_ref()
-                .map(|location| {
-                    span_loc_to_error_string(location, &Some(std::env::current_dir().unwrap()))
-                })
-                .unwrap_or_default();
-
-            log::info!("---- {} ----", failed_test_name);
-            log::info!(
-                "{}",
-                paint(
-                    use_color,
-                    Colour::Red,
-                    format!("{}error: assertion failed: '{}'", location, failure.message)
-                )
-            );
+            log::info!("test: {}", failed_test_name);
+            emitter.emit_diagnostics(&failure.diagnostic);
             log::info!("{}", format_cpu_details(&failure.cpu, use_color));
             if !failure.traces.is_empty() {
                 log::info!("traces:");
@@ -159,7 +145,10 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(test_command(true, root().as_path(), &cfg)?, 0);
+        assert_eq!(
+            test_command(&ArgMatches::default(), root().as_path(), &cfg)?,
+            0
+        );
         Ok(())
     }
 
@@ -178,7 +167,10 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(test_command(true, root().as_path(), &cfg)?, 1);
+        assert_eq!(
+            test_command(&ArgMatches::default(), root().as_path(), &cfg)?,
+            1
+        );
         Ok(())
     }
 

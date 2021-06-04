@@ -64,6 +64,7 @@ mod tests {
 
     fn check(source: &str, expected: &str) {
         let state = State::new(
+            None,
             InMemoryParsingSource::new()
                 .add("test.asm", &source.clone())
                 .into(),

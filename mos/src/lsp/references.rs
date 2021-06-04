@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
 use crate::lsp::{to_line_col, to_location, to_range, LspContext, RequestHandler};
 use itertools::Itertools;
@@ -39,7 +39,8 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                         .text_document_position_params
                         .text_document
                         .uri
-                        .to_file_path()?,
+                        .to_file_path()
+                        .unwrap(),
                     to_line_col(&params.text_document_position_params.position),
                 );
                 let origin = origin.map(|dl| tree.code_map.look_up_span(dl.span));
@@ -47,7 +48,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                 let l = analysis.look_up(location.span);
                 let link = LocationLink {
                     origin_selection_range: origin.map(to_range),
-                    target_uri: Url::from_file_path(l.file.name())?,
+                    target_uri: Url::from_file_path(l.file.name()).unwrap(),
                     target_range: to_range(tree.code_map.look_up_span(location.span)),
                     target_selection_range: to_range(tree.code_map.look_up_span(location.span)),
                 };
@@ -76,7 +77,8 @@ impl RequestHandler<References> for FindReferencesHandler {
                 .text_document_position
                 .text_document
                 .uri
-                .to_file_path()?,
+                .to_file_path()
+                .unwrap(),
             to_line_col(&params.text_document_position.position),
             |ty| matches!(ty, DefinitionType::Symbol(_)),
         );
@@ -135,7 +137,7 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
 
 #[cfg(test)]
 mod tests {
-    use crate::errors::MosResult;
+    use crate::diagnostic_emitter::MosResult;
     use crate::lsp::testing::{range, test_root};
     use crate::lsp::{LspContext, LspServer};
     use itertools::Itertools;
@@ -156,7 +158,11 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(
-            location.target_uri.to_file_path()?.to_string_lossy(),
+            location
+                .target_uri
+                .to_file_path()
+                .unwrap()
+                .to_string_lossy(),
             test_root().join("main.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 14, 0, 20));
@@ -180,7 +186,11 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(
-            location.target_uri.to_file_path()?.to_string_lossy(),
+            location
+                .target_uri
+                .to_file_path()
+                .unwrap()
+                .to_string_lossy(),
             test_root().join("main.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 7, 0, 10));
@@ -208,7 +218,11 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(
-            location.target_uri.to_file_path()?.to_string_lossy(),
+            location
+                .target_uri
+                .to_file_path()
+                .unwrap()
+                .to_string_lossy(),
             test_root().join("bar.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 14, 0, 20));
@@ -233,11 +247,11 @@ mod tests {
             response,
             vec![
                 Location {
-                    uri: Url::from_file_path(test_root().join("main.asm"))?,
+                    uri: Url::from_file_path(test_root().join("main.asm")).unwrap(),
                     range: range(0, 4, 0, 6)
                 },
                 Location {
-                    uri: Url::from_file_path(test_root().join("main.asm"))?,
+                    uri: Url::from_file_path(test_root().join("main.asm")).unwrap(),
                     range: range(2, 8, 2, 17)
                 },
             ]

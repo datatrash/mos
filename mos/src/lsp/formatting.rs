@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
 use crate::lsp::{LspContext, RequestHandler};
 use dissimilar::{diff, Chunk};

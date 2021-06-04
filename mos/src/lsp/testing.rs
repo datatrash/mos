@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::lsp::{LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
 use lsp_types::request::{
@@ -35,7 +35,7 @@ impl LspServer {
         self.handle_message(notification::<DidOpenTextDocument>(
             DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                     language_id: "".to_string(),
                     version: 0,
                     text: source.to_string(),
@@ -48,7 +48,7 @@ impl LspServer {
         self.handle_message(request::<PrepareRenameRequest>(
             TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                 },
                 position,
             },
@@ -64,7 +64,7 @@ impl LspServer {
         self.handle_message(request::<Rename>(RenameParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                 },
                 position,
             },
@@ -81,7 +81,7 @@ impl LspServer {
         self.handle_message(request::<GotoDefinition>(GotoDefinitionParams {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                 },
                 position,
             },
@@ -100,7 +100,7 @@ impl LspServer {
         self.handle_message(request::<References>(ReferenceParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                 },
                 position,
             },
@@ -121,7 +121,7 @@ impl LspServer {
         self.handle_message(request::<HoverRequest>(HoverParams {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                 },
                 position,
             },
@@ -138,7 +138,7 @@ impl LspServer {
         self.handle_message(request::<Completion>(CompletionParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path)?,
+                    uri: Url::from_file_path(path).unwrap(),
                 },
                 position,
             },

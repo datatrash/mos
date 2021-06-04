@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
 use crate::lsp::{to_range, LspContext, RequestHandler};
 use lsp_types::request::{DocumentSymbolRequest, WorkspaceSymbol};
@@ -23,7 +23,7 @@ impl RequestHandler<DocumentSymbolRequest> for DocumentSymbolRequestHandler {
         params: DocumentSymbolParams,
     ) -> MosResult<Option<DocumentSymbolResponse>> {
         if let Some(tree) = &ctx.tree {
-            let path = params.text_document.uri.to_file_path()?;
+            let path = params.text_document.uri.to_file_path().unwrap();
             if let Some(file) = tree.try_get_file(&path) {
                 let emitter = DocSymEmitter {
                     tree,

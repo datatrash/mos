@@ -7,8 +7,9 @@ use std::path::PathBuf;
 use itertools::Itertools;
 
 use crate::codegen::Segment;
-use crate::errors::{CoreError, CoreResult};
+use crate::errors::{CoreResult, Diagnostics};
 use crate::parser::Identifier;
+use codespan_reporting::diagnostic::Diagnostic;
 
 /// A segment of data that will be emitted to an output file.
 pub struct TargetSegment<'a> {
@@ -76,7 +77,7 @@ impl<'a> TargetSegment<'a> {
 pub struct SegmentMerger<'a> {
     targets: HashMap<PathBuf, TargetSegment<'a>>,
     default_target: PathBuf,
-    errors: Vec<CoreError>,
+    errors: Diagnostics,
 }
 
 impl<'a> SegmentMerger<'a> {
@@ -85,7 +86,7 @@ impl<'a> SegmentMerger<'a> {
         Self {
             targets: HashMap::new(),
             default_target,
-            errors: vec![],
+            errors: Diagnostics::default(),
         }
     }
 
@@ -100,7 +101,7 @@ impl<'a> SegmentMerger<'a> {
     }
 
     /// The errors that occurred during merging
-    pub fn errors(self) -> Vec<CoreError> {
+    pub fn errors(self) -> Diagnostics {
         self.errors
     }
 
@@ -126,7 +127,7 @@ impl<'a> SegmentMerger<'a> {
                     format!("segment '{}' (${:04x} - ${:04x})", name, sr.start, sr.end)
                 })
                 .join(", ");
-            self.errors.push(CoreError::BuildError(format!(
+            self.errors.push(Diagnostic::error().with_message(format!(
                 "in target '{}': segment '{}' (${:04x} - ${:04x}) overlaps with: {}",
                 target_name.to_string_lossy(),
                 segment_name,

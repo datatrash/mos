@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::config::Config;
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use mos_core::codegen::{codegen, CodegenOptions};
-use mos_core::errors::CoreError;
+use mos_core::errors::map_io_error;
 use mos_core::io::{to_listing, to_vice_symbols, SegmentMerger};
 use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
@@ -66,8 +66,8 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
 
     let source = FileSystemParsingSource::new();
     let (tree, error) = parser::parse(&input_path, source.into());
-    if let Some(e) = error {
-        return Err(e.into());
+    if !error.is_empty() {
+        return Err(error.into());
     }
     let tree = tree.unwrap();
     let (generated_code, error) = codegen(
@@ -77,7 +77,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             ..Default::default()
         },
     );
-    if let Some(error) = error {
+    if !error.is_empty() {
         return Err(error.into());
     }
     let generated_code = generated_code.unwrap();
@@ -90,7 +90,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     }
 
     if merger.has_errors() {
-        return Err(CoreError::Multiple(merger.errors()).into());
+        return Err(merger.errors().into());
     }
 
     for (path, m) in merger.targets() {
@@ -100,17 +100,18 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             m.range().end
         );
         log::trace!("Writing: {:?}", m.range_data());
-        let mut out = fs::File::create(target_dir.join(path))?;
-        out.write_all(&(m.range().start as u16).to_le_bytes())?;
-        out.write_all(&m.range_data())?;
+        let mut out = fs::File::create(target_dir.join(path)).map_err(map_io_error)?;
+        out.write_all(&(m.range().start as u16).to_le_bytes())
+            .map_err(map_io_error)?;
+        out.write_all(&m.range_data()).map_err(map_io_error)?;
     }
 
     if cfg.build.listing {
         for (source_path, contents) in to_listing(&generated_code)? {
             let listing_path =
                 format!("{}.lst", source_path.file_stem().unwrap().to_string_lossy());
-            let mut out = fs::File::create(target_dir.join(listing_path))?;
-            out.write_all(contents.as_bytes())?;
+            let mut out = fs::File::create(target_dir.join(listing_path)).map_err(map_io_error)?;
+            out.write_all(contents.as_bytes()).map_err(map_io_error)?;
         }
     }
 
@@ -119,8 +120,10 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             SymbolType::Vice => {
                 let symbol_path =
                     format!("{}.vs", input_path.file_stem().unwrap().to_string_lossy());
-                let mut out = fs::File::create(target_dir.join(symbol_path))?;
-                out.write_all(to_vice_symbols(generated_code.symbols()).as_bytes())?;
+                let mut out =
+                    fs::File::create(target_dir.join(symbol_path)).map_err(map_io_error)?;
+                out.write_all(to_vice_symbols(generated_code.symbols()).as_bytes())
+                    .map_err(map_io_error)?;
             }
         }
     }

@@ -19,6 +19,9 @@ pub mod errors;
 /// Source code formatting
 pub mod formatting;
 
+/// Path to the MOS user guide
+pub const GUIDE_URL: &str = "https://mos.datatra.sh/guide";
+
 #[cfg(windows)]
 /// A platform-specific newline.
 pub const LINE_ENDING: &str = "\r\n";

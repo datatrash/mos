@@ -1,5 +1,5 @@
 use crate::commands::{BuildOptions, TestOptions};
-use crate::errors::{MosError, MosResult};
+use crate::diagnostic_emitter::MosResult;
 use mos_core::formatting::FormattingOptions;
 use serde::Deserialize;
 
@@ -13,7 +13,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_toml(toml: &str) -> MosResult<Config> {
-        toml::from_str(toml).map_err(MosError::from)
+        Ok(toml::from_str(toml)?)
     }
 }
 

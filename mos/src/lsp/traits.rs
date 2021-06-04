@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::lsp::LspContext;
 use lsp_types::notification::Notification;
 use lsp_types::request::Request;

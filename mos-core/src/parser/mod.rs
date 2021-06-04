@@ -1,8 +1,9 @@
-use crate::errors::{CoreError, CoreResult};
-use crate::parser::code_map::{Span, SpanLoc};
+use crate::errors::{CoreResult, Diagnostics};
+use crate::parser::code_map::{File, Span, SpanLoc};
 use crate::parser::source::{InMemoryParsingSource, ParsingSource};
-use anyhow::Context;
+use crate::GUIDE_URL;
 pub use ast::*;
+use codespan_reporting::diagnostic::Diagnostic;
 pub use config_map::*;
 pub use identifier::*;
 use itertools::Itertools;
@@ -42,12 +43,19 @@ pub struct ParseError {
     message: String,
 }
 
-impl From<ParseError> for CoreError {
-    fn from(e: ParseError) -> Self {
-        CoreError::Parser {
-            location: e.location,
-            message: e.message,
-        }
+#[derive(Debug)]
+pub struct ParseError2 {
+    file: Arc<File>,
+    span: Span,
+    message: String,
+}
+
+impl From<ParseError2> for Diagnostics {
+    fn from(e: ParseError2) -> Self {
+        Diagnostic::error()
+            .with_message(e.message)
+            .with_labels(vec![e.span.to_label()])
+            .into()
     }
 }
 
@@ -89,8 +97,10 @@ where
                     // is generated downstream
                 } else {
                     let end = i.location_offset();
-                    let location = to_span_loc(&i, begin, end);
-                    let err = ParseError { location, message };
+                    let span = to_span(&i, begin, end);
+                    let err = Diagnostic::error()
+                        .with_message(message)
+                        .with_labels(vec![span.to_label()]);
                     i.extra.shared_state().report_error(err);
                 }
                 Ok((i, None))
@@ -259,11 +269,6 @@ fn to_span(input: &LocatedSpan, begin: usize, end: usize) -> Span {
         .subspan(begin as u64, end as u64)
 }
 
-fn to_span_loc(input: &LocatedSpan, begin: usize, end: usize) -> SpanLoc {
-    let span = to_span(input, begin, end);
-    input.extra.shared_state().code_map.look_up_span(span)
-}
-
 /// Tries to parse a Rust-style identifier
 fn identifier_name(input: LocatedSpan) -> IResult<Identifier> {
     map_once(
@@ -356,14 +361,9 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
     let optional_suffix = || opt(alt((register_x_suffix, register_y_suffix)));
 
     let am_ind = map(
-        tuple((
-            ws(char('(')),
-            ws(expression),
-            ws(char(')')),
-            optional_suffix(),
-        )),
+        tuple((ws(char('(')), expression, ws(char(')')), optional_suffix())),
         move |(lchar, expr, rchar, suffix)| Operand {
-            expr: expr.flatten(),
+            expr,
             lchar: Some(lchar),
             rchar: Some(rchar),
             addressing_mode: AddressingMode::OuterIndirect,
@@ -372,14 +372,9 @@ fn operand(input: LocatedSpan) -> IResult<Operand> {
     );
 
     let am_outer_ind = map(
-        tuple((
-            ws(char('(')),
-            ws(expression),
-            optional_suffix(),
-            ws(char(')')),
-        )),
+        tuple((ws(char('(')), expression, optional_suffix(), ws(char(')')))),
         move |(lchar, expr, suffix, rchar)| Operand {
-            expr: expr.flatten(),
+            expr,
             lchar: Some(lchar),
             rchar: Some(rchar),
             addressing_mode: AddressingMode::Indirect,
@@ -490,16 +485,11 @@ fn error(input: LocatedSpan) -> IResult<Token> {
         )),
         move |(input, char)| {
             let char = char.map(|c| c.to_string()).unwrap_or_default();
-            let err = ParseError {
-                location: input
-                    .data
-                    .extra
-                    .shared_state()
-                    .code_map
-                    .look_up_span(input.span),
-                message: format!("unexpected '{}'", input.data.fragment()),
-            };
-            input.data.extra.shared_state().report_error(err);
+            input.data.extra.shared_state().report_error(
+                Diagnostic::error()
+                    .with_message(format!("unexpected '{}'", input.data.fragment()))
+                    .with_labels(vec![input.span.to_label()]),
+            );
             let input = input.map_into(|i| format!("{}{}", i.fragment(), char));
             Token::Error(input)
         },
@@ -565,12 +555,8 @@ fn const_definition(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a program counter definition of the form `* = $2000`
 fn pc_definition(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(char('*')), ws(char('=')), ws(expression))),
-        move |(star, eq, value)| Token::ProgramCounterDefinition {
-            star,
-            eq,
-            value: value.flatten(),
-        },
+        tuple((mws(char('*')), ws(char('=')), expression)),
+        move |(star, eq, value)| Token::ProgramCounterDefinition { star, eq, value },
     )(input)
 }
 
@@ -670,10 +656,9 @@ fn if_(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse an align directive, of the form `.align 16`
 fn align(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(tag_no_case(".align")), ws(expression))),
+        tuple((mws(tag_no_case(".align")), expression)),
         move |(tag, value)| {
             let tag = tag.map_into(|_| ".align".to_string());
-            let value = value.flatten();
             Token::Align { tag, value }
         },
     )(input)
@@ -929,9 +914,9 @@ fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
 fn expression_parens(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
     located(|input| {
         map_once(
-            tuple((ws(char('(')), ws(expression), ws(char(')')))),
+            tuple((ws(char('(')), expression, ws(char(')')))),
             move |(lparen, inner, rparen)| {
-                let inner = Box::new(inner.flatten());
+                let inner = Box::new(inner);
                 ExpressionFactor::ExprParens {
                     lparen,
                     inner,
@@ -1022,7 +1007,7 @@ fn expression_factor_inner(input: LocatedSpan) -> IResult<Located<ExpressionFact
 /// Parses a factor used in an expression, such as a number or a function call
 fn expression_factor(input: LocatedSpan) -> IResult<Located<Expression>> {
     // See if we can parse the term without any flags. If we can't, there must be flags, so let's try again
-    located(|input| {
+    ws(|input| {
         alt((
             map(expression_factor_inner, move |factor| Expression::Factor {
                 factor: Box::new(factor),
@@ -1065,7 +1050,7 @@ fn fold_expressions(
         let (op, expr) = pair;
 
         Located::new(
-            acc.span,
+            acc.span.merge(op.span).merge(expr.span),
             Expression::BinaryExpression(BinaryExpression {
                 op,
                 lhs: Box::new(acc),
@@ -1121,7 +1106,7 @@ pub fn expression(input: LocatedSpan) -> IResult<Located<Expression>> {
 pub fn parse_expression(source: &str) -> CoreResult<Located<Expression>> {
     let parsing_source = InMemoryParsingSource::new();
     let parsing_source = parsing_source.add("expression.asm", source);
-    let state = State::new(parsing_source.into());
+    let state = State::new(None, parsing_source.into());
     let state = Arc::new(Mutex::new(state));
     {
         let file = state.lock().unwrap().add_file("expression.asm")?;
@@ -1135,19 +1120,27 @@ pub fn parse_expression(source: &str) -> CoreResult<Located<Expression>> {
     }
 
     let state = Arc::try_unwrap(state).ok().unwrap().into_inner().unwrap();
-    Err(CoreError::Multiple(state.errors))
+    Err(state.errors)
 }
 
 /// Parses an input file and returns a hopefully parsed file
 pub fn parse(
     filename: &Path,
     source: Arc<Mutex<dyn ParsingSource>>,
-) -> (Option<Arc<ParseTree>>, Option<CoreError>) {
+) -> (Option<Arc<ParseTree>>, Diagnostics) {
     if !source.lock().unwrap().exists(filename) {
-        return (None, Some(CoreError::BuildError(format!("Could not find '{}'. Tip: You can configure the build entrypoint in your mos.toml file, in the [build] section.", filename.to_str().expect("<could not parse>")))));
+        let diag = vec![
+            Diagnostic::error()
+                .with_message(format!("could not find '{}'", filename.to_str().expect("<could not parse>")))
+                .with_notes(vec![
+                    format!("Tip: You can configure the build entrypoint in your mos.toml file, in the [build] section. See: {}/project-setup.html#build-options", GUIDE_URL)
+                ])
+        ];
+
+        return (None, diag.into());
     }
 
-    let state = State::new(source);
+    let state = State::new(filename.parent().map(|p| p.to_path_buf()), source);
     let state = Arc::new(Mutex::new(state));
 
     let mut files: HashMap<PathBuf, ParsedFile> = HashMap::new();
@@ -1175,7 +1168,7 @@ pub fn parse(
 
         let file = state.lock().unwrap().add_file(to_import.clone());
         if file.is_err() {
-            return (None, file.err().with_context(|| "foe!").unwrap().into());
+            return (None, file.err().unwrap());
         }
         let file = file.ok().unwrap();
 
@@ -1202,11 +1195,11 @@ pub fn parse(
             {
                 files_to_import.push(also_import);
             } else {
-                let err = ParseError {
-                    location: state.lock().unwrap().code_map.look_up_span(span),
-                    message: format!("file not found: {}", also_import.to_str().unwrap()),
-                };
-                state.lock().unwrap().report_error(err);
+                state.lock().unwrap().report_error(
+                    Diagnostic::error()
+                        .with_message(format!("file not found: {}", also_import.to_str().unwrap()))
+                        .with_labels(vec![span.to_label()]),
+                );
             }
         }
     }
@@ -1214,11 +1207,8 @@ pub fn parse(
     let state = Arc::try_unwrap(state).ok().unwrap().into_inner().unwrap();
     let tree = Arc::new(ParseTree::new(state.code_map, filename.into(), files));
 
-    if state.errors.is_empty() {
-        (Some(tree), None)
-    } else {
-        (Some(tree), Some(CoreError::Multiple(state.errors)))
-    }
+    let errors = state.errors.with_code_map(&tree.code_map);
+    (Some(tree), errors)
 }
 
 pub fn parse_with_instance(instance: ParserInstance) -> Vec<Token> {
@@ -1233,9 +1223,10 @@ pub fn parse_or_err(
     source: Arc<Mutex<dyn ParsingSource>>,
 ) -> CoreResult<Arc<ParseTree>> {
     let (tree, error) = parse(filename, source);
-    match error {
-        Some(e) => Err(e),
-        None => Ok(tree.unwrap()),
+    if error.is_empty() {
+        Ok(tree.unwrap())
+    } else {
+        Err(error)
     }
 }
 
@@ -1530,27 +1521,22 @@ mod test {
 
     #[test]
     fn parse_import_errors() {
-        let (_, err) = parse(
-            &Path::new("test.asm"),
+        check_err_with_parsing_source(
             InMemoryParsingSource::new()
                 .add("test.asm", ".import * from \"baz\"")
                 .add("baz", "foo")
                 .into(),
+            "baz:1:1: error: unexpected 'foo'",
         );
-        assert_eq!(err.unwrap().to_string(), "baz:1:1: error: unexpected 'foo'");
     }
 
     #[test]
     fn parse_import_file_not_found() {
-        let (_, err) = parse(
-            &Path::new("test.asm"),
+        check_err_with_parsing_source(
             InMemoryParsingSource::new()
                 .add("test.asm", ".import * from \"baz\"")
                 .into(),
-        );
-        assert_eq!(
-            err.unwrap().to_string(),
-            "test.asm:1:17: error: file not found: baz"
+            "test.asm:1:17: error: file not found: baz",
         );
     }
 
@@ -1611,8 +1597,8 @@ mod test {
         expected: &str,
     ) -> Arc<ParseTree> {
         let (tree, error) = parse(&Path::new("test.asm"), src);
-        if let Some(e) = error {
-            panic!("{}", e);
+        if !error.is_empty() {
+            panic!("{}", error.to_string());
         }
         let tree = tree.unwrap();
         let actual = tree
@@ -1642,32 +1628,34 @@ mod test {
     }
 
     fn check_err(src: &str, expected: &str) {
-        let (_tree, error) = parse(
-            &Path::new("test.asm"),
+        check_err_with_parsing_source(
             InMemoryParsingSource::new().add("test.asm", &src).into(),
+            expected,
         );
-        assert!(error.is_some());
-        let actual = error.unwrap().to_string();
-        assert_eq!(actual, expected.to_string());
+    }
+
+    fn check_err_with_parsing_source(source: Arc<Mutex<dyn ParsingSource>>, expected: &str) {
+        let (_, error) = parse(&Path::new("test.asm"), source);
+        assert!(!error.is_empty());
+        assert_eq!(error.to_string(), expected.to_string());
     }
 
     fn check_err_span(src: &str, start_column: usize, end_column: usize) {
-        let (_tree, error) = parse(
+        let (tree, errors) = parse(
             &Path::new("test.asm"),
             InMemoryParsingSource::new().add("test.asm", &src).into(),
         );
-        match error.unwrap() {
-            CoreError::Multiple(errors) => {
-                assert_eq!(errors.len(), 1);
-                match errors.first().unwrap() {
-                    CoreError::Parser { location, .. } => {
-                        assert_eq!(location.begin.column + 1, start_column);
-                        assert_eq!(location.end.column + 1, end_column);
-                    }
-                    _ => panic!(),
-                }
-            }
-            _ => panic!(),
+        if !errors.is_empty() {
+            assert_eq!(errors.len(), 1);
+            let diag = errors.first().unwrap();
+            let location = tree
+                .unwrap()
+                .code_map
+                .look_up_span(diag.labels.first().unwrap().file_id);
+            assert_eq!(location.begin.column + 1, start_column);
+            assert_eq!(location.end.column + 1, end_column);
+        } else {
+            panic!()
         }
     }
 
@@ -1676,7 +1664,10 @@ mod test {
         parser: F,
     ) -> O {
         let src = src.into();
-        let state = State::new(InMemoryParsingSource::new().add("test.asm", &src).into());
+        let state = State::new(
+            None,
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        );
         let state = Arc::new(Mutex::new(state));
         let current_file = state.lock().unwrap().add_file("test.asm").unwrap();
         let instance = ParserInstance::new(state, current_file);

@@ -11,13 +11,14 @@ use crate::debugger::adapters::{
 use crate::debugger::connection::DebugConnection;
 use crate::debugger::protocol::{Event, EventMessage, ProtocolMessage, Request, ResponseMessage};
 use crate::debugger::types::*;
-use crate::errors::{MosError, MosResult};
+use crate::diagnostic_emitter::MosResult;
 use crate::lsp::LspContext;
 use crate::memory_accessor::{ensure_ram_fn, MemoryAccessor};
+use codespan_reporting::diagnostic::Diagnostic;
 use crossbeam_channel::Select;
 use itertools::Itertools;
 use mos_core::codegen::{CodegenContext, ProgramCounter, SymbolIndex};
-use mos_core::errors::{format_error, ErrorFormattingOptions};
+use mos_core::errors::Diagnostics;
 use mos_core::parser::parse_expression;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -169,8 +170,10 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
                 }
             }
         } else {
-            log::error!("Could not launch debugging session. No emulator or test run specified.");
-            Err(MosError::Unknown)
+            Err(Diagnostics::from(Diagnostic::error().with_message(
+                "Could not launch debugging session. No emulator or test run specified.",
+            ))
+            .into())
         }
     }
 }
@@ -528,7 +531,7 @@ impl EvaluateRequestHandler {
             }
         }
 
-        Err(MosError::DebugAdapter("could not evaluate".into()))
+        Err(Diagnostics::from(Diagnostic::error().with_message("could not evaluate")).into())
     }
 }
 
@@ -618,7 +621,10 @@ impl DebugSession {
     fn machine_adapter(&self) -> MosResult<RwLockReadGuard<Box<dyn MachineAdapter + Send + Sync>>> {
         match self.machine.as_ref() {
             Some(m) => Ok(m.adapter()),
-            None => Err(MosError::Unknown),
+            None => Err(Diagnostics::from(
+                Diagnostic::error().with_message("Machine adapter not initialized"),
+            )
+            .into()),
         }
     }
 
@@ -627,7 +633,10 @@ impl DebugSession {
     ) -> MosResult<RwLockWriteGuard<Box<dyn MachineAdapter + Send + Sync>>> {
         match self.machine.as_ref() {
             Some(m) => Ok(m.adapter_mut()),
-            None => Err(MosError::Unknown),
+            None => Err(Diagnostics::from(
+                Diagnostic::error().with_message("Machine adapter not initialized"),
+            )
+            .into()),
         }
     }
 
@@ -737,24 +746,17 @@ impl DebugSession {
                     VariablesRequest::COMMAND => {
                         self.handle(&VariablesRequestHandler {}, req.arguments)
                     }
-                    _ => {
-                        log::info!("Unknown command: {:?}", req.command);
-                        Err(MosError::Unknown)
-                    }
+                    _ => Err(Diagnostics::from(
+                        Diagnostic::warning().with_message(format!(
+                            "Received an unknown command: {:?}",
+                            req.command
+                        )),
+                    )
+                    .into()),
                 };
                 match response {
                     Ok(body) => self.send_response(seq, &command, body)?,
-                    Err(e) => self.send_error(
-                        seq,
-                        &command,
-                        &format_error(
-                            e,
-                            &ErrorFormattingOptions {
-                                use_prefix: false,
-                                ..Default::default()
-                            },
-                        ),
-                    )?,
+                    Err(e) => self.send_error(seq, &command, &e.to_string())?,
                 }
             }
             _ => {

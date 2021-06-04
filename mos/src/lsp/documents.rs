@@ -1,4 +1,4 @@
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::impl_notification_handler;
 use crate::lsp::{LspContext, NotificationHandler};
 use itertools::Itertools;
@@ -10,7 +10,7 @@ use lsp_types::{
     Position, PublishDiagnosticsParams, Range, Url,
 };
 use mos_core::codegen::{codegen, CodegenOptions};
-use mos_core::errors::CoreError;
+use mos_core::errors::Diagnostics;
 use mos_core::parser::parse;
 use mos_core::parser::source::ParsingSource;
 use std::collections::HashMap;
@@ -57,7 +57,7 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
 
     ctx.tree = None;
     ctx.codegen = None;
-    ctx.error = None;
+    ctx.error = Diagnostics::default();
 
     let entry = ctx.config().unwrap_or_default().build.entry;
     let entry = ctx.working_directory().join(&entry);
@@ -75,25 +75,15 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
         ctx.codegen = context.map(|c| Arc::new(Mutex::new(c)));
 
         // Merge already existing parse errors
-        let existing_error = std::mem::replace(&mut ctx.error, None);
-        ctx.error = match (existing_error, error) {
-            (Some(existing), Some(error)) => Some(CoreError::Multiple(vec![existing, error])),
-            (None, error) => error,
-            (error, None) => error,
-        };
+        ctx.error.extend(error);
     }
 }
 
 fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
     log::trace!("Publish diagnostics");
 
-    let mut result: HashMap<&str, Vec<Diagnostic>> = ctx
-        .error
-        .as_ref()
-        .map(to_diagnostics)
-        .unwrap_or_default()
-        .into_iter()
-        .into_group_map();
+    let mut result: HashMap<String, Vec<Diagnostic>> =
+        to_diagnostics(&ctx.error).into_iter().into_group_map();
 
     // Grab all the files in the project
     if let Some(tree) = ctx.tree.as_ref() {
@@ -108,7 +98,7 @@ fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
         for filename in filenames {
             let diags = result.remove(filename.as_str()).unwrap_or_default();
             let params = PublishDiagnosticsParams::new(
-                Url::from_file_path(filename)?,
+                Url::from_file_path(filename).unwrap(),
                 diags,
                 None, // todo: handle document version
             );
@@ -118,22 +108,23 @@ fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
     Ok(())
 }
 
-fn to_diagnostics(error: &CoreError) -> Vec<(&str, Diagnostic)> {
-    match &error {
-        CoreError::Parser { location, message } | CoreError::Codegen { location, message } => {
+fn to_diagnostics(error: &Diagnostics) -> Vec<(String, Diagnostic)> {
+    error
+        .iter()
+        .map(|diag| {
+            let location = error
+                .code_map()
+                .as_ref()
+                .unwrap()
+                .look_up_span(diag.labels.first().unwrap().file_id);
             let start = Position::new(location.begin.line as u32, location.begin.column as u32);
             let end = Position::new(location.end.line as u32, location.end.column as u32);
             let range = Range::new(start, end);
-            let mut d = Diagnostic::new_simple(range, message.clone());
+            let mut d = Diagnostic::new_simple(range, diag.message.clone());
             d.source = Some("mos".into());
-            vec![(location.file.name(), d)]
-        }
-        CoreError::Multiple(errors) => errors.iter().map(to_diagnostics).flatten().collect(),
-        _ => {
-            log::error!("Unknown parsing error: {:?}", error);
-            vec![]
-        }
-    }
+            (location.file.name().to_string(), d)
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -5,11 +5,9 @@ use std::path::{Path, PathBuf};
 use clap::{App, AppSettings, Arg, ArgMatches};
 use fs_err as fs;
 
-use mos_core::errors::{format_error, ErrorFormattingOptions};
-
 use crate::commands::*;
 use crate::config::Config;
-use crate::errors::*;
+use crate::diagnostic_emitter::*;
 
 /// Contains the available CLI commands and their associated logic
 mod commands;
@@ -18,7 +16,7 @@ mod config;
 /// Debug Adapter Protocol implementation
 mod debugger;
 /// Error handling
-mod errors;
+mod diagnostic_emitter;
 /// Language Server Protocol implementation
 mod lsp;
 /// MemoryAccessor trait
@@ -44,6 +42,16 @@ fn get_app() -> App<'static> {
             Arg::new("no-color")
                 .long("no-color")
                 .about("Disables colorized output"),
+        )
+        .arg(
+            Arg::new("error-style")
+                .short('e')
+                .long("error-style")
+                .takes_value(true)
+                .about("The style of error output")
+                .value_name("style")
+                .possible_values(&["short", "medium", "rich"])
+                .default_value("rich"),
         )
         .subcommand(build_app())
         .subcommand(format_app())
@@ -80,7 +88,7 @@ fn mos_toml_path<P: Into<PathBuf>>(
     }
 }
 
-fn run(args: ArgMatches) -> MosResult<()> {
+fn run(args: &ArgMatches) -> MosResult<()> {
     let mos_toml = mos_toml_path(None, &Path::new("."))?;
     let (root, cfg) = match mos_toml {
         Some(path) => {
@@ -97,14 +105,13 @@ fn run(args: ArgMatches) -> MosResult<()> {
         }
     };
 
-    let no_color = args.is_present("no-color");
     match args.subcommand() {
         Some(("build", _)) => build_command(&root, &cfg),
         Some(("format", _)) => format_command(&cfg),
         Some(("init", _)) => init_command(&root, &cfg),
-        Some(("lsp", args)) => lsp_command(args),
+        Some(("lsp", subargs)) => lsp_command(subargs),
         Some(("test", _)) => {
-            let exit_code = test_command(!no_color, &root, &cfg)?;
+            let exit_code = test_command(args, &root, &cfg)?;
             if exit_code > 0 {
                 std::process::exit(exit_code);
             } else {
@@ -132,13 +139,8 @@ fn main() {
         .init()
         .unwrap();
 
-    if let Err(e) = run(args) {
-        let options = ErrorFormattingOptions {
-            use_color: !no_color,
-            paths_relative_from: Some(std::env::current_dir().unwrap()),
-            use_prefix: true,
-        };
-        log::error!("{}", format_error(e, &options));
+    if let Err(e) = run(&args) {
+        DiagnosticEmitter::stdout(&args).emit(e);
         std::process::exit(1);
     }
 }
@@ -150,7 +152,7 @@ mod tests {
     use fs_err as fs;
     use tempfile::tempdir;
 
-    use crate::errors::MosResult;
+    use crate::diagnostic_emitter::MosResult;
     use crate::{get_app, mos_toml_path};
 
     #[test]

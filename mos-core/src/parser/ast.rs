@@ -1,8 +1,9 @@
-use crate::errors::{CoreError, CoreResult};
+use crate::errors::{CoreResult, Diagnostics};
 use crate::parser::code_map::{CodeMap, File, Span};
 use crate::parser::mnemonic::Mnemonic;
 use crate::parser::source::ParsingSource;
 use crate::parser::{Identifier, IdentifierPath};
+use codespan_reporting::diagnostic::Diagnostic;
 use itertools::Itertools;
 use path_dedot::ParseDot;
 use std::cell::RefCell;
@@ -88,7 +89,7 @@ pub struct State {
     pub code_map: CodeMap,
 
     /// Which errors did we encounter?
-    pub errors: Vec<CoreError>,
+    pub errors: Diagnostics,
 
     /// Should the next error be ignored?
     ignore_next_error: bool,
@@ -98,11 +99,14 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(source: Arc<Mutex<dyn ParsingSource>>) -> Self {
+    pub fn new<P: Into<Option<PathBuf>>>(
+        working_directory: P,
+        source: Arc<Mutex<dyn ParsingSource>>,
+    ) -> Self {
         Self {
             source,
-            code_map: CodeMap::new(),
-            errors: vec![],
+            code_map: CodeMap::new(working_directory.into()),
+            errors: Diagnostics::default(),
             ignore_next_error: false,
             anonymous_scope_index: 0,
         }
@@ -121,8 +125,7 @@ impl State {
     }
 
     /// When there is an error during parsing we don't want to fail. Instead, we continue but log the error via this method
-    pub fn report_error<E: Into<CoreError>>(&mut self, error: E) {
-        let error = error.into();
+    pub fn report_error(&mut self, error: Diagnostic<Span>) {
         if self.ignore_next_error {
             log::trace!("Ignoring error: {:?}", error);
             self.ignore_next_error = false;
@@ -726,17 +729,6 @@ impl<T> From<&Located<T>> for Span {
 impl<T> AsRef<Located<T>> for Located<T> {
     fn as_ref(&self) -> &Located<T> {
         &self
-    }
-}
-
-impl<T> Located<Located<T>> {
-    /// Remove one layer of nesting for nested located types
-    pub fn flatten(self) -> Located<T> {
-        Located {
-            span: self.data.span,
-            data: self.data.data,
-            trivia: self.trivia,
-        }
     }
 }
 

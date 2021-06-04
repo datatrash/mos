@@ -2,7 +2,7 @@ pub mod test_runner;
 pub mod vice;
 
 use crate::debugger::types::LaunchRequestArguments;
-use crate::errors::{MosError, MosResult};
+use crate::diagnostic_emitter::MosResult;
 use crate::memory_accessor::MemoryAccessor;
 use crossbeam_channel::{bounded, Receiver, TryRecvError};
 use mos_core::codegen::{CodegenContext, ProgramCounter};

@@ -1,6 +1,7 @@
 use crate::codegen::CodegenContext;
-use crate::errors::{CoreError, CoreResult};
+use crate::errors::CoreResult;
 use crate::parser::{Expression, ExpressionFactor, Identifier, IdentifierPath, Located, Token};
+use codespan_reporting::diagnostic::Diagnostic;
 
 pub struct ConfigExtractor<'a> {
     kvps: Vec<(&'a Located<String>, &'a Located<Token>)>,
@@ -17,17 +18,14 @@ impl<'a> ConfigExtractor<'a> {
         self.try_get_path(key).map(|p| p.to_string())
     }
 
-    pub fn get_identifier(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<Identifier> {
-        let path = self.get_path(ctx, key)?;
+    pub fn get_identifier(&self, key: &str) -> CoreResult<Identifier> {
+        let path = self.get_path(key)?;
         match path.len() {
             1 => Ok(path.first().unwrap().clone()),
-            _ => Err(CoreError::Codegen {
-                location: ctx
-                    .tree
-                    .code_map
-                    .look_up_span(self.get_located_token(key).span),
-                message: "expected single identifier".into(),
-            }),
+            _ => Err(Diagnostic::error()
+                .with_message("expected single identifier")
+                .with_labels(vec![self.get_located_token(key).span.to_label()])
+                .into()),
         }
     }
 
@@ -48,16 +46,13 @@ impl<'a> ConfigExtractor<'a> {
             .flatten()
     }
 
-    pub fn get_path(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<IdentifierPath> {
+    pub fn get_path(&self, key: &str) -> CoreResult<IdentifierPath> {
         match self.try_get_path(key) {
             Some(path) => Ok(path),
-            None => Err(CoreError::Codegen {
-                location: ctx
-                    .tree
-                    .code_map
-                    .look_up_span(self.get_located_token(key).span),
-                message: "expected identifier".into(),
-            }),
+            None => Err(Diagnostic::error()
+                .with_message("expected identifier")
+                .with_labels(vec![self.get_located_token(key).span.to_label()])
+                .into()),
         }
     }
 

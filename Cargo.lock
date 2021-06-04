@@ -120,6 +120,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "codespan-reporting"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3538270d33cc669650c4b093848450d380def10c331d38c768e34cac80576e6e"
+dependencies = [
+ "termcolor",
+ "unicode-width",
+]
+
+[[package]]
 name = "colored"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -379,6 +389,7 @@ dependencies = [
  "anyhow",
  "byteorder",
  "clap",
+ "codespan-reporting",
  "crossbeam-channel",
  "dissimilar",
  "emulator_6502",
@@ -396,7 +407,6 @@ dependencies = [
  "serde_json",
  "strum",
  "tempfile",
- "thiserror",
  "toml",
 ]
 
@@ -405,8 +415,8 @@ name = "mos-core"
 version = "0.0.0"
 dependencies = [
  "ansi_term",
- "anyhow",
  "bitflags",
+ "codespan-reporting",
  "derive_more",
  "fs-err",
  "indexmap",
@@ -417,6 +427,7 @@ dependencies = [
  "nom",
  "nom_locate",
  "once_cell",
+ "path-absolutize",
  "path-dedot",
  "pathdiff",
  "petgraph",
@@ -424,7 +435,6 @@ dependencies = [
  "serde_json",
  "smallvec",
  "tempfile",
- "thiserror",
  "toml",
 ]
 
@@ -790,26 +800,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "203008d98caf094106cfaba70acfed15e18ed3ddb7d94e49baec153a2b462789"
 dependencies = [
  "unicode-width",
-]
-
-[[package]]
-name = "thiserror"
-version = "1.0.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa6f76457f59514c7eeb4e59d891395fab0b2fd1d40723ae737d64153392e9c6"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a36768c0fbf1bb15eca10defa29526bda730a2376c2ab4393ccfa16fb1a318d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

@@ -2,6 +2,9 @@
 
 ## 0.7.0 (unreleased)
 
+### New features
+* Error formatting is improved and made configurable through the `--error-style` option
+
 ### Bugfixes
 * Nested macros are now looked up correctly ([#168](https://github.com/datatrash/mos/issues/168))
 

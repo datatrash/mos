@@ -3,8 +3,10 @@ pub mod protocol;
 use crate::debugger::adapters::vice::protocol::*;
 use crate::debugger::adapters::*;
 use crate::memory_accessor::MemoryAccessor;
+use codespan_reporting::diagnostic::Diagnostic;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use itertools::Itertools;
+use mos_core::errors::Diagnostics;
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::process::{Child, Stdio};
@@ -221,7 +223,10 @@ impl MachineAdapter for ViceAdapter {
 
         match result {
             Some(r) => Ok(*r as u8),
-            None => Err(MosError::Unknown),
+            None => Err(Diagnostics::from(
+                Diagnostic::error().with_message("Expected VICE to return a 'FL' register"),
+            )
+            .into()),
         }
     }
 }
@@ -285,15 +290,17 @@ impl ViceAdapter {
                     thread::sleep(Duration::from_millis(300));
                 }
                 Err(e) => {
-                    let m: MosError = e.into();
-                    return Err(m);
+                    return Err(e.into());
                 }
             }
 
             attempts -= 1;
             if attempts == 0 {
                 log::error!("Unable to connect to VICE.");
-                return Err(MosError::Vice("Unable to connect to VICE".into()));
+                return Err(Diagnostics::from(
+                    Diagnostic::error().with_message("Unable to connect to VICE"),
+                )
+                .into());
             }
         };
         log::debug!("VICE is connected.");

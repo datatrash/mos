@@ -12,7 +12,7 @@ pub mod testing;
 mod traits;
 
 use crate::config::Config;
-use crate::errors::MosResult;
+use crate::diagnostic_emitter::MosResult;
 use crate::lsp::code_lens::CodeLensRequestHandler;
 use crate::lsp::completion::CompletionHandler;
 use crate::lsp::documents::{
@@ -35,7 +35,7 @@ use lsp_types::{
     TextDocumentSyncKind, Url,
 };
 use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
-use mos_core::errors::{CoreError, CoreResult};
+use mos_core::errors::{map_io_error, CoreResult, Diagnostics};
 use mos_core::parser::code_map::{LineCol, SpanLoc};
 use mos_core::parser::source::ParsingSource;
 use mos_core::parser::ParseTree;
@@ -77,7 +77,7 @@ fn to_location(s: SpanLoc) -> lsp_types::Location {
 pub struct LspContext {
     connection: Option<(Arc<Connection>, Option<IoThreads>)>,
     tree: Option<Arc<ParseTree>>,
-    error: Option<CoreError>,
+    error: Diagnostics,
     codegen: Option<Arc<Mutex<CodegenContext>>>,
     parsing_source: Arc<Mutex<LspParsingSource>>,
     shutdown_manager: Arc<Mutex<ShutdownManager>>,
@@ -113,7 +113,7 @@ impl ParsingSource for LspParsingSource {
         if let Some(file) = self.files.get(&path) {
             Ok(file.clone())
         } else {
-            let data = fs_err::read_to_string(path)?;
+            let data = fs_err::read_to_string(path).map_err(map_io_error)?;
             Ok(data)
         }
     }
@@ -160,7 +160,7 @@ impl LspContext {
         Self {
             connection: None,
             tree: None,
-            error: None,
+            error: Diagnostics::default(),
             codegen: None,
             parsing_source: Arc::new(Mutex::new(LspParsingSource::new())),
             shutdown_manager: Arc::new(Mutex::new(ShutdownManager::new())),

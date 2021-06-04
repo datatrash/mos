@@ -11,8 +11,8 @@ keywords = ["retro", "6502", "assembler"]
 
 [dependencies]
 ansi_term = "0.12"
-anyhow = "1"
 bitflags = "1"
+codespan-reporting = "0.11"
 derive_more = "0.99"
 fs-err = "2"
 indexmap = "1.6"
@@ -22,13 +22,13 @@ loggerv = "0.7"
 nom = "6"
 nom_locate = "3"
 once_cell = "1.7"
+path-absolutize = "3"
 path-dedot = "3"
 pathdiff = "0.2"
 petgraph = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = "1"
-thiserror = "1"
 toml = "0.5"
 
 [dev-dependencies]
