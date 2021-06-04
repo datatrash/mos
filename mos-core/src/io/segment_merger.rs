@@ -120,8 +120,8 @@ impl<'a> SegmentMerger<'a> {
                 .options()
                 .filename
                 .as_ref()
-                .map(|f| PathBuf::from(f))
-                .unwrap_or(self.default_target.clone())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| self.default_target.clone())
         };
         let target = match self.targets.entry(target_name.clone()) {
             Entry::Occupied(o) => o.into_mut(),
