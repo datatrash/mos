@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+### Bugfixes
+* Nested macros are now looked up correctly ([#168](https://github.com/datatrash/mos/issues/168))
+
 ## 0.6.0 (2021-06-02)
 
 ### New features

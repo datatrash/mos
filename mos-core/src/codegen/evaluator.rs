@@ -93,11 +93,23 @@ impl<'a> Evaluator<'a> {
         id: &IdentifierPath,
     ) -> Option<(SymbolIndex, &Symbol)> {
         log::trace!("Trying to get symbol value: {}", id);
-        if let Some(nx) = self.symbols.query(scope_nx, id) {
-            return self.symbols.try_get(nx).map(|s| (nx, s));
-        }
+        self.symbols
+            .query(scope_nx, id)
+            .and_then(|nx| self.symbols.try_get(nx).map(|s| (nx, s)))
+    }
 
-        None
+    pub fn get_symbol_filtered(
+        &self,
+        scope_nx: SymbolIndex,
+        id: &IdentifierPath,
+        filter: impl Fn(&Symbol) -> bool,
+    ) -> Option<(SymbolIndex, &Symbol)> {
+        log::trace!("Trying to get filtered symbol value: {}", id);
+        self.symbols
+            .query_all(scope_nx, id)
+            .into_iter()
+            .filter_map(|nx| self.symbols.try_get(nx).map(|s| (nx, s)))
+            .find(|(_, s)| filter(s))
     }
 
     pub fn evaluate_expression(

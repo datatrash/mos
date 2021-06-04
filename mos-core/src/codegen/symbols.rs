@@ -214,6 +214,23 @@ impl<S: Clone + Debug> SymbolTable<S> {
             .flatten()
     }
 
+    /// Query for the symbol on every level, bubbling up
+    /// The difference with [query] is that this doesn't just return the nearest symbol in scope
+    pub fn query_all<I: Into<IdentifierPath>>(&self, nx: SymbolIndex, path: I) -> Vec<SymbolIndex> {
+        let path = path.into();
+        let mut result = vec![];
+
+        let mut cur_nx = Some(nx);
+        while cur_nx.is_some() {
+            if let Some(query_nx) = self.query(cur_nx.unwrap(), path.clone()) {
+                result.push(query_nx);
+            }
+            cur_nx = self.parent(cur_nx.unwrap());
+        }
+
+        result
+    }
+
     pub fn query_traversal_steps<I: Into<IdentifierPath>>(
         &self,
         nx: SymbolIndex,
@@ -474,6 +491,15 @@ mod tests {
         // Can also query symbols that exist on a higher level
         let nx_c = t.table.insert(t.table.root, "c", 50);
         assert_eq!(t.table.query(t.s_ss, &id!("c")), Some(nx_c));
+    }
+
+    #[test]
+    fn query_all() {
+        let t = table();
+        assert_eq!(
+            t.table.query_all(t.s_ss, &id!("a")),
+            vec![t.s_ss_a, t.s_a, t.a]
+        );
     }
 
     #[test]

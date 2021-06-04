@@ -903,7 +903,14 @@ impl CodegenContext {
             Token::MacroInvocation { id: name, args, .. } => {
                 let def = self
                     .get_evaluator()
-                    .get_symbol(self.current_scope_nx, &IdentifierPath::from(&name.data))
+                    .get_symbol_filtered(
+                        self.current_scope_nx,
+                        &IdentifierPath::from(&name.data),
+                        |s| match s.data {
+                            SymbolData::MacroDefinition(_) => true,
+                            _ => false,
+                        },
+                    )
                     .map(|(symbol_nx, symbol)| {
                         (symbol_nx, symbol.data.as_macro_definition().clone())
                     });
@@ -1783,6 +1790,24 @@ pub mod tests {
             ctx.current_segment().range_data(),
             vec![0xea, 0xad, 0x04, 0xc0, 0x00]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_nested_macros() -> CoreResult<()> {
+        let ctx = test_codegen(
+            r"
+            .macro a(value_a) {
+                ldx #value_a
+            }
+            .macro b(value_b) {
+                a(32)
+                ldy #value_b
+            }
+            b(64)
+            ",
+        )?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xa2, 32, 0xa0, 64]);
         Ok(())
     }
 
