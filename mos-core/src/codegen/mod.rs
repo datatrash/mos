@@ -24,8 +24,8 @@ use crate::errors::{CoreResult, Diagnostics};
 use crate::io::BankOptions;
 use crate::parser::code_map::Span;
 use crate::parser::{
-    parse_expression, AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath,
-    ImportArgs, Located, Mnemonic, ParseTree, TextEncoding, Token, VariableType,
+    AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath, ImportArgs, Located,
+    Mnemonic, ParseTree, TextEncoding, Token, VariableType,
 };
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
@@ -520,10 +520,20 @@ impl CodegenContext {
                 if self.try_current_target_pc().is_some() && self.options.active_test.is_some() {
                     let extracted_evaluator = self.get_evaluator().snapshot();
 
+                    let interpolated_failure_message;
+                    if let Some(fm) = &failure_message {
+                        interpolated_failure_message = Some(
+                            self.get_evaluator()
+                                .interpolate(fm, true)
+                                .map_err(|e| self.map_evaluation_error(e))?,
+                        );
+                    } else {
+                        interpolated_failure_message = None;
+                    }
                     self.test_elements.push(TestElement::Assertion(Assertion {
                         expr: value.clone(),
                         snapshot: extracted_evaluator,
-                        failure_message: failure_message.as_ref().map(|f| f.text.data.clone()),
+                        failure_message: interpolated_failure_message,
                     }));
                 }
             }
@@ -638,11 +648,15 @@ impl CodegenContext {
                 }
             }
             Token::File { filename, .. } => {
-                let span = filename.text.span;
+                let span = filename.lquote.span;
+                let evaluated_filename = self
+                    .get_evaluator()
+                    .interpolate(filename, true)
+                    .map_err(|e| self.map_evaluation_error(e))?;
                 let source_file: PathBuf = self.tree.code_map.look_up_span(span).file.name().into();
                 let filename = match source_file.parent() {
-                    Some(parent) => parent.join(&filename.text.data),
-                    None => PathBuf::from(&filename.text.data),
+                    Some(parent) => parent.join(&evaluated_filename),
+                    None => PathBuf::from(&evaluated_filename),
                 };
                 match fs::read(&filename) {
                     Ok(bytes) => {
@@ -690,7 +704,7 @@ impl CodegenContext {
                     });
                     def.add_usage(DefinitionLocation {
                         parent_scope: self.current_scope_nx,
-                        span: filename.text.span,
+                        span: filename.span(),
                     });
 
                     self.with_scope(import_scope, block.as_ref(), |s| {
@@ -870,7 +884,6 @@ impl CodegenContext {
                         id.data.clone(),
                         self.symbol(id.span, pc.as_i64(), SymbolType::Label),
                     )?;
-                    self.source_map.add(self.current_scope_nx, id.span, pc, 0);
                 }
 
                 if let Some(b) = block {
@@ -938,6 +951,11 @@ impl CodegenContext {
                         .expect_args(name.span, args.len(), def.args.len())
                         .map_err(|e| self.map_evaluation_error(e))?;
                     self.with_scope(&name.data, None, |s| {
+                        // Remove any symbols that were defined in a previous passes' invocation
+                        for arg_name in &def.args {
+                            s.remove_symbol(&arg_name.data);
+                        }
+
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
 
@@ -959,10 +977,6 @@ impl CodegenContext {
                             // to make sure that the emitted bytes show up at the invocation site when generating a listing file
                             s.source_map
                                 .move_offsets(s.current_scope_nx, parent_scope, name.span);
-                        }
-
-                        for arg_name in &def.args {
-                            s.remove_symbol(&arg_name.data);
                         }
 
                         Ok(())
@@ -1124,32 +1138,11 @@ impl CodegenContext {
     ) -> CoreResult<Option<String>> {
         let result = self.evaluate_expression(expr, track_usage)?;
         match result {
-            Some(result) => match result.try_as_str() {
-                Some(d) => {
-                    // Perform string interpolation
-                    let mut str = d.to_string();
-                    while let Some(lbracket) = str.find('{') {
-                        let (_, rest) = str.split_at(lbracket + 1);
-                        if let Some(rbracket) = rest.find('}') {
-                            let (to_interpolate, _) = rest.split_at(rbracket);
-                            let mut expr = parse_expression(to_interpolate)?;
-                            expr.span = expr.span.subspan(lbracket as u64, rbracket as u64);
-                            let interpolated = self
-                                .evaluate_expression_as_string(&expr, true)?
-                                .unwrap_or_default();
-                            str = str.replace(&format!("{{{}}}", to_interpolate), &interpolated);
-                        } else {
-                            break;
-                        }
-                    }
-
-                    Ok(Some(str))
-                }
-                None => Err(Diagnostic::error()
-                    .with_message(format!("'{}' does not evaluate to a string", &expr.data))
-                    .with_labels(vec![expr.span.to_label()])
-                    .into()),
-            },
+            Some(SymbolData::String(data)) => Ok(Some(data)),
+            Some(_) => Err(Diagnostic::error()
+                .with_message(format!("'{}' does not evaluate to a string", &expr.data))
+                .with_labels(vec![expr.span.to_label()])
+                .into()),
             None => Ok(None),
         }
     }
@@ -1331,8 +1324,9 @@ pub fn codegen(
 #[cfg(test)]
 pub mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
-    use crate::codegen::Segment;
+    use crate::codegen::{DefinitionType, Segment, SymbolIndex};
     use crate::errors::CoreResult;
+    use crate::parser::code_map::LineCol;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
     use mos_testing::enable_default_tracing;
@@ -1684,6 +1678,28 @@ pub mod tests {
             ctx.current_segment().range_data(),
             vec![0x68, 0x69, 0x68, 0x6f]
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn string_interpolation_usage() -> CoreResult<()> {
+        let ctx = test_codegen(".const foo = \"hi\"\n.const bar = \"{foo}\"")?;
+        let usages = ctx.analysis.find(
+            "test.asm",
+            LineCol {
+                line: 1,
+                column: 16, // the 'foo' in {fop}
+            },
+        );
+        assert_eq!(usages.len(), 1);
+
+        if let DefinitionType::Symbol(symbol_nx) = usages.first().unwrap().0 {
+            // We should have been referring to 'foo', which is the first symbol defined
+            assert_eq!(*symbol_nx, SymbolIndex::new(1));
+        } else {
+            panic!()
+        }
 
         Ok(())
     }

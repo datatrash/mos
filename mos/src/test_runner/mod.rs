@@ -135,8 +135,8 @@ pub fn enumerate_test_cases(
         .symbols()
         .all()
         .into_iter()
-        .filter(|(_, data)| data.ty == SymbolType::TestCase && data.span.is_some())
-        .map(|(name, data)| {
+        .filter(|(_, (_, data))| data.ty == SymbolType::TestCase && data.span.is_some())
+        .map(|(name, (_, data))| {
             let location = ctx.analysis().look_up(data.span.unwrap());
             (location, name)
         })

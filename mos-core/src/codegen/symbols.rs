@@ -366,7 +366,7 @@ impl<S: Clone + Debug> SymbolTable<S> {
         result
     }
 
-    pub fn all(&self) -> HashMap<IdentifierPath, &S> {
+    pub fn all(&self) -> HashMap<IdentifierPath, (SymbolIndex, &S)> {
         let mut result = HashMap::new();
         self.all_impl(&mut result, self.root, "".into());
         result
@@ -374,12 +374,12 @@ impl<S: Clone + Debug> SymbolTable<S> {
 
     fn all_impl<'a>(
         &'a self,
-        map: &mut HashMap<IdentifierPath, &'a S>,
+        map: &mut HashMap<IdentifierPath, (SymbolIndex, &'a S)>,
         nx: SymbolIndex,
         path: IdentifierPath,
     ) {
         if let Some(data) = self.try_get(nx) {
-            map.insert(path.clone(), data);
+            map.insert(path.clone(), (nx, data));
         }
         for (child_id, child_nx) in self.children(nx) {
             self.all_impl(map, child_nx, path.join(child_id));

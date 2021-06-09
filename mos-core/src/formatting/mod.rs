@@ -1,7 +1,8 @@
 use crate::parser::{
     AddressModifier, AddressingMode, ArgItem, BinaryOp, Block, Expression, ExpressionFactor,
-    Identifier, IdentifierPath, ImportArgs, ImportAs, Located, Number, NumberType, Operand,
-    ParseTree, QuotedString, RegisterSuffix, SpecificImportArg, TextEncoding, Token, Trivia,
+    Identifier, IdentifierPath, ImportArgs, ImportAs, InterpolatedString, InterpolatedStringItem,
+    Located, Number, NumberType, Operand, ParseTree, RegisterSuffix, SpecificImportArg,
+    TextEncoding, Token, Trivia,
 };
 use serde::Deserialize;
 use std::fmt::Display;
@@ -539,8 +540,8 @@ impl CodeFormatter {
             ExpressionFactor::Number { ty, value } => {
                 self.fmt(ty).fmt(value);
             }
-            ExpressionFactor::QuotedString(q) => {
-                self.fmt(q);
+            ExpressionFactor::InterpolatedString(i) => {
+                self.fmt(i);
             }
         }
     }
@@ -615,9 +616,20 @@ impl Formattable for &Block {
     }
 }
 
-impl Formattable for &QuotedString {
+impl Formattable for &InterpolatedString {
     fn format(&self, formatter: &mut CodeFormatter) {
-        formatter.fmt(&self.lquote).fmt(&self.text).push("\"");
+        formatter.fmt(&self.lquote);
+        for item in &self.items {
+            match item {
+                InterpolatedStringItem::String(s) => {
+                    formatter.push(s);
+                }
+                InterpolatedStringItem::IdentifierPath(path) => {
+                    formatter.push('{').push(&path.data).push('}');
+                }
+            }
+        }
+        formatter.push("\"");
     }
 }
 

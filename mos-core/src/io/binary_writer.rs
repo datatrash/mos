@@ -96,10 +96,12 @@ impl BinaryWriter {
     pub fn merge_segments(&mut self, ctx: &CodegenContext) -> CoreResult<Vec<Bank>> {
         let mut errors = vec![];
 
+        let default_bank = ctx.banks().keys().next().unwrap();
+
         // Check if all segments are assigned to a valid bank
         for (segment_name, segment) in ctx.segments() {
-            let bank_name = segment.options().bank_or_default();
-            if !ctx.banks().contains_key(&bank_name) {
+            let bank_name = segment.options().bank.as_ref().unwrap_or(&default_bank);
+            if !ctx.banks().contains_key(bank_name) {
                 errors.push(Diagnostic::error().with_message(format!(
                     "segment '{}' is assigned to bank '{}' but this bank does not exist",
                     segment_name, bank_name,
@@ -113,7 +115,8 @@ impl BinaryWriter {
                 .segments()
                 .iter()
                 .filter(|(_, segment)| {
-                    &segment.options().bank_or_default() == bank_name && segment.options().write
+                    segment.options().bank.as_ref().unwrap_or(&default_bank) == bank_name
+                        && segment.options().write
                 })
                 .collect();
             log::trace!(

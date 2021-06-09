@@ -7,6 +7,7 @@ use lsp_types::{
     PrepareRenameResponse, RenameParams, TextDocumentPositionParams, TextEdit, WorkspaceEdit,
 };
 use mos_core::codegen::{DefinitionType, QueryTraversalStep};
+use mos_core::parser::code_map::LineCol;
 use mos_core::parser::{Identifier, IdentifierPath};
 use std::collections::HashMap;
 
@@ -26,67 +27,59 @@ impl RequestHandler<PrepareRenameRequest> for PrepareRenameRequestHandler {
     ) -> MosResult<Option<PrepareRenameResponse>> {
         if let Some(codegen) = &ctx.codegen {
             let codegen = codegen.lock().unwrap();
-            if let Some(tree) = &ctx.tree {
-                let file_path = &params.text_document.uri.to_file_path().unwrap();
+            let file_path = &params.text_document.uri.to_file_path().unwrap();
 
-                let source_line = params.position.line as usize;
-                let source_column = params.position.character as usize;
+            let source_line = params.position.line as usize;
+            let source_column = params.position.character as usize;
 
-                if let Some(source_file) = codegen.tree().files.get(file_path) {
-                    let line = source_file.file.source_line(source_line);
+            if let Some(source_file) = codegen.tree().files.get(file_path) {
+                let line = source_file.file.source_line(source_line);
 
-                    // Find the beginning of the full identifier path under the cursor
-                    let path_start = line[..source_column]
-                        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != '.')
-                        .map(|pos| pos + 1)
-                        .unwrap_or_default();
+                // Try to find the start of identifier under the cursor
+                let start = line[..source_column]
+                    .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+                    .map(|pos| pos + 1)
+                    .unwrap_or_default();
 
-                    // Now, also try to find the identifier under the cursor
-                    let start = line[..source_column]
-                        .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-                        .map(|pos| pos + 1)
-                        .unwrap_or_default();
+                // Find the end of the identifier under the cursor
+                let end = line[source_column..]
+                    .find(|c: char| !c.is_alphanumeric() && c != '_')
+                    .unwrap_or_else(|| line[source_column..].len());
 
-                    // Find the end of the identifier under the cursor
-                    let end = line[source_column..]
-                        .find(|c: char| !c.is_alphanumeric() && c != '_')
-                        .unwrap_or_else(|| line[source_column..].len());
+                // Adjust the offset to match the full line, not just the substring
+                let end = source_column + end;
 
-                    // Adjust the offset to match the full line, not just the substring
-                    let end = source_column + end;
+                // This is now the identifier under the cursor
+                let id = Identifier::from(&line[start..end]);
 
-                    // This is now the identifier under the cursor
-                    let id = Identifier::from(&line[start..end]);
+                if id.is_super() {
+                    // We don't want to allow renaming 'super'
+                    return Ok(None);
+                }
 
-                    if id.is_super() {
-                        // We don't want to allow renaming 'super'
-                        return Ok(None);
-                    }
-
-                    // This is now the full identifier path that is under the cursor
-                    let path = IdentifierPath::from(&line[path_start..end]);
-
-                    for offset in codegen.source_map().line_col_to_offsets(
-                        &tree.code_map,
+                if !codegen
+                    .analysis()
+                    .find(
                         file_path.to_str().unwrap(),
-                        source_line,
-                        source_column,
-                    ) {
-                        if codegen.symbols().query(offset.scope, &path).is_some() {
-                            // We're referring to an existing symbol here!
-                            let range = lsp_types::Range {
-                                start: lsp_types::Position {
-                                    line: source_line as u32,
-                                    character: start as u32,
-                                },
-                                end: lsp_types::Position {
-                                    line: source_line as u32,
-                                    character: end as u32,
-                                },
-                            };
-                            return Ok(Some(PrepareRenameResponse::Range(range)));
-                        }
-                    }
+                        LineCol {
+                            line: source_line,
+                            column: source_column,
+                        },
+                    )
+                    .is_empty()
+                {
+                    // We're referring to an existing symbol here!
+                    let range = lsp_types::Range {
+                        start: lsp_types::Position {
+                            line: source_line as u32,
+                            character: start as u32,
+                        },
+                        end: lsp_types::Position {
+                            line: source_line as u32,
+                            character: end as u32,
+                        },
+                    };
+                    return Ok(Some(PrepareRenameResponse::Range(range)));
                 }
             }
         }
@@ -116,7 +109,7 @@ impl RequestHandler<Rename> for RenameHandler {
             DefinitionType::Filename(_) => Ok(None),
             DefinitionType::Symbol(def_symbol_nx) => {
                 if let Some(location) = &def.location {
-                    // First, determine all the query_indices for every usage
+                    // First, determine all the query steps for every usage
                     let steps = def
                         .usages()
                         .into_iter()
@@ -179,7 +172,7 @@ impl RequestHandler<Rename> for RenameHandler {
                             // We either grab a renamed usage, or we fallback to the name specified by the user for the source definition
                             let new_text = match new_paths.get(dl) {
                                 Some(new_path) => new_path.to_string(),
-                                None => params.new_name.clone(),
+                                _ => params.new_name.clone(),
                             };
 
                             let edit = TextEdit {
@@ -224,8 +217,16 @@ mod tests {
         server.prepare_rename(test_root().join("main.asm"), Position::new(2, 8))?;
         assert_can_rename(&server, true, 2, 8..11);
 
+        // 'lda foo.ba*r*'
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 10))?;
+        assert_can_rename(&server, true, 2, 8..11);
+
         // 'lda f*o*o.bar'
         server.prepare_rename(test_root().join("main.asm"), Position::new(2, 5))?;
+        assert_can_rename(&server, true, 2, 4..7);
+
+        // 'lda *f*oo.bar'
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 4))?;
         assert_can_rename(&server, true, 2, 4..7);
 
         // '*l*da foo.bar'
@@ -234,11 +235,27 @@ mod tests {
 
         // 'lda foo.ba*r*.super'
         server.prepare_rename(test_root().join("main.asm"), Position::new(3, 10))?;
-        assert_can_rename(&server, true, 3, 8..11);
+        assert_can_rename(&server, false, 0, 0..0);
 
         // 'lda foo.bar.*s*uper'
         server.prepare_rename(test_root().join("main.asm"), Position::new(3, 12))?;
         assert_can_rename(&server, false, 0, 0..0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_rename_interpolated_string() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "foo: { .const bar = \"evaluated_bar\" }\n{\n.const str = \"{foo.bar}\"\n}",
+        )?;
+
+        // '.const str = "{*f*oo.bar}"'
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 15))?;
+        assert_can_rename(&server, true, 2, 15..18);
 
         Ok(())
     }
@@ -401,6 +418,51 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn rename_definition_in_macro() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            r#".macro macro(bank_name) {
+    .define bank {
+        name = "{bank_name}"
+    }
+}
+
+macro("hi")"#,
+        )?;
+        // Rename 'bank_name' to 'foz'
+        server.rename(test_root().join("main.asm"), Position::new(0, 14), "foz")?;
+
+        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        expected_changes.insert(
+            Url::from_file_path(test_root().join("main.asm")).unwrap(),
+            vec![
+                TextEdit {
+                    range: Range::new(Position::new(0, 13), Position::new(0, 22)),
+                    new_text: "foz".to_string(),
+                },
+                TextEdit {
+                    range: Range::new(Position::new(2, 17), Position::new(2, 26)),
+                    new_text: "foz".to_string(),
+                },
+            ],
+        );
+
+        assert_eq!(
+            server.lock_context().responses().pop().unwrap().result,
+            response::<Rename>(Some(WorkspaceEdit {
+                changes: Some(expected_changes),
+                document_changes: None,
+                change_annotations: None
+            }))
+            .result
+        );
+
+        Ok(())
+    }
+
+    #[track_caller]
     fn assert_can_rename(
         server: &LspServer,
         can_rename: bool,

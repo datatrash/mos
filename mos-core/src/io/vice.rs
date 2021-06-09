@@ -6,7 +6,7 @@ pub fn to_vice_symbols(table: &SymbolTable<Symbol>) -> String {
     table
         .all()
         .into_iter()
-        .filter_map(|(path, symbol)| match symbol.ty {
+        .filter_map(|(path, (_, symbol))| match symbol.ty {
             SymbolType::Label => Some(format!("al C:{:X} .{}", symbol.data.as_i64(), path)),
             _ => None,
         })

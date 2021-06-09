@@ -11,7 +11,7 @@ use lsp_types::{
 use mos_core::parser::code_map::{CodeMap, Span};
 use mos_core::parser::{
     ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, ImportAs,
-    SpecificImportArg, Token, VariableType,
+    InterpolatedString, InterpolatedStringItem, SpecificImportArg, Token, VariableType,
 };
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
@@ -242,6 +242,16 @@ impl SemTokBuilder {
         }
         self
     }
+
+    fn interpolated_string(mut self, i: &InterpolatedString) -> Self {
+        for item in &i.items {
+            self = match item {
+                InterpolatedStringItem::String(str) => self.push(str, TokenType::Constant),
+                InterpolatedStringItem::IdentifierPath(path) => self.identifier(path),
+            }
+        }
+        self
+    }
 }
 
 fn emit_semantic_ast(ast: &[Token]) -> Vec<SemTok> {
@@ -276,7 +286,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         Token::Expression(expr) => b.expression(&expr),
         Token::File {
             tag: _, filename, ..
-        } => b.push(&filename.text, TokenType::Constant),
+        } => b.interpolated_string(filename),
         Token::Label { id, block, .. } => {
             let b = b.identifier(id);
             match block {
@@ -299,7 +309,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
                 },
                 ImportArgs::Specific(args) => b.specific_import_args(args),
             };
-            let b = b.push(&filename.text, TokenType::Constant);
+            let b = b.interpolated_string(filename);
             match block {
                 Some(block) => b.block(block),
                 None => b,
@@ -370,7 +380,7 @@ fn emit_expression_semantic(expression: &Expression) -> SemTokBuilder {
         Expression::Factor { factor, .. } => match &factor.data {
             ExpressionFactor::ExprParens { inner, .. } => emit_expression_semantic(&inner.data),
             ExpressionFactor::Number { .. } => SemTokBuilder::new(),
-            ExpressionFactor::QuotedString(_) => SemTokBuilder::new(),
+            ExpressionFactor::InterpolatedString(i) => SemTokBuilder::new().interpolated_string(i),
             ExpressionFactor::IdentifierValue { path, .. } => SemTokBuilder::new().identifier(path),
             ExpressionFactor::CurrentProgramCounter(pc) => {
                 SemTokBuilder::new().push(pc, TokenType::Constant)

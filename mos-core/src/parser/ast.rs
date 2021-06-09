@@ -335,7 +335,7 @@ pub enum ExpressionFactor {
         ty: Located<NumberType>,
         value: Located<Number>,
     },
-    QuotedString(QuotedString),
+    InterpolatedString(InterpolatedString),
 }
 
 /// A wrapper that stores the original number string and its radix, so that any zero-prefixes are kept
@@ -528,7 +528,7 @@ pub enum Token {
     Assert {
         tag: Located<String>,
         value: Located<Expression>,
-        failure_message: Option<QuotedString>,
+        failure_message: Option<InterpolatedString>,
     },
     Braces {
         block: Block,
@@ -563,14 +563,14 @@ pub enum Token {
         tag: Located<String>,
         args: ImportArgs,
         from: Located<String>,
-        filename: QuotedString,
+        filename: InterpolatedString,
         block: Option<Block>,
         import_scope: Identifier,
         resolved_path: PathBuf,
     },
     File {
         tag: Located<String>,
-        filename: QuotedString,
+        filename: InterpolatedString,
     },
     Instruction(Instruction),
     Label {
@@ -633,14 +633,61 @@ pub enum Token {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct QuotedString {
+pub struct InterpolatedString {
     pub lquote: Located<char>,
-    pub text: Located<String>,
+    pub items: Vec<InterpolatedStringItem>,
 }
 
-impl Display for QuotedString {
+impl InterpolatedString {
+    pub fn span(&self) -> Span {
+        let mut span = self.lquote.span;
+        for item in &self.items {
+            let other_span = match item {
+                InterpolatedStringItem::String(s) => s.span,
+                InterpolatedStringItem::IdentifierPath(path) => path.span,
+            };
+            span = span.merge(other_span);
+        }
+        span
+    }
+
+    pub fn uninterpolated_text(&self) -> String {
+        let mut result = "".to_string();
+        for item in &self.items {
+            match item {
+                InterpolatedStringItem::String(s) => result += s.data.as_str(),
+                InterpolatedStringItem::IdentifierPath(path) => {
+                    result += format!("{{{}}}", path.data).as_str();
+                }
+            }
+        }
+        result
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum InterpolatedStringItem {
+    String(Located<String>),
+    IdentifierPath(Located<IdentifierPath>),
+}
+
+impl Display for InterpolatedString {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}{}\"", self.lquote, self.text)
+        write!(
+            f,
+            "{}{}\"",
+            self.lquote,
+            &self.items.iter().map(|i| format!("{}", i)).join("")
+        )
+    }
+}
+
+impl Display for InterpolatedStringItem {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            InterpolatedStringItem::String(s) => write!(f, "{}", s),
+            InterpolatedStringItem::IdentifierPath(p) => write!(f, "{{{}}}", p),
+        }
     }
 }
 
@@ -781,7 +828,7 @@ impl Display for ExpressionFactor {
                 write!(f, "{}{}", modifier, path)
             }
             Self::Number { ty, value } => write!(f, "{}{}", ty, value),
-            Self::QuotedString(q) => write!(f, "{}", q),
+            Self::InterpolatedString(i) => write!(f, "{}", i),
         }
     }
 }

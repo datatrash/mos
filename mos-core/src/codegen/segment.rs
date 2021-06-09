@@ -18,12 +18,6 @@ pub struct SegmentOptions {
     pub target_address: ProgramCounter,
 }
 
-impl SegmentOptions {
-    pub fn bank_or_default(&self) -> Identifier {
-        self.bank.clone().unwrap_or_else(|| "default".into())
-    }
-}
-
 impl Default for SegmentOptions {
     fn default() -> Self {
         Self {

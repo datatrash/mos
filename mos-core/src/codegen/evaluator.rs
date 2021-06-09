@@ -2,7 +2,7 @@ use crate::codegen::{ProgramCounter, Symbol, SymbolData, SymbolIndex, SymbolTabl
 use crate::parser::code_map::Span;
 use crate::parser::{
     AddressModifier, BinaryOp, Expression, ExpressionFactor, ExpressionFactorFlags, IdentifierPath,
-    Located,
+    InterpolatedString, InterpolatedStringItem, Located,
 };
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -226,16 +226,7 @@ impl<'a> Evaluator<'a> {
                 }
             }
             ExpressionFactor::IdentifierValue { path, modifier } => {
-                let tuple = self.get_symbol(self.current_scope_nx, &path.data);
-                let symbol_index = tuple.as_ref().map(|(s, _)| *s);
-                let symbol_data = tuple.as_ref().map(|(_, s)| &s.data);
-
-                if track_usage {
-                    self.usages.lock().unwrap().push(SymbolUsage {
-                        symbol_index,
-                        path: path.clone(),
-                    });
-                }
+                let symbol_data = self.lookup_symbol(path, track_usage);
 
                 Ok(symbol_data.and_then(|data| match data {
                     SymbolData::MacroDefinition(_) => None,
@@ -252,8 +243,55 @@ impl<'a> Evaluator<'a> {
                 }))
             }
             ExpressionFactor::Number { value: number, .. } => Ok(Some(number.data.value().into())),
-            ExpressionFactor::QuotedString(q) => Ok(Some(SymbolData::String(q.text.data.clone()))),
+            ExpressionFactor::InterpolatedString(i) => {
+                Ok(Some(SymbolData::String(self.interpolate(i, track_usage)?)))
+            }
         }
+    }
+
+    pub fn lookup_symbol(
+        &self,
+        path: &Located<IdentifierPath>,
+        track_usage: bool,
+    ) -> Option<&SymbolData> {
+        let tuple = self.get_symbol(self.current_scope_nx, &path.data);
+        let symbol_index = tuple.as_ref().map(|(s, _)| *s);
+        let symbol_data = tuple.as_ref().map(|(_, s)| &s.data);
+
+        if track_usage {
+            self.usages.lock().unwrap().push(SymbolUsage {
+                symbol_index,
+                path: path.clone(),
+            });
+        }
+
+        symbol_data
+    }
+
+    pub fn interpolate(
+        &self,
+        i: &InterpolatedString,
+        track_usage: bool,
+    ) -> EvaluationResult<String> {
+        let mut result = "".to_string();
+        for item in &i.items {
+            match item {
+                InterpolatedStringItem::String(s) => result += s.data.as_str(),
+                InterpolatedStringItem::IdentifierPath(path) => {
+                    if let Some(data) = self.lookup_symbol(path, track_usage) {
+                        if let Some(data) = data.try_as_str() {
+                            result += data;
+                        } else {
+                            return Err(EvaluationError {
+                                span: path.span,
+                                message: format!("could not interpolate '{}' because '{}' does not resolve to a string", i, path)
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     pub fn expect_args(&self, span: Span, actual: usize, expected: usize) -> EvaluationResult<()> {

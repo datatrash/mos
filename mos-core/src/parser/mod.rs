@@ -643,13 +643,6 @@ fn align(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
-// Parses a string, up to (but not including) the closing quote
-fn string(input: LocatedSpan) -> IResult<String> {
-    map_once(recognize(many1(none_of("\"\r\n"))), |span: LocatedSpan| {
-        span.fragment().to_string()
-    })(input)
-}
-
 /// Tries to part an 'as' section of an import directive
 fn as_(input: LocatedSpan) -> IResult<Option<ImportAs>> {
     map_once(
@@ -694,12 +687,13 @@ fn import(input: LocatedSpan) -> IResult<Token> {
 
             let current_file: PathBuf = state.current_file.name().into();
             let parent = current_file.parent().unwrap();
-            let path = parent.join(&filename.text.data);
+            // TODO: Should be able to interpolate the filenames that get imported
+            let path = parent.join(&filename.uninterpolated_text());
 
             state
                 .to_import
                 .borrow_mut()
-                .insert(path.clone(), filename.text.span);
+                .insert(path.clone(), filename.span());
 
             Token::Import {
                 tag,
@@ -748,7 +742,7 @@ fn text(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse a file directive, of the form `.file "foo.bin"`
 fn file(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(tag_no_case(".file")), quoted_string)),
+        tuple((mws(tag_no_case(".file")), interpolated_string)),
         move |(tag, filename)| {
             let tag = tag.map_into(|_| ".file".to_string());
             Token::File { tag, filename }
@@ -756,17 +750,53 @@ fn file(input: LocatedSpan) -> IResult<Token> {
     )(input)
 }
 
-/// Tries to parse a quoted string, of the form `"hello i am a string"`
-fn quoted_string(input: LocatedSpan) -> IResult<QuotedString> {
+/// Tries to parse a quoted interpolated string, of the form `"hello i am an {interpolated} string"` where 'interpolated' refers to
+/// an identifier path
+fn interpolated_string(input: LocatedSpan) -> IResult<InterpolatedString> {
     map_once(
-        tuple((ws(char('"')), located(string), char('"'))),
-        move |(lquote, text, _)| QuotedString { lquote, text },
+        tuple((
+            ws(char('"')),
+            many0(alt((
+                map(
+                    located(recognize(many1(none_of("{}\"\r\n")))),
+                    |span: Located<LocatedSpan>| {
+                        InterpolatedStringItem::String(span.map_into(|s| s.fragment().to_string()))
+                    },
+                ),
+                map(
+                    tuple((char('{'), located(identifier_path), char('}'))),
+                    |(_, path, _)| InterpolatedStringItem::IdentifierPath(path),
+                ),
+            ))),
+            char('"'),
+        )),
+        move |(lquote, items, _)| InterpolatedString { lquote, items },
     )(input)
 }
 
-/// Tries to parse a quoted string as part of an expression
-fn quoted_string_factor(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
-    located(map(quoted_string, ExpressionFactor::QuotedString))(input)
+/// Tries to parse a quoted _uninterpolated_ string
+fn quoted_string(input: LocatedSpan) -> IResult<InterpolatedString> {
+    map_once(
+        tuple((
+            ws(char('"')),
+            many0(map(
+                located(recognize(many1(none_of("{}\"\r\n")))),
+                |span: Located<LocatedSpan>| {
+                    InterpolatedStringItem::String(span.map_into(|s| s.fragment().to_string()))
+                },
+            )),
+            char('"'),
+        )),
+        move |(lquote, items, _)| InterpolatedString { lquote, items },
+    )(input)
+}
+
+/// Tries to parse an interpolated string as part of an expression
+fn interpolated_string_factor(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
+    located(map(
+        interpolated_string,
+        ExpressionFactor::InterpolatedString,
+    ))(input)
 }
 
 /// Tries to parse a test directive, of the form `.test test_identifier {}`
@@ -783,7 +813,11 @@ fn test(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse an assert directive, of the form `.assert 1 == 2 "some optional description"`
 fn assert(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(tag_no_case(".assert")), expression, opt(quoted_string))),
+        tuple((
+            mws(tag_no_case(".assert")),
+            expression,
+            opt(interpolated_string),
+        )),
         move |(tag, value, failure_message)| {
             let tag = tag.map_into(|_| ".assert".to_string());
             Token::Assert {
@@ -994,7 +1028,7 @@ fn expression_factor_inner(input: LocatedSpan) -> IResult<Located<ExpressionFact
         identifier_value,
         current_pc,
         expression_parens,
-        quoted_string_factor,
+        interpolated_string_factor,
     ))(input)
 }
 
@@ -1191,7 +1225,10 @@ pub fn parse(
             } else {
                 state.lock().unwrap().report_error(
                     Diagnostic::error()
-                        .with_message(format!("file not found: {}", also_import.to_str().unwrap()))
+                        .with_message(format!(
+                            "file not found: \"{}\"",
+                            also_import.to_str().unwrap()
+                        ))
                         .with_labels(vec![span.to_label()]),
                 );
             }
@@ -1258,7 +1295,7 @@ mod test {
             "lda  %11101   +   (  $ff  * -12367 ) / foo",
             "LDA  %11101   +   (  $ff  * -12367 ) / foo",
         );
-        check("lda  \"foo\"", "LDA  \"foo\"");
+        check("lda  \"foo {bar}\"", "LDA  \"foo {bar}\"");
     }
 
     #[test]
@@ -1538,7 +1575,7 @@ mod test {
             InMemoryParsingSource::new()
                 .add("test.asm", ".import * from \"baz\"")
                 .into(),
-            "test.asm:1:17: error: file not found: baz",
+            "test.asm:1:16: error: file not found: \"baz\"",
         );
     }
 
