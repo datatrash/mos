@@ -126,6 +126,13 @@ impl<S: Clone + Debug> SymbolTable<S> {
         self.graph.remove_node(nx);
     }
 
+    pub fn remove_all(&mut self, nx: SymbolIndex) {
+        for child in self.children(nx).values() {
+            self.remove_all(*child);
+        }
+        self.remove(nx);
+    }
+
     pub fn ensure_index<I: Into<IdentifierPath>>(
         &mut self,
         mut nx: SymbolIndex,
@@ -589,6 +596,22 @@ mod tests {
         let nx = t.ensure_index(t.root, "a.b.c");
         t.insert(nx, "d", 123);
         assert_eq!(t.try_get(t.index(t.root, "a.b.c.d")), Some(&123));
+    }
+
+    #[test]
+    fn remove() {
+        let mut t = table();
+        t.table.remove(t.s);
+        assert_eq!(t.table.try_get(t.s), None);
+        assert_eq!(t.table.parent(t.s_ss_a), Some(t.s_ss));
+    }
+
+    #[test]
+    fn remove_all() {
+        let mut t = table();
+        t.table.remove_all(t.s);
+        assert_eq!(t.table.try_get(t.s), None);
+        assert_eq!(t.table.parent(t.s_ss_a), None);
     }
 
     #[test]

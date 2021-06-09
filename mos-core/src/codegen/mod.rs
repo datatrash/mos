@@ -950,12 +950,12 @@ impl CodegenContext {
                     self.get_evaluator()
                         .expect_args(name.span, args.len(), def.args.len())
                         .map_err(|e| self.map_evaluation_error(e))?;
-                    self.with_scope(&name.data, None, |s| {
-                        // Remove any symbols that were defined in a previous passes' invocation
-                        for arg_name in &def.args {
-                            s.remove_symbol(&arg_name.data);
-                        }
 
+                    // If the macro was already invoked (in a previous pass or somewhere in this pass), clean up the scope so we can
+                    // start fresh.
+                    self.remove_scope(&name.data);
+
+                    self.with_scope(&name.data, None, |s| {
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
 
@@ -1187,6 +1187,14 @@ impl CodegenContext {
         self.current_scope_nx = old_scope_nx;
         self.current_scope.pop();
         result
+    }
+
+    fn remove_scope(&mut self, scope: &Identifier) {
+        if let Some(scope_nx) = self.symbols.try_index(self.symbols.root, scope) {
+            for child_nx in self.symbols.children(scope_nx).values() {
+                self.symbols.remove_all(*child_nx);
+            }
+        }
     }
 
     pub fn register_fn<F: 'static + FunctionCallback + Send + Sync>(
