@@ -140,7 +140,12 @@ fn main() {
         .unwrap();
 
     if let Err(e) = run(&args) {
-        DiagnosticEmitter::stdout(&args).emit(e);
+        match args.subcommand_name() {
+            Some("lsp") => {
+                // Don't try to emit to stdout since it's probably gone by this time in the LSP
+            }
+            _ => DiagnosticEmitter::stdout(&args).emit(e),
+        }
         std::process::exit(1);
     }
 }
