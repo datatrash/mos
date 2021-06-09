@@ -290,8 +290,8 @@ mod tests {
         .define segment { name = "a"          bank = "bank1" }
         .define segment { name = "b"          bank = "bank2" }
         
-        .segment a { .byte 1, 2, 3, 4 }
-        .segment b { .byte 5, 6, 7 }
+        .segment "a" { .byte 1, 2, 3, 4 }
+        .segment "b" { .byte 5, 6, 7 }
         }
         "#,
         )?;
@@ -318,8 +318,8 @@ mod tests {
         .define segment { name = "a" }
         .define segment { name = "b" write = false }
         
-        .segment a { .byte 1, 2, 3, 4 }
-        .segment b { .byte 5, 6, 7 }
+        .segment "a" { .byte 1, 2, 3, 4 }
+        .segment "b" { .byte 5, 6, 7 }
         }
         "#,
         )?;
@@ -338,7 +338,7 @@ mod tests {
         .define bank { name = "bank" size = 4 }
         .define segment { name = "a" bank = "bank" }
         
-        .segment a { .byte 1, 2, 3, 4, 5 }
+        .segment "a" { .byte 1, 2, 3, 4, 5 }
         "#,
         )?;
         let mut bw = BinaryWriter {};
@@ -387,10 +387,10 @@ mod tests {
         .define segment { name = "default_lo"     bank = "default"          start = $2000 }
         .define segment { name = "default_hi"     bank = "default"          start = $4000 }
 
-        .segment header { .byte 1, 2, 3, 4 }
-        .segment header2 { .byte 5, 6, 7 }
-        .segment default_lo { nop }
-        .segment default_hi { asl }
+        .segment "header" { .byte 1, 2, 3, 4 }
+        .segment "header2" { .byte 5, 6, 7 }
+        .segment "default_lo" { nop }
+        .segment "default_hi" { asl }
         }
         "#;
 }

@@ -487,10 +487,17 @@ impl CodegenContext {
     }
 
     fn emit_tokens(&mut self, tokens: &[Token]) -> CoreResult<()> {
+        let mut errors = Diagnostics::default();
         for token in tokens {
-            self.emit_token(token)?;
+            if let Err(result) = self.emit_token(token) {
+                errors.extend(result);
+            }
         }
-        Ok(())
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 
     fn emit_token(&mut self, token: &Token) -> CoreResult<()> {
@@ -970,22 +977,27 @@ impl CodegenContext {
                 }
             }
             Token::Segment { id, block, .. } => {
-                if !self.segments.contains_key(&id.data) {
-                    return Err(Diagnostic::error()
-                        .with_message(format!("unknown identifier: {}", id.data))
-                        .with_labels(vec![id.span.to_label()])
-                        .into());
-                };
+                if let Some(segment_id) = self
+                    .evaluate_expression_as_string(id, true)?
+                    .map(Identifier::new)
+                {
+                    if !self.segments.contains_key(&segment_id) {
+                        return Err(Diagnostic::error()
+                            .with_message(format!("unknown identifier: {}", id.data))
+                            .with_labels(vec![id.span.to_label()])
+                            .into());
+                    };
 
-                match block {
-                    Some(block) => {
-                        let old_segment =
-                            std::mem::replace(&mut self.current_segment, Some(id.data.clone()));
-                        self.emit_tokens(&block.inner)?;
-                        self.current_segment = old_segment;
-                    }
-                    None => {
-                        self.current_segment = Some(id.data.clone());
+                    match block {
+                        Some(block) => {
+                            let old_segment =
+                                std::mem::replace(&mut self.current_segment, Some(segment_id));
+                            self.emit_tokens(&block.inner)?;
+                            self.current_segment = old_segment;
+                        }
+                        None => {
+                            self.current_segment = Some(segment_id);
+                        }
                     }
                 }
             }
@@ -1520,9 +1532,9 @@ pub mod tests {
                 .define segment { name = "a" start = $1000 }
                 .define segment { name = "b" start = $2000 }
                 nop
-                .segment b
+                .segment "b"
                 rol
-                .segment a
+                .segment "a"
                 asl
                 "#,
         )?;
@@ -1565,7 +1577,7 @@ pub mod tests {
                 .define segment { name = "a" start = $1000 }
                 .define segment { name = "b" start = $2000 }
                 nop
-                .segment b { rol }
+                .segment "b" { rol }
                 asl
                 "#,
         )?;
@@ -1583,7 +1595,7 @@ pub mod tests {
                 .define segment { name = "a" start = $1000 }
                 .define segment { name = "b" start = $2000 }
                 lda foo
-                .segment b { foo: lda bar }
+                .segment "b" { foo: lda bar }
                 bar: nop
                 "#,
         )?;
@@ -1623,8 +1635,8 @@ pub mod tests {
                 .define segment { name = "c" start = segments.b.end }
                 lda data
                 nop
-                .segment b { rol }
-                .segment c { lsr }
+                .segment "b" { rol }
+                .segment "c" { lsr }
                 asl
                 data: .byte 1
                 "#,

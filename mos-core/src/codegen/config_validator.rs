@@ -59,7 +59,7 @@ impl ConfigValidator {
             })
             .collect_vec();
         match errors.is_empty() {
-            true => Ok(ConfigExtractor::new(kvps)),
+            true => Ok(ConfigExtractor::new(config_span, kvps)),
             false => Err(errors.into()),
         }
     }

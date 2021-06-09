@@ -1,15 +1,18 @@
 use crate::codegen::CodegenContext;
 use crate::errors::CoreResult;
+use crate::parser::code_map::Span;
 use crate::parser::{Expression, Located, Token};
 use codespan_reporting::diagnostic::Diagnostic;
 
 pub struct ConfigExtractor<'a> {
+    config_span: Span,
     kvps: Vec<(&'a Located<String>, &'a Located<Token>)>,
 }
 
 impl<'a> ConfigExtractor<'a> {
-    pub fn new(kvps: &[(&'a Located<String>, &'a Located<Token>)]) -> Self {
+    pub fn new(config_span: Span, kvps: &[(&'a Located<String>, &'a Located<Token>)]) -> Self {
         Self {
+            config_span,
             kvps: kvps.to_vec(),
         }
     }
@@ -18,8 +21,13 @@ impl<'a> ConfigExtractor<'a> {
         if let Some(str) = self.try_get_string(ctx, key)? {
             Ok(str)
         } else {
+            let span = self
+                .try_get_kvp(key)
+                .map(|(k, v)| k.span.merge(v.span))
+                .unwrap_or(self.config_span);
             Err(Diagnostic::error()
                 .with_message(format!("could not evaluate configuration key '{}'", key))
+                .with_labels(vec![span.to_label()])
                 .into())
         }
     }
@@ -64,6 +72,15 @@ impl<'a> ConfigExtractor<'a> {
         for (key, value) in &self.kvps {
             if key.data == wanted {
                 return Some(value);
+            }
+        }
+        None
+    }
+
+    fn try_get_kvp(&self, wanted: &str) -> Option<(&Located<String>, &Located<Token>)> {
+        for (key, value) in &self.kvps {
+            if key.data == wanted {
+                return Some((key, value));
             }
         }
         None

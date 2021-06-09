@@ -605,7 +605,7 @@ pub enum Token {
     },
     Segment {
         tag: Located<String>,
-        id: Located<Identifier>,
+        id: Located<Expression>,
         block: Option<Block>,
     },
     Test {

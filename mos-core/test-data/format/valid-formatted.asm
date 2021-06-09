@@ -32,7 +32,7 @@
                    foo: rts
                     }
 
-                    .segment default {
+                    .segment "default" {
                         lda #<data                    /* nice*/
                     }
 

@@ -577,11 +577,7 @@ fn block(input: LocatedSpan) -> IResult<Block> {
 /// Tries to parse a segment definition
 fn segment(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((
-            mws(tag_no_case(".segment")),
-            ws(identifier_name),
-            opt(block),
-        )),
+        tuple((mws(tag_no_case(".segment")), expression, opt(block))),
         move |(tag, id, block)| Token::Segment {
             tag: tag.map_into(|_| ".segment".to_string()),
             id,
@@ -1307,7 +1303,10 @@ mod test {
     #[test]
     fn parse_macro() {
         check(".macro foo() { nop }", ".MACRO foo() { NOP }");
-        check(".macro foo(val) { nop }", ".MACRO foo(val) { NOP }");
+        check(
+            ".macro my_macro(my_arg) { nop }",
+            ".MACRO my_macro(my_arg) { NOP }",
+        );
         check("foo()", "foo()");
         check("foo(1, \"bar\")", "foo(1, \"bar\")");
     }
@@ -1404,6 +1403,7 @@ mod test {
     #[test]
     fn use_segment() {
         check(".segment   foo", ".SEGMENT   foo");
+        check(".segment   \"foo\"", ".SEGMENT   \"foo\"");
         check("  .segment   foo   { nop }", "  .SEGMENT   foo   { NOP }");
         check_ignore_err(
             "  .segment   foo   {invalid}\nnop",
@@ -1570,8 +1570,8 @@ mod test {
     #[test]
     fn parse_comments() {
         check(
-            ".const test /* test value */ = 1\n.segment default {nop /* nice*/}\nfoo: {/* here it is */}// hi",
-            ".CONST test /* test value */ = 1\n.SEGMENT default {NOP /* nice*/}\nfoo: {/* here it is */}// hi"
+            ".const test /* test value */ = 1\n.segment \"default\" {nop /* nice*/}\nfoo: {/* here it is */}// hi",
+            ".CONST test /* test value */ = 1\n.SEGMENT \"default\" {NOP /* nice*/}\nfoo: {/* here it is */}// hi"
         );
 
         // nested comment

@@ -164,11 +164,11 @@ Let's say we want to assemble some code to `$c000` and some data to `$2000`. We 
     start = $2000
 }
 
-.segment code {
+.segment "code" {
     lda $1234
 }
 
-.segment data {
+.segment "data" {
     .byte 1, 2, 3, 4
 }
 ```
@@ -267,13 +267,13 @@ To round it all up, let's write some data to the segments:
 ```asm6502
 ...bank and segment definitions from above...
 
-.segment my_header {
+.segment "my_header" {
     .byte 1, 5, 8
 }
-.segment code {
+.segment "code" {
     nop
 }
-.segment data {
+.segment "data" {
     .byte 1, 2, 3, 4
 }        
 ```

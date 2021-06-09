@@ -111,18 +111,25 @@ fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
 fn to_diagnostics(error: &Diagnostics) -> Vec<(String, Diagnostic)> {
     error
         .iter()
-        .map(|diag| {
-            let location = error
-                .code_map()
-                .as_ref()
-                .unwrap()
-                .look_up_span(diag.labels.first().unwrap().file_id);
-            let start = Position::new(location.begin.line as u32, location.begin.column as u32);
-            let end = Position::new(location.end.line as u32, location.end.column as u32);
-            let range = Range::new(start, end);
-            let mut d = Diagnostic::new_simple(range, diag.message.clone());
-            d.source = Some("mos".into());
-            (location.file.name().to_string(), d)
+        .filter_map(|diag| {
+            diag.labels
+                .first()
+                .map(|label| {
+                    error
+                        .code_map()
+                        .as_ref()
+                        .unwrap()
+                        .look_up_span(label.file_id)
+                })
+                .map(|location| {
+                    let start =
+                        Position::new(location.begin.line as u32, location.begin.column as u32);
+                    let end = Position::new(location.end.line as u32, location.end.column as u32);
+                    let range = Range::new(start, end);
+                    let mut d = Diagnostic::new_simple(range, diag.message.clone());
+                    d.source = Some("mos".into());
+                    (location.file.name().to_string(), d)
+                })
         })
         .collect()
 }

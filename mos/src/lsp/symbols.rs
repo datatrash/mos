@@ -6,9 +6,10 @@ use lsp_types::{
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Location, SymbolInformation,
     SymbolKind, Url, WorkspaceSymbolParams,
 };
+use mos_core::codegen::CodegenContext;
 use mos_core::parser::code_map::Span;
 use mos_core::parser::{Identifier, ParseTree, Token};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct DocumentSymbolRequestHandler;
 pub struct WorkspaceSymbolHandler;
@@ -25,17 +26,20 @@ impl RequestHandler<DocumentSymbolRequest> for DocumentSymbolRequestHandler {
         if let Some(tree) = &ctx.tree {
             let path = params.text_document.uri.to_file_path().unwrap();
             if let Some(file) = tree.try_get_file(&path) {
-                let emitter = DocSymEmitter {
-                    tree,
-                    filename: file.file.name(),
-                    recurse: false,
-                };
-                let docsyms = emitter.emit_document_symbols(&file.tokens, None);
-                let document_symbols = docsyms
-                    .into_iter()
-                    .map(|ds| ds.into_document_symbol(tree))
-                    .collect();
-                return Ok(Some(DocumentSymbolResponse::Nested(document_symbols)));
+                if let Some(codegen) = ctx.codegen() {
+                    let emitter = DocSymEmitter {
+                        tree,
+                        codegen,
+                        filename: file.file.name(),
+                        recurse: false,
+                    };
+                    let docsyms = emitter.emit_document_symbols(&file.tokens, None);
+                    let document_symbols = docsyms
+                        .into_iter()
+                        .map(|ds| ds.into_document_symbol(tree))
+                        .collect();
+                    return Ok(Some(DocumentSymbolResponse::Nested(document_symbols)));
+                }
             }
         }
         Ok(None)
@@ -50,20 +54,24 @@ impl RequestHandler<WorkspaceSymbol> for WorkspaceSymbolHandler {
     ) -> MosResult<Option<Vec<SymbolInformation>>> {
         if let Some(tree) = &ctx.tree {
             if let Some(file) = tree.try_get_file(&tree.main_file) {
-                let emitter = DocSymEmitter {
-                    tree,
-                    filename: file.file.name(),
-                    recurse: true,
-                };
-                let docsyms = emitter.emit_document_symbols(&file.tokens, None);
-                let workspace_symbols = docsyms
-                    .into_iter()
-                    .filter(|ds| {
-                        params.query.is_empty() || ds.name.to_string().starts_with(&params.query)
-                    })
-                    .map(|ds| ds.into_workspace_symbol(tree))
-                    .collect();
-                return Ok(Some(workspace_symbols));
+                if let Some(codegen) = ctx.codegen() {
+                    let emitter = DocSymEmitter {
+                        tree,
+                        codegen,
+                        filename: file.file.name(),
+                        recurse: true,
+                    };
+                    let docsyms = emitter.emit_document_symbols(&file.tokens, None);
+                    let workspace_symbols = docsyms
+                        .into_iter()
+                        .filter(|ds| {
+                            params.query.is_empty()
+                                || ds.name.to_string().starts_with(&params.query)
+                        })
+                        .map(|ds| ds.into_workspace_symbol(tree))
+                        .collect();
+                    return Ok(Some(workspace_symbols));
+                }
             }
         }
         Ok(None)
@@ -120,6 +128,7 @@ impl DocSym {
 
 struct DocSymEmitter<'a> {
     tree: &'a Arc<ParseTree>,
+    codegen: Arc<Mutex<CodegenContext>>,
     filename: &'a str,
     recurse: bool,
 }
@@ -158,6 +167,7 @@ impl<'a> DocSymEmitter<'a> {
                     if let Some(file) = self.tree.try_get_file(&resolved_path) {
                         let emitter = DocSymEmitter {
                             tree: self.tree,
+                            codegen: self.codegen.clone(),
                             filename: file.file.name(),
                             recurse: self.recurse,
                         };
@@ -185,7 +195,16 @@ impl<'a> DocSymEmitter<'a> {
             }
             Token::Segment { id, block, .. } => {
                 if let Some(b) = block {
-                    self.emit_document_symbols(&b.inner, Some(&id.data))
+                    if let Ok(Some(symbol_id)) = self
+                        .codegen
+                        .lock()
+                        .unwrap()
+                        .evaluate_expression_as_string(&id, false)
+                    {
+                        self.emit_document_symbols(&b.inner, Some(&Identifier::new(symbol_id)))
+                    } else {
+                        vec![]
+                    }
                 } else {
                     vec![]
                 }

@@ -24,7 +24,7 @@ foo:
 }
 
 
-.segment default     {lda #<data /* nice*/}
+.segment "default"     {lda #<data /* nice*/}
   .align   8
 
   // here is some data

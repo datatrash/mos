@@ -21,8 +21,8 @@
     sta $d020
     rts
 
-    .segment b { nop }
-    .segment c { asl }
+    .segment "b" { nop }
+    .segment "c" { asl }
 
 data:
     .byte 1
