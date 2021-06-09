@@ -43,6 +43,7 @@
                         /* here it is */
                         .byte 1, 2                    // hello
                         .word 4
+                        .text "foo"
 
                         nop
                     }

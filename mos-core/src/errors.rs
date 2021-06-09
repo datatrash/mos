@@ -125,6 +125,10 @@ pub fn map_io_error(e: std::io::Error) -> Diagnostics {
     Diagnostic::error().with_message(e.to_string()).into()
 }
 
+pub fn map_generic_error(e: impl Display) -> Diagnostics {
+    Diagnostic::error().with_message(e.to_string()).into()
+}
+
 impl<'a> Files<'a> for &'a CodeMap {
     type FileId = Span;
     type Name = String;

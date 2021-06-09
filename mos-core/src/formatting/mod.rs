@@ -435,9 +435,9 @@ impl CodeFormatter {
                 text,
             } => {
                 self.push(&tag.data)
-                    .push(" ")
+                    .spc_if_next()
                     .fmt(encoding)
-                    .push(" ")
+                    .spc_if_next()
                     .fmt(text);
             }
             Token::Trace {

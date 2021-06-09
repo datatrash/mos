@@ -1,10 +1,10 @@
+pub use binary_writer::*;
 pub use listing::*;
-pub use segment_merger::*;
 pub use vice::*;
 
+/// The main entry point for writing generated code to file(s)
+mod binary_writer;
 /// Listing files, containing disassembled code
 mod listing;
-/// Merging of segments when creating the final output binaries
-mod segment_merger;
 /// IO with the VICE emulator
 mod vice;

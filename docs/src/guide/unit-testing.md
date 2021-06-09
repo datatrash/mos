@@ -25,6 +25,8 @@ A test can be defined anywhere in your source files, and looks like a bit like t
 ## Running tests
 You can run tests by invoking the `mos test` command. Every test will be assembled individually and run on an emulated 6502.
 
+Please note that if you have defined [banks](advanced.html#banks) then the unit test will only have access to the bank it is defined in.
+
 ## Assertions
 In every part of your test (and even the subroutines you are testing) you can add `.assert` directives. The expression provided should be true, otherwise the test fails.
 

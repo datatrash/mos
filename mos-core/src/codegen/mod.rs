@@ -4,6 +4,7 @@ mod config_validator;
 mod evaluator;
 mod opcodes;
 mod program_counter;
+mod segment;
 mod source_map;
 mod symbols;
 mod text_encoding;
@@ -11,6 +12,7 @@ mod text_encoding;
 pub use analysis::*;
 pub use evaluator::*;
 pub use program_counter::*;
+pub use segment::*;
 pub use source_map::*;
 pub use symbols::*;
 
@@ -19,6 +21,7 @@ use crate::codegen::opcodes::get_opcode_bytes;
 use crate::codegen::source_map::SourceMap;
 use crate::codegen::text_encoding::encode_text;
 use crate::errors::{CoreResult, Diagnostics};
+use crate::io::BankOptions;
 use crate::parser::code_map::Span;
 use crate::parser::{
     AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath, ImportArgs, Located,
@@ -28,9 +31,8 @@ use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
 use indexmap::map::IndexMap;
 use itertools::Itertools;
-use once_cell::sync::OnceCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::{Deref, Range};
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -55,103 +57,6 @@ impl Default for CodegenOptions {
             predefined_constants: HashMap::new(),
             move_macro_source_map_to_invocation: false,
         }
-    }
-}
-
-pub struct Segment {
-    pc: ProgramCounter,
-    data: Vec<u8>,
-    range: Range<usize>,
-    options: SegmentOptions,
-}
-
-pub struct SegmentOptions {
-    pub filename: Option<String>,
-    pub initial_pc: ProgramCounter,
-    pub write: bool,
-    pub target_address: ProgramCounter,
-}
-
-impl Default for SegmentOptions {
-    fn default() -> Self {
-        Self {
-            filename: None,
-            initial_pc: 0x2000.into(),
-            write: true,
-            target_address: 0x2000.into(),
-        }
-    }
-}
-
-static EMPTY_DATA: OnceCell<Vec<u8>> = OnceCell::new();
-
-impl Segment {
-    fn new(options: SegmentOptions) -> Self {
-        let pc = options.initial_pc;
-        let range = pc.as_empty_range();
-
-        Self {
-            pc,
-            data: vec![],
-            range,
-            options,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.pc = self.options.initial_pc;
-        self.range = self.pc.as_empty_range();
-        self.data = vec![];
-    }
-
-    pub fn target_pc(&self) -> ProgramCounter {
-        ((self.pc.as_i64() + self.target_offset()) as usize).into()
-    }
-
-    pub fn options(&self) -> &SegmentOptions {
-        &self.options
-    }
-
-    pub fn range(&self) -> Range<usize> {
-        self.range.clone()
-    }
-
-    fn target_offset(&self) -> i64 {
-        self.options.target_address.as_i64() - self.options.initial_pc.as_i64()
-    }
-
-    pub fn range_data(&self) -> &[u8] {
-        if self.data.is_empty() {
-            EMPTY_DATA.get_or_init(Vec::new)
-        } else {
-            &self.data[self.range()]
-        }
-    }
-
-    fn emit(&mut self, bytes: &[u8]) -> bool {
-        let start = self.pc;
-        let end = self.pc + bytes.len();
-        if start.as_usize() > 0xffff || end.as_usize() > 0x10000 {
-            return false;
-        }
-
-        if start.as_usize() < self.range.start || self.data.is_empty() {
-            self.range.start = start.as_usize();
-            log::trace!("Extending start of range to: {}", self.range.start);
-        }
-        if end.as_usize() > self.range.end || self.data.is_empty() {
-            self.range.end = end.as_usize();
-            log::trace!("Extending end of range to: {}", self.range.end);
-        }
-
-        if self.data.is_empty() {
-            self.data = [0; 65536].into();
-        }
-
-        self.data.splice(*start..*end, bytes.to_vec());
-        self.pc = end;
-
-        true
     }
 }
 
@@ -236,6 +141,7 @@ pub struct CodegenContext {
 
     segments: IndexMap<Identifier, Segment>,
     current_segment: Option<Identifier>,
+    banks: IndexMap<Identifier, BankOptions>,
 
     functions: FunctionMap,
 
@@ -283,6 +189,7 @@ impl CodegenContext {
             pass_idx: 0,
             segments: IndexMap::new(),
             current_segment: None,
+            banks: IndexMap::new(),
             functions: HashMap::new(),
             symbols: SymbolTable::default(),
             undefined: HashSet::new(),
@@ -299,6 +206,10 @@ impl CodegenContext {
 
     pub fn segments(&self) -> &IndexMap<Identifier, Segment> {
         &self.segments
+    }
+
+    pub fn banks(&self) -> &IndexMap<Identifier, BankOptions> {
+        &self.banks
     }
 
     pub fn functions(&self) -> &FunctionMap {
@@ -335,12 +246,12 @@ impl CodegenContext {
 
             self.add_symbol(
                 path.join("start"),
-                self.symbol(None, segment.range.start as i64, SymbolType::Constant),
+                self.symbol(None, segment.range().start as i64, SymbolType::Constant),
             )?;
 
             self.add_symbol(
                 path.join("end"),
-                self.symbol(None, segment.range.end as i64, SymbolType::Constant),
+                self.symbol(None, segment.range().end as i64, SymbolType::Constant),
             )?;
         }
         self.segments = segments;
@@ -518,11 +429,11 @@ impl CodegenContext {
                 log::trace!(
                     "Emitting to segment '{}' {}: {:?}",
                     name,
-                    segment.pc,
+                    segment.pc(),
                     &bytes
                 );
                 self.source_map
-                    .add(self.current_scope_nx, span, segment.pc, bytes.len());
+                    .add(self.current_scope_nx, span, segment.pc(), bytes.len());
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
@@ -610,19 +521,35 @@ impl CodegenContext {
                         .collect();
 
                     match id.data.as_str() {
+                        "bank" => {
+                            let extractor = ConfigValidator::new()
+                                .required("name")
+                                .allowed("size")
+                                .allowed("fill")
+                                .allowed("filename")
+                                .extract(id.span, &kvps)?;
+                            let name = extractor.get_identifier("name")?;
+
+                            let opts = BankOptions {
+                                size: extractor.try_get_i64(self, "size")?.map(|s| s as usize),
+                                fill: extractor.try_get_i64(self, "fill")?.map(|s| s as u8),
+                                filename: extractor.try_get_string("filename"),
+                            };
+                            self.banks.insert(name, opts);
+                        }
                         "segment" => {
                             let extractor = ConfigValidator::new()
                                 .required("name")
-                                .required("start")
+                                .allowed("start")
                                 .allowed("pc")
                                 .allowed("write")
-                                .allowed("filename")
+                                .allowed("bank")
                                 .extract(id.span, &kvps)?;
 
                             let mut opts = SegmentOptions::default();
                             let name = extractor.get_identifier("name")?;
-                            match extractor.try_get_i64(self, "start")? {
-                                Some(val) => {
+                            match extractor.try_get_i64(self, "start") {
+                                Ok(Some(val)) => {
                                     log::trace!(
                                         "Segment '{}' was able to evaluate the 'start' to: {}",
                                         name,
@@ -630,7 +557,14 @@ impl CodegenContext {
                                     );
                                     opts.initial_pc = val.into()
                                 }
-                                _ => {
+                                Ok(None) => {
+                                    log::trace!(
+                                        "Segment '{}' has a default value for 'start'",
+                                        name,
+                                    );
+                                    opts.initial_pc = 0.into()
+                                }
+                                Err(_) => {
                                     // Will be marked as undefined and retried later
                                     log::trace!(
                                         "Segment '{}' was not able to evaluate the 'start'",
@@ -648,7 +582,7 @@ impl CodegenContext {
                                         )])]
                                 })?;
                             }
-                            opts.filename = extractor.try_get_string("filename");
+                            opts.bank = extractor.try_get_identifier("bank")?;
                             match extractor.try_get_i64(self, "pc")? {
                                 Some(target) => opts.target_address = target.into(),
                                 None => opts.target_address = opts.initial_pc,
@@ -999,7 +933,7 @@ impl CodegenContext {
             Token::ProgramCounterDefinition { value, .. } => {
                 if let Some(pc) = self.evaluate_expression(value, true)? {
                     if let Some(seg) = self.try_current_segment_mut() {
-                        seg.pc = pc.into();
+                        seg.set_pc(pc);
                     }
                 }
             }
@@ -1280,6 +1214,13 @@ pub fn codegen(
         ctx.next_pass();
     }
 
+    // We're done!
+
+    // If no banks were defined, define a default one
+    if ctx.banks.is_empty() {
+        ctx.banks.insert("default".into(), BankOptions::default());
+    }
+
     let e = Diagnostics::default().with_code_map(&ctx.tree.code_map);
     (Some(ctx), e)
 }
@@ -1287,7 +1228,7 @@ pub fn codegen(
 #[cfg(test)]
 pub mod tests {
     use super::{codegen, CodegenContext, CodegenOptions};
-    use crate::codegen::{Segment, SegmentOptions};
+    use crate::codegen::Segment;
     use crate::errors::CoreResult;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
@@ -1448,6 +1389,19 @@ pub mod tests {
     }
 
     #[test]
+    fn can_define_banks() -> CoreResult<()> {
+        let ctx = test_codegen(
+            ".define bank {\nname = foo\nsize = 8192\nfill = 123\nfilename = foo.bin}\nnop",
+        )?;
+        let bank = ctx.banks.get(&Identifier::new("foo")).unwrap();
+        assert_eq!(bank.size, Some(8192));
+        assert_eq!(bank.fill, Some(123));
+        assert_eq!(bank.filename, Some("foo.bin".into()));
+        assert_eq!(ctx.banks.get(&Identifier::new("default")).is_none(), true);
+        Ok(())
+    }
+
+    #[test]
     fn can_define_segments() -> CoreResult<()> {
         let ctx =
             test_codegen(".define segment {\nname = foo\nstart = 49152\nwrite = false\n}\nnop")?;
@@ -1555,7 +1509,7 @@ pub mod tests {
         let err = test_codegen(".define segment { foo = bar }").err().unwrap();
         assert_eq!(
             err.to_string(),
-            "test.asm:1:9: error: missing required fields: name, start\ntest.asm:1:19: error: field not allowed: foo"
+            "test.asm:1:9: error: missing required fields: name\ntest.asm:1:19: error: field not allowed: foo"
         );
     }
 
@@ -1916,28 +1870,6 @@ pub mod tests {
         let (_, err) = codegen(ast.clone(), CodegenOptions::default());
         assert_eq!(err.to_string(), "test.asm:141:1: error: branch too far");
         Ok(())
-    }
-
-    #[test]
-    fn can_emit_to_segment() {
-        let mut seg = Segment::new(SegmentOptions {
-            initial_pc: 0xc000.into(),
-            target_address: 0xb000.into(),
-            ..Default::default()
-        });
-        seg.emit(&[1, 2, 3]);
-        assert_eq!(seg.pc, 0xc003.into());
-        assert_eq!(seg.data[0xc000..0xc003], [1, 2, 3]);
-        assert_eq!(seg.range_data(), &[1, 2, 3]);
-        assert_eq!(seg.range(), 0xc000..0xc003);
-        assert_eq!(seg.target_offset(), -0x1000);
-
-        seg.pc = 0x2000.into();
-        seg.emit(&[4]);
-        assert_eq!(seg.pc, 0x2001.into());
-        assert_eq!(seg.data[0xc000..0xc003], [1, 2, 3]);
-        assert_eq!(seg.data[0x2000..0x2001], [4]);
-        assert_eq!(seg.range(), 0x2000..0xc003);
     }
 
     #[test]

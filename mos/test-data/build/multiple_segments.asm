@@ -9,14 +9,12 @@
 .define segment {
     name = b
     start = segments.a.end
-    filename = bc.seg
 }
 
 // Segment 'c' starts right after segment b
 .define segment {
     name = c
     start = segments.b.end
-    filename = bc.seg
 }
 
     lda data

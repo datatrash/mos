@@ -1,10 +1,12 @@
 use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
 use clap::App;
+use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
 use mos_core::codegen::{codegen, CodegenOptions};
 use mos_core::errors::map_io_error;
-use mos_core::io::{to_listing, to_vice_symbols, SegmentMerger};
+use mos_core::errors::Diagnostics;
+use mos_core::io::{to_listing, to_vice_symbols, Bank, BinaryWriter};
 use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
 use serde::Deserialize;
@@ -19,7 +21,7 @@ pub struct BuildOptions {
     pub target_directory: String,
     pub listing: bool,
     pub symbols: Vec<SymbolType>,
-    pub output_format: OutputFormat,
+    pub output_format: Option<OutputFormat>,
     pub output_filename: Option<String>,
 }
 
@@ -30,7 +32,7 @@ impl Default for BuildOptions {
             target_directory: "target".into(),
             listing: false,
             symbols: vec![],
-            output_format: OutputFormat::Prg,
+            output_format: None,
             output_filename: None,
         }
     }
@@ -41,7 +43,6 @@ impl Default for BuildOptions {
 pub enum OutputFormat {
     Prg,
     Bin,
-    BinSegments,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, EnumString)]
@@ -79,14 +80,26 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     }
     let generated_code = generated_code.unwrap();
 
-    let ext = match cfg.build.output_format {
-        OutputFormat::Prg => "prg",
-        OutputFormat::Bin | OutputFormat::BinSegments => "bin",
-    };
+    let output_format = cfg.build.output_format.unwrap_or_else(|| {
+        if generated_code.banks().len() == 1 {
+            OutputFormat::Prg
+        } else {
+            OutputFormat::Bin
+        }
+    });
+    if output_format == OutputFormat::Prg && generated_code.banks().len() != 1 {
+        return Err(Diagnostics::from(Diagnostic::error().with_message(
+                r#"A program with 'output-format = "prg" must contain a single bank only."#,
+            ).with_notes(vec![
+                "Tip: If you do not define one, a default bank will be automatically generated.".into()
+            ]))
+            .into());
+    }
 
-    // Do we want to ignore the segment filename and just group everything together into one file?
-    let merge_to_single_segment = cfg.build.output_format == OutputFormat::Prg
-        || cfg.build.output_format == OutputFormat::Bin;
+    let ext = match output_format {
+        OutputFormat::Prg => "prg",
+        OutputFormat::Bin => "bin",
+    };
 
     let filename = match cfg.build.output_filename.as_ref() {
         Some(f) => f.clone(),
@@ -96,33 +109,18 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             ext
         ),
     };
-    let output_path = target_dir.join(filename);
 
-    let mut merger = SegmentMerger::new(output_path);
-    for (segment_name, segment) in generated_code.segments() {
-        if segment.options().write {
-            merger.merge(segment_name, segment, merge_to_single_segment)?;
-        }
+    let mut bw = BinaryWriter {};
+    let mut banks = bw.merge_segments(&generated_code)?;
+
+    if output_format == OutputFormat::Prg {
+        // Add the two-byte PRG header as a first bank
+        let mut new_banks = vec![Bank::prg_header(banks[0].range().start)];
+        new_banks.extend(banks);
+        banks = new_banks;
     }
 
-    if merger.has_errors() {
-        return Err(merger.errors().into());
-    }
-
-    for (path, m) in merger.targets() {
-        log::trace!(
-            "Writing: (${:04x} - ${:04x})",
-            m.range().start,
-            m.range().end
-        );
-        log::trace!("Writing: {:?}", m.range_data());
-        let mut out = fs::File::create(target_dir.join(path)).map_err(map_io_error)?;
-        if cfg.build.output_format == OutputFormat::Prg {
-            out.write_all(&(m.range().start as u16).to_le_bytes())
-                .map_err(map_io_error)?;
-        }
-        out.write_all(&m.range_data()).map_err(map_io_error)?;
-    }
+    bw.write_banks(banks, &target_dir, &filename)?;
 
     if cfg.build.listing {
         for (source_path, contents) in
@@ -156,10 +154,8 @@ mod tests {
     use crate::commands::{build_command, BuildOptions, OutputFormat, SymbolType};
     use crate::config::Config;
     use anyhow::Result;
-    use fs_err::File;
     use itertools::Itertools;
     use std::ffi::OsStr;
-    use std::io::Read;
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
@@ -196,7 +192,7 @@ mod tests {
         let target = tempdir().unwrap();
         let entry = test_cli_build().join("valid.asm");
         let mut cfg = config(entry, target.path());
-        cfg.build.output_format = OutputFormat::Prg;
+        cfg.build.output_format = Some(OutputFormat::Prg);
         cfg.build.output_filename = Some("bob.foo".into());
         build_command(root().as_path(), &cfg)?;
 
@@ -212,34 +208,12 @@ mod tests {
         let target = tempdir().unwrap();
         let entry = test_cli_build().join("valid.asm");
         let mut cfg = config(entry, target.path());
-        cfg.build.output_format = OutputFormat::Bin;
+        cfg.build.output_format = Some(OutputFormat::Bin);
         build_command(root().as_path(), &cfg)?;
 
         let out_bytes = std::fs::read(target.path().join("valid.bin"))?;
         let prg_bytes = std::fs::read(test_cli_build().join("valid.prg"))?;
         assert_eq!(out_bytes, prg_bytes[2..]);
-
-        Ok(())
-    }
-
-    #[test]
-    fn can_invoke_bin_segments_build() -> Result<()> {
-        let target = tempdir()?;
-        let entry = test_cli_build().join("multiple_segments.asm");
-        let mut cfg = config(entry, target.path());
-        cfg.build.output_format = OutputFormat::BinSegments;
-        build_command(root().as_path(), &cfg)?;
-
-        assert!(target.path().join("a.bin").exists());
-        assert!(target.path().join("bc.seg").exists());
-
-        // 'bc.seg' should contain merged segments 'b' and 'c' containing NOP and ASL
-        let mut buffer = vec![];
-        File::open(target.path().join("bc.seg"))
-            .unwrap()
-            .read_to_end(&mut buffer)
-            .unwrap();
-        assert_eq!(buffer, vec![0xea, 0x0a]);
 
         Ok(())
     }

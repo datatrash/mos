@@ -196,11 +196,11 @@ For instance, to have a segment start where another segment ends, you could do s
 
 | Key | Type | Description |
 | --- | ---- | ----------- |
-| `name` | string | The name of a segment. It must be a valid identifier. |
+| `name` | string | The name of the segment. It must be a valid identifier. |
 | `start` | address | Where to place the resulting segment in memory. |
 | `pc` | address | Use a program counter that is different from `start`. See [below](#the-pc-option) for details. |
 | `write` | `true`, `false` | You can disable writing the contents of the segment to disk by setting `write` to `false` |
-| `filename` | string | The filename of the file the segment should be written to. Only applies when using the `bin-segments` output format. |
+| `bank` | string | The bank to assign the segment to (see [below](#banks) for details). |
 
 #### The `pc` option
 It is possible to change the program counter that is used when assembling, for example if the segment will later be relocated. The program counter to use can be set with `pc`.
@@ -215,3 +215,81 @@ For example:
 ```
 
 This segment will be assembled to `$4000` and onwards, but the assembled code will be assembled as if the code is located at `$8000` and onwards.
+
+## Banks
+Normally all segments will be merged before they are written to your output file. So, for instance, if your first segment is at $1000-$2000 and your second segment is at $8000-$8100 then your output file would be from $1000-$8100. There can be situations where you want more control over what your output looks like. For instance, when you want to write cartridge formats you need to include all kinds of headers. For this purpose you can define **banks**.
+
+Let's take an example where you first have a 64-byte header and then the rest of your program. You could define your banks like this:
+
+```asm6502
+.define bank {
+    name = header
+    size = 64
+    fill = 0
+}
+.define bank {
+    name = main
+}
+```
+
+The first bank (`header`) is defined to be exactly 64 bytes long, and if fewer bytes get emitted they will be padded with the fill-byte `0`.
+
+The second bank (`main`) has no size restrictions.
+
+::: warning
+The order in which you define the banks is the order in which they will appear in your final output!
+:::
+
+How do the banks know which data to emit, though? Well, you assign segments to banks.
+
+Let's extend the above example:
+```asm6502
+...bank definitions from above...
+
+.define segment {
+    name = my_header
+    bank = header
+}
+.define segment {
+    name = code
+    start = $1000
+}
+.define segment {
+    name = data
+    start = $4000
+}
+```
+
+As you can see, you can define your segments as usual except this time there is an additional `bank` parameter being set. We don't need to set it for the `code` and `data` segments: omitting the bank name will assign the segment to the `default` bank.
+
+To round it all up, let's write some data to the segments:
+
+```asm6502
+...bank and segment definitions from above...
+
+.segment my_header {
+    .byte 1, 5, 8
+}
+.segment code {
+    nop
+}
+.segment data {
+    .byte 1, 2, 3, 4
+}        
+```
+
+Based on all the configuration, your output file will now consist of a 64-byte header which contains the bytes `1, 5, 8` followed by zeroes. Then, there will be a NOP opcode, a bunch of zeroes to span the range `$1001-$3fff` and then the data segment will start which contains `1, 2, 3, 4`.
+
+Keep in mind that what we've called a `header` bank here is just the header because we've listed it first in our bank definitions. You can have as many banks as you want!
+
+### Limitations
+Banks are not available when you've set `build.output-format` in `mos.toml` to `prg`.
+
+### Available options
+
+| Key | Type | Description |
+| --- | ---- | ----------- |
+| `name` | string | The name of the bank. It must be a valid identifier. |
+| `size` | number | The size (in bytes) of the bank. If the bank is not exactly filled, you can choose to pad it with the `fill` byte. |
+| `fill` | byte | The byte to fill banks with that were not exactly filled up. |
+| `filename` | string | The filename of the file the bank should be written to. If you have multiple banks with different filenames then your build will generate multiple files as well. |

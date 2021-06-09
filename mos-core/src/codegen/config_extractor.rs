@@ -18,6 +18,17 @@ impl<'a> ConfigExtractor<'a> {
         self.try_get_path(key).map(|p| p.to_string())
     }
 
+    pub fn try_get_identifier(&self, key: &str) -> CoreResult<Option<Identifier>> {
+        match self.try_get_path(key) {
+            Some(mut path) if path.len() == 1 => Ok(path.pop_front()),
+            Some(path) if path.len() > 1 => Err(Diagnostic::error()
+                .with_message("expected single identifier")
+                .with_labels(vec![self.get_located_token(key).span.to_label()])
+                .into()),
+            _ => Ok(None),
+        }
+    }
+
     pub fn get_identifier(&self, key: &str) -> CoreResult<Identifier> {
         let path = self.get_path(key)?;
         match path.len() {
@@ -50,7 +61,7 @@ impl<'a> ConfigExtractor<'a> {
         match self.try_get_path(key) {
             Some(path) => Ok(path),
             None => Err(Diagnostic::error()
-                .with_message("expected identifier")
+                .with_message("expected identifier path")
                 .with_labels(vec![self.get_located_token(key).span.to_label()])
                 .into()),
         }
@@ -62,7 +73,7 @@ impl<'a> ConfigExtractor<'a> {
                 Token::Expression(expr) => {
                     Ok(ctx.evaluate_expression(&lt.map(|_| expr.clone()), true)?)
                 }
-                _ => Ok(None),
+                _ => Err(Diagnostic::error().into()),
             },
             None => Ok(None),
         }
