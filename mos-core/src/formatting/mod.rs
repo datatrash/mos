@@ -539,6 +539,9 @@ impl CodeFormatter {
             ExpressionFactor::Number { ty, value } => {
                 self.fmt(ty).fmt(value);
             }
+            ExpressionFactor::QuotedString(q) => {
+                self.fmt(q);
+            }
         }
     }
 

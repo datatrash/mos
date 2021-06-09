@@ -1,6 +1,6 @@
 use crate::codegen::CodegenContext;
 use crate::errors::CoreResult;
-use crate::parser::{Expression, ExpressionFactor, Identifier, IdentifierPath, Located, Token};
+use crate::parser::{Expression, Located, Token};
 use codespan_reporting::diagnostic::Diagnostic;
 
 pub struct ConfigExtractor<'a> {
@@ -14,68 +14,49 @@ impl<'a> ConfigExtractor<'a> {
         }
     }
 
-    pub fn try_get_string(&self, key: &str) -> Option<String> {
-        self.try_get_path(key).map(|p| p.to_string())
-    }
-
-    pub fn try_get_identifier(&self, key: &str) -> CoreResult<Option<Identifier>> {
-        match self.try_get_path(key) {
-            Some(mut path) if path.len() == 1 => Ok(path.pop_front()),
-            Some(path) if path.len() > 1 => Err(Diagnostic::error()
-                .with_message("expected single identifier")
-                .with_labels(vec![self.get_located_token(key).span.to_label()])
-                .into()),
-            _ => Ok(None),
+    pub fn get_string(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<String> {
+        if let Some(str) = self.try_get_string(ctx, key)? {
+            Ok(str)
+        } else {
+            Err(Diagnostic::error()
+                .with_message(format!("could not evaluate configuration key '{}'", key))
+                .into())
         }
     }
 
-    pub fn get_identifier(&self, key: &str) -> CoreResult<Identifier> {
-        let path = self.get_path(key)?;
-        match path.len() {
-            1 => Ok(path.first().unwrap().clone()),
-            _ => Err(Diagnostic::error()
-                .with_message("expected single identifier")
-                .with_labels(vec![self.get_located_token(key).span.to_label()])
-                .into()),
-        }
-    }
-
-    pub fn try_get_path(&self, key: &str) -> Option<IdentifierPath> {
-        let factor = match self.try_get_located_token(key) {
-            Some(lt) => match &lt.data {
-                Token::Expression(Expression::Factor { factor, .. }) => Some(&factor.data),
-                _ => None,
-            },
-            None => None,
-        };
-
-        factor
-            .map(|factor| match factor {
-                ExpressionFactor::IdentifierValue { path, .. } => Some(path.data.clone()),
-                _ => None,
-            })
-            .flatten()
-    }
-
-    pub fn get_path(&self, key: &str) -> CoreResult<IdentifierPath> {
-        match self.try_get_path(key) {
-            Some(path) => Ok(path),
-            None => Err(Diagnostic::error()
-                .with_message("expected identifier path")
-                .with_labels(vec![self.get_located_token(key).span.to_label()])
-                .into()),
+    pub fn try_get_string(
+        &self,
+        ctx: &mut CodegenContext,
+        key: &str,
+    ) -> CoreResult<Option<String>> {
+        match self.try_get_expression(key) {
+            Some(expr) => ctx.evaluate_expression_as_string(&expr, true),
+            None => Ok(None),
         }
     }
 
     pub fn try_get_i64(&self, ctx: &mut CodegenContext, key: &str) -> CoreResult<Option<i64>> {
-        match self.try_get_located_token(key) {
-            Some(lt) => match &lt.data {
-                Token::Expression(expr) => {
-                    Ok(ctx.evaluate_expression(&lt.map(|_| expr.clone()), true)?)
-                }
-                _ => Err(Diagnostic::error().into()),
-            },
+        match self.try_get_expression(key) {
+            Some(expr) => ctx.evaluate_expression_as_i64(&expr, true),
             None => Ok(None),
+        }
+    }
+
+    pub fn try_get_expression(&self, key: &str) -> Option<Located<Expression>> {
+        let expr = self.try_get_located_token(key).map(|lt| {
+            lt.map(|tok| match tok {
+                Token::Expression(expr) => Some(expr.clone()),
+                _ => None,
+            })
+        });
+
+        match expr {
+            Some(expr) if expr.data.is_some() => Some(Located::new_with_trivia(
+                expr.span,
+                expr.data.unwrap(),
+                expr.trivia,
+            )),
+            _ => None,
         }
     }
 
@@ -86,10 +67,5 @@ impl<'a> ConfigExtractor<'a> {
             }
         }
         None
-    }
-
-    fn get_located_token(&self, wanted: &str) -> &Located<Token> {
-        self.try_get_located_token(wanted)
-            .unwrap_or_else(|| panic!("Unknown key: {}", wanted))
     }
 }

@@ -285,10 +285,10 @@ mod tests {
         let target = tempdir().unwrap();
         let ctx = test_codegen(
             r#"
-        .define bank    { name = bank1 }
-        .define bank    { name = bank2      filename = foo.bin }
-        .define segment { name = a          bank = bank1 }
-        .define segment { name = b          bank = bank2 }
+        .define bank    { name = "bank1" }
+        .define bank    { name = "bank2"      filename = "foo.bin" }
+        .define segment { name = "a"          bank = "bank1" }
+        .define segment { name = "b"          bank = "bank2" }
         
         .segment a { .byte 1, 2, 3, 4 }
         .segment b { .byte 5, 6, 7 }
@@ -315,8 +315,8 @@ mod tests {
     fn respect_write_flag() -> CoreResult<()> {
         let ctx = test_codegen(
             r#"
-        .define segment { name = a }
-        .define segment { name = b write = false }
+        .define segment { name = "a" }
+        .define segment { name = "b" write = false }
         
         .segment a { .byte 1, 2, 3, 4 }
         .segment b { .byte 5, 6, 7 }
@@ -335,8 +335,8 @@ mod tests {
     fn respect_max_size() -> CoreResult<()> {
         let ctx = test_codegen(
             r#"
-        .define bank { name = bank size = 4 }
-        .define segment { name = a bank = bank }
+        .define bank { name = "bank" size = 4 }
+        .define segment { name = "a" bank = "bank" }
         
         .segment a { .byte 1, 2, 3, 4, 5 }
         "#,
@@ -379,13 +379,13 @@ mod tests {
 
     // This will first write header, then default (consisting of default_lo and default_hi), then header2
     const SOURCE: &str = r#"
-        .define bank    { name = header         size = 64               fill = 0 }
-        .define bank    { name = default }
-        .define bank    { name = header2 }
-        .define segment { name = header         bank = header }
-        .define segment { name = header2        bank = header2 }
-        .define segment { name = default_lo     bank = default          start = $2000 }
-        .define segment { name = default_hi     bank = default          start = $4000 }
+        .define bank    { name = "header"         size = 64               fill = 0 }
+        .define bank    { name = "default" }
+        .define bank    { name = "header2" }
+        .define segment { name = "header"         bank = "header" }
+        .define segment { name = "header2"        bank = "header2" }
+        .define segment { name = "default_lo"     bank = "default"          start = $2000 }
+        .define segment { name = "default_hi"     bank = "default"          start = $4000 }
 
         .segment header { .byte 1, 2, 3, 4 }
         .segment header2 { .byte 5, 6, 7 }

@@ -24,8 +24,8 @@ use crate::errors::{CoreResult, Diagnostics};
 use crate::io::BankOptions;
 use crate::parser::code_map::Span;
 use crate::parser::{
-    AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath, ImportArgs, Located,
-    Mnemonic, ParseTree, TextEncoding, Token, VariableType,
+    parse_expression, AddressingMode, Block, DataSize, Expression, Identifier, IdentifierPath,
+    ImportArgs, Located, Mnemonic, ParseTree, TextEncoding, Token, VariableType,
 };
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
@@ -64,6 +64,26 @@ impl Default for CodegenOptions {
 pub enum SymbolData {
     MacroDefinition(MacroDefinition),
     Number(i64),
+    /// A symbol that was defined to prevent 'undefined identifier' errors, but doesn't hold any data otherwise
+    Placeholder,
+    String(String),
+}
+
+impl ToString for SymbolData {
+    fn to_string(&self) -> String {
+        match self {
+            SymbolData::MacroDefinition(def) => def.id.data.to_string(),
+            SymbolData::Number(val) => val.to_string(),
+            SymbolData::Placeholder => "<placeholder>".into(),
+            SymbolData::String(str) => str.clone(),
+        }
+    }
+}
+
+impl From<MacroDefinition> for SymbolData {
+    fn from(val: MacroDefinition) -> Self {
+        Self::MacroDefinition(val)
+    }
 }
 
 impl From<i64> for SymbolData {
@@ -72,9 +92,15 @@ impl From<i64> for SymbolData {
     }
 }
 
-impl From<MacroDefinition> for SymbolData {
-    fn from(val: MacroDefinition) -> Self {
-        Self::MacroDefinition(val)
+impl From<bool> for SymbolData {
+    fn from(val: bool) -> Self {
+        Self::Number(if val { 1 } else { 0 })
+    }
+}
+
+impl From<String> for SymbolData {
+    fn from(val: String) -> Self {
+        Self::String(val)
     }
 }
 
@@ -89,6 +115,13 @@ impl SymbolData {
     pub fn try_as_i64(&self) -> Option<i64> {
         match &self {
             SymbolData::Number(val) => Some(*val),
+            _ => None,
+        }
+    }
+
+    pub fn try_as_str(&self) -> Option<&str> {
+        match &self {
+            SymbolData::String(val) => Some(val.as_str()),
             _ => None,
         }
     }
@@ -464,7 +497,7 @@ impl CodegenContext {
         match token {
             Token::Align { value, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    if let Some(align) = self.evaluate_expression(value, true)? {
+                    if let Some(align) = self.evaluate_expression_as_i64(value, true)? {
                         let padding = (align - (pc.as_i64() % align)) as usize;
                         let mut bytes = Vec::new();
                         bytes.resize(padding, 0u8);
@@ -493,7 +526,7 @@ impl CodegenContext {
             Token::Data { values, size } => {
                 let exprs = values.iter().map(|(expr, _comma)| expr).collect_vec();
                 for expr in exprs {
-                    if let Some(value) = self.evaluate_expression(expr, true)? {
+                    if let Some(value) = self.evaluate_expression_as_i64(expr, true)? {
                         let bytes = match &size.data {
                             DataSize::Byte => vec![value as u8],
                             DataSize::Word => (value as u16).to_le_bytes().to_vec(),
@@ -528,12 +561,12 @@ impl CodegenContext {
                                 .allowed("fill")
                                 .allowed("filename")
                                 .extract(id.span, &kvps)?;
-                            let name = extractor.get_identifier("name")?;
+                            let name = Identifier::new(extractor.get_string(self, "name")?);
 
                             let opts = BankOptions {
                                 size: extractor.try_get_i64(self, "size")?.map(|s| s as usize),
                                 fill: extractor.try_get_i64(self, "fill")?.map(|s| s as u8),
-                                filename: extractor.try_get_string("filename"),
+                                filename: extractor.try_get_string(self, "filename")?,
                             };
                             self.banks.insert(name, opts);
                         }
@@ -547,7 +580,7 @@ impl CodegenContext {
                                 .extract(id.span, &kvps)?;
 
                             let mut opts = SegmentOptions::default();
-                            let name = extractor.get_identifier("name")?;
+                            let name = Identifier::new(extractor.get_string(self, "name")?);
                             match extractor.try_get_i64(self, "start") {
                                 Ok(Some(val)) => {
                                     log::trace!(
@@ -573,16 +606,11 @@ impl CodegenContext {
                                     opts.initial_pc = 0.into();
                                 }
                             }
-                            if let Some(write) = extractor.try_get_string("write") {
-                                opts.write = write.parse().map_err(|_| {
-                                    vec![Diagnostic::error()
-                                        .with_message("could not parse boolean")
-                                        .with_labels(vec![id.span.to_label().with_message(
-                                            format!("expected boolean, found `{}`", write),
-                                        )])]
-                                })?;
+                            if let Some(write) = extractor.try_get_i64(self, "write")? {
+                                opts.write = write != 0;
                             }
-                            opts.bank = extractor.try_get_identifier("bank")?;
+                            opts.bank =
+                                extractor.try_get_string(self, "bank")?.map(Identifier::new);
                             match extractor.try_get_i64(self, "pc")? {
                                 Some(target) => opts.target_address = target.into(),
                                 None => opts.target_address = opts.initial_pc,
@@ -624,7 +652,7 @@ impl CodegenContext {
             Token::If {
                 value, if_, else_, ..
             } => {
-                if let Some(value) = self.evaluate_expression(value, true)? {
+                if let Some(value) = self.evaluate_expression_as_i64(value, true)? {
                     if value != 0 {
                         self.emit_tokens(&if_.inner)?;
                     } else if let Some(e) = else_ {
@@ -766,10 +794,12 @@ impl CodegenContext {
                 }
 
                 let data = match &i.operand {
-                    Some(op) => self.evaluate_expression(&op.expr, true)?.map(|value| {
-                        let register_suffix = op.suffix.as_ref().map(|s| s.register.data);
-                        (value, op.addressing_mode, register_suffix)
-                    }),
+                    Some(op) => self
+                        .evaluate_expression_as_i64(&op.expr, true)?
+                        .map(|value| {
+                            let register_suffix = op.suffix.as_ref().map(|s| s.register.data);
+                            (value, op.addressing_mode, register_suffix)
+                        }),
                     None => Some((0, AddressingMode::Implied, None)),
                 };
 
@@ -846,7 +876,7 @@ impl CodegenContext {
                 block,
                 ..
             } => {
-                if let Some(loop_count) = self.evaluate_expression(expr, true)? {
+                if let Some(loop_count) = self.evaluate_expression_as_i64(expr, true)? {
                     for index in 0..loop_count {
                         self.with_scope(loop_scope, Some(block), |s| {
                             s.add_symbol(
@@ -906,7 +936,9 @@ impl CodegenContext {
 
                             // Regardless if evaluation succeeds, we should create the macro argument symbol here, because
                             // it will be undefined otherwise
-                            let value = s.evaluate_expression(expr, true)?.unwrap_or_default();
+                            let value = s
+                                .evaluate_expression(expr, true)?
+                                .unwrap_or(SymbolData::Placeholder);
                             s.add_symbol(
                                 &arg_name.data,
                                 s.symbol(arg_name.span, value, SymbolType::MacroArgument),
@@ -931,7 +963,7 @@ impl CodegenContext {
                 }
             }
             Token::ProgramCounterDefinition { value, .. } => {
-                if let Some(pc) = self.evaluate_expression(value, true)? {
+                if let Some(pc) = self.evaluate_expression_as_i64(value, true)? {
                     if let Some(seg) = self.try_current_segment_mut() {
                         seg.set_pc(pc);
                     }
@@ -986,7 +1018,10 @@ impl CodegenContext {
                     .as_ref()
                     .map(|e| e.data)
                     .unwrap_or(TextEncoding::Ascii);
-                self.emit(text.text.span, &encode_text(&text.text.data, encoding))?;
+
+                if let Some(eval) = self.evaluate_expression_as_string(text, true)? {
+                    self.emit(text.span, &encode_text(&eval, encoding))?;
+                }
             }
             Token::Trace { args, .. } => {
                 if self.try_current_target_pc().is_some() && self.options.active_test.is_some() {
@@ -1025,7 +1060,7 @@ impl CodegenContext {
         &mut self,
         expr: &Located<Expression>,
         track_usage: bool,
-    ) -> CoreResult<Option<i64>> {
+    ) -> CoreResult<Option<SymbolData>> {
         let ctx = self.get_evaluator();
         let result = ctx
             .evaluate_expression(expr, track_usage)
@@ -1049,6 +1084,62 @@ impl CodegenContext {
             }
         }
         Ok(result)
+    }
+
+    pub fn evaluate_expression_as_i64(
+        &mut self,
+        expr: &Located<Expression>,
+        track_usage: bool,
+    ) -> CoreResult<Option<i64>> {
+        let result = self.evaluate_expression(expr, track_usage)?;
+        match result {
+            Some(data) => match data {
+                SymbolData::Number(n) => Ok(Some(n)),
+                _ => Err(Diagnostic::error()
+                    .with_message(format!("'{}' does not evaluate to an integer", &expr.data))
+                    .with_labels(vec![expr.span.to_label()])
+                    .into()),
+            },
+            None => Ok(None),
+        }
+    }
+
+    /// Also deals with the interpolation of any symbols delimited with {}
+    pub fn evaluate_expression_as_string(
+        &mut self,
+        expr: &Located<Expression>,
+        track_usage: bool,
+    ) -> CoreResult<Option<String>> {
+        let result = self.evaluate_expression(expr, track_usage)?;
+        match result {
+            Some(result) => match result.try_as_str() {
+                Some(d) => {
+                    // Perform string interpolation
+                    let mut str = d.to_string();
+                    while let Some(lbracket) = str.find('{') {
+                        let (_, rest) = str.split_at(lbracket + 1);
+                        if let Some(rbracket) = rest.find('}') {
+                            let (to_interpolate, _) = rest.split_at(rbracket);
+                            let mut expr = parse_expression(to_interpolate)?;
+                            expr.span = expr.span.subspan(lbracket as u64, rbracket as u64);
+                            let interpolated = self
+                                .evaluate_expression_as_string(&expr, true)?
+                                .unwrap_or_default();
+                            str = str.replace(&format!("{{{}}}", to_interpolate), &interpolated);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    Ok(Some(str))
+                }
+                None => Err(Diagnostic::error()
+                    .with_message(format!("'{}' does not evaluate to a string", &expr.data))
+                    .with_labels(vec![expr.span.to_label()])
+                    .into()),
+            },
+            None => Ok(None),
+        }
     }
 
     fn symbol_definition(&mut self, symbol_nx: SymbolIndex) -> &mut Definition {
@@ -1113,17 +1204,17 @@ impl CodegenContext {
                 &mut self,
                 ctx: &Evaluator,
                 args: &[&Located<Expression>],
-            ) -> EvaluationResult<Option<i64>> {
+            ) -> EvaluationResult<Option<SymbolData>> {
                 let expr = args.first().unwrap();
                 match ctx.evaluate_expression(expr, false) {
                     Ok(result) => {
                         if result.is_some() {
-                            Ok(Some(1))
+                            Ok(Some(1.into()))
                         } else {
-                            Ok(Some(0))
+                            Ok(Some(0.into()))
                         }
                     }
-                    Err(_) => Ok(Some(0)),
+                    Err(_) => Ok(Some(0.into())),
                 }
             }
         }
@@ -1391,7 +1482,7 @@ pub mod tests {
     #[test]
     fn can_define_banks() -> CoreResult<()> {
         let ctx = test_codegen(
-            ".define bank {\nname = foo\nsize = 8192\nfill = 123\nfilename = foo.bin}\nnop",
+            ".define bank {\nname = \"foo\"\nsize = 8192\nfill = 123\nfilename = \"foo.bin\"}\nnop",
         )?;
         let bank = ctx.banks.get(&Identifier::new("foo")).unwrap();
         assert_eq!(bank.size, Some(8192));
@@ -1402,9 +1493,19 @@ pub mod tests {
     }
 
     #[test]
-    fn can_define_segments() -> CoreResult<()> {
+    fn can_define_banks_with_string_interpolation() -> CoreResult<()> {
         let ctx =
-            test_codegen(".define segment {\nname = foo\nstart = 49152\nwrite = false\n}\nnop")?;
+            test_codegen(".macro def(NAME) { .define bank { name = NAME }}\ndef(\"foo\")\nnop")?;
+        assert_eq!(ctx.banks.get(&Identifier::new("foo")).is_some(), true);
+        assert_eq!(ctx.banks.get(&Identifier::new("default")).is_none(), true);
+        Ok(())
+    }
+
+    #[test]
+    fn can_define_segments() -> CoreResult<()> {
+        let ctx = test_codegen(
+            ".define segment {\nname = \"foo\"\nstart = 49152\nwrite = false\n}\nnop",
+        )?;
         assert_eq!(ctx.get_segment("foo").range(), 0xc000..0xc001);
         assert_eq!(ctx.get_segment("foo").range_data(), vec![0xea]);
         assert_eq!(ctx.get_segment("foo").options().write, false);
@@ -1415,15 +1516,15 @@ pub mod tests {
     #[test]
     fn can_use_segments() -> CoreResult<()> {
         let ctx = test_codegen(
-            r"
-                .define segment { name = a start = $1000 }
-                .define segment { name = b start = $2000 }
+            r#"
+                .define segment { name = "a" start = $1000 }
+                .define segment { name = "b" start = $2000 }
                 nop
                 .segment b
                 rol
                 .segment a
                 asl
-                ",
+                "#,
         )?;
         assert_eq!(ctx.get_segment("a").range_data(), vec![0xea, 0x0a]);
         assert_eq!(ctx.get_segment("b").range_data(), vec![0x2a]);
@@ -1433,11 +1534,11 @@ pub mod tests {
     #[test]
     fn segment_targets() -> CoreResult<()> {
         let ctx = test_codegen(
-            r"
-                .define segment { name = a start = $1000 pc = $4000 }
+            r#"
+                .define segment { name = "a" start = $1000 pc = $4000 }
                 lda data
                 data: nop
-                ",
+                "#,
         )?;
         assert_eq!(
             ctx.get_segment("a").range_data(),
@@ -1448,7 +1549,7 @@ pub mod tests {
 
     #[test]
     fn cannot_exceed_range() {
-        let err = test_codegen(".define segment { name = a start = $ffff }\nnop\nnop")
+        let err = test_codegen(".define segment { name = \"a\" start = $ffff }\nnop\nnop")
             .err()
             .unwrap();
         assert_eq!(
@@ -1460,13 +1561,13 @@ pub mod tests {
     #[test]
     fn can_use_scoped_segments() -> CoreResult<()> {
         let ctx = test_codegen(
-            r"
-                .define segment { name = a start = $1000 }
-                .define segment { name = b start = $2000 }
+            r#"
+                .define segment { name = "a" start = $1000 }
+                .define segment { name = "b" start = $2000 }
                 nop
                 .segment b { rol }
                 asl
-                ",
+                "#,
         )?;
         assert_eq!(ctx.get_segment("a").range_data(), vec![0xea, 0x0a]);
         assert_eq!(ctx.get_segment("b").range_data(), vec![0x2a]);
@@ -1478,13 +1579,13 @@ pub mod tests {
         // segment b can access 'bar' since it is in a root scope
         // segment a can access 'foo' since it is in a segment scope
         let ctx = test_codegen(
-            r"
-                .define segment { name = a start = $1000 }
-                .define segment { name = b start = $2000 }
+            r#"
+                .define segment { name = "a" start = $1000 }
+                .define segment { name = "b" start = $2000 }
                 lda foo
                 .segment b { foo: lda bar }
                 bar: nop
-                ",
+                "#,
         )?;
 
         assert_eq!(
@@ -1516,17 +1617,17 @@ pub mod tests {
     #[test]
     fn segments_can_depend_on_each_other() -> CoreResult<()> {
         let ctx = test_codegen(
-            r"
-                .define segment { name = a start = $1000 }
-                .define segment { name = b start = segments.a.end }
-                .define segment { name = c start = segments.b.end }
+            r#"
+                .define segment { name = "a" start = $1000 }
+                .define segment { name = "b" start = segments.a.end }
+                .define segment { name = "c" start = segments.b.end }
                 lda data
                 nop
                 .segment b { rol }
                 .segment c { lsr }
                 asl
                 data: .byte 1
-                ",
+                "#,
         )?;
         assert_eq!(ctx.get_segment("a").range(), 0x1000..0x1006);
         assert_eq!(ctx.get_segment("b").range(), 0x1006..0x1007);
@@ -1541,7 +1642,7 @@ pub mod tests {
     }
 
     #[test]
-    fn can_use_constants() -> CoreResult<()> {
+    fn can_use_numeric_constants() -> CoreResult<()> {
         let ctx = test_codegen(".const foo=49152\nlda #>foo")?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 0xc0]);
 
@@ -1551,6 +1652,26 @@ pub mod tests {
         let ctx =
             test_codegen(".const foo = 32768\n.if !defined(foo) { .const foo=49152 }\nlda #>foo")?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xa9, 0x80]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn strings() -> CoreResult<()> {
+        let ctx = test_codegen(".const foo = \"hi\"\n.text foo")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0x68, 0x69]);
+
+        let ctx = test_codegen(".const a = \"hi\"\n.const b = \"ho\"\n.text a + b")?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0x68, 0x69, 0x68, 0x6f]
+        );
+
+        let ctx = test_codegen(".const a = \"hi\"\n.const b = \"{a}ho\"\n.text b")?;
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0x68, 0x69, 0x68, 0x6f]
+        );
 
         Ok(())
     }

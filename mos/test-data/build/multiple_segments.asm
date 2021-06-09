@@ -1,19 +1,19 @@
 // Segment 'a' is assembled as if it is run from $4000, but it is stored in the target from $1000
 .define segment {
-    name = a
+    name = "a"
     start = $1000
     pc = $4000
 }
 
 // Segment 'b' starts right after segment a
 .define segment {
-    name = b
+    name = "b"
     start = segments.a.end
 }
 
 // Segment 'c' starts right after segment b
 .define segment {
-    name = c
+    name = "c"
     start = segments.b.end
 }
 

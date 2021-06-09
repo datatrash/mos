@@ -281,35 +281,6 @@ pub enum BinaryOp {
     Or,
 }
 
-impl BinaryOp {
-    pub fn apply(&self, lhs: i64, rhs: i64) -> i64 {
-        match self {
-            BinaryOp::Add => lhs + rhs,
-            BinaryOp::Sub => lhs - rhs,
-            BinaryOp::Mul => lhs * rhs,
-            BinaryOp::Div => match rhs {
-                0 => 0,
-                _ => lhs / rhs,
-            },
-            BinaryOp::Mod => match rhs {
-                0 => 0,
-                _ => lhs % rhs,
-            },
-            BinaryOp::Shl => lhs << rhs,
-            BinaryOp::Shr => lhs >> rhs,
-            BinaryOp::Xor => lhs ^ rhs,
-            BinaryOp::Eq => (lhs == rhs) as i64,
-            BinaryOp::Ne => (lhs != rhs) as i64,
-            BinaryOp::Gt => (lhs > rhs) as i64,
-            BinaryOp::GtEq => (lhs >= rhs) as i64,
-            BinaryOp::Lt => (lhs < rhs) as i64,
-            BinaryOp::LtEq => (lhs <= rhs) as i64,
-            BinaryOp::And => (lhs != 0 && rhs != 0) as i64,
-            BinaryOp::Or => (lhs != 0 || rhs != 0) as i64,
-        }
-    }
-}
-
 impl Display for BinaryOp {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match &self {
@@ -364,6 +335,7 @@ pub enum ExpressionFactor {
         ty: Located<NumberType>,
         value: Located<Number>,
     },
+    QuotedString(QuotedString),
 }
 
 /// A wrapper that stores the original number string and its radix, so that any zero-prefixes are kept
@@ -381,7 +353,11 @@ impl Display for Number {
 
 impl Number {
     pub fn value(&self) -> i64 {
-        i64::from_str_radix(&self.data, self.radix).ok().unwrap()
+        match self.data.as_str() {
+            "true" => 1,
+            "false" => 0,
+            _ => i64::from_str_radix(&self.data, self.radix).ok().unwrap(),
+        }
     }
 
     pub fn from_type<S: AsRef<str>>(ty: NumberType, data: S) -> Self {
@@ -640,7 +616,7 @@ pub enum Token {
     Text {
         tag: Located<String>,
         encoding: Option<Located<TextEncoding>>,
-        text: QuotedString,
+        text: Located<Expression>,
     },
     Trace {
         tag: Located<String>,
@@ -805,6 +781,7 @@ impl Display for ExpressionFactor {
                 write!(f, "{}{}", modifier, path)
             }
             Self::Number { ty, value } => write!(f, "{}{}", ty, value),
+            Self::QuotedString(q) => write!(f, "{}", q),
         }
     }
 }

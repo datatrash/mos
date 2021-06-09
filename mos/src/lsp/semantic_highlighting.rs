@@ -350,7 +350,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             }
         }
         Token::Test { tag: _, id, block } => b.identifier(id).block(block),
-        Token::Text { tag: _, text, .. } => b.push(&text.text, TokenType::Constant),
+        Token::Text { tag: _, text, .. } => b.expression(&text.data),
         Token::Trace { args, .. } => b.expression_args(args),
         Token::VariableDefinition { ty, id, value, .. } => {
             let token_type = match &ty.data {
@@ -370,6 +370,7 @@ fn emit_expression_semantic(expression: &Expression) -> SemTokBuilder {
         Expression::Factor { factor, .. } => match &factor.data {
             ExpressionFactor::ExprParens { inner, .. } => emit_expression_semantic(&inner.data),
             ExpressionFactor::Number { .. } => SemTokBuilder::new(),
+            ExpressionFactor::QuotedString(_) => SemTokBuilder::new(),
             ExpressionFactor::IdentifierValue { path, .. } => SemTokBuilder::new().identifier(path),
             ExpressionFactor::CurrentProgramCounter(pc) => {
                 SemTokBuilder::new().push(pc, TokenType::Constant)

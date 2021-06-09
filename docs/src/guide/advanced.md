@@ -155,12 +155,12 @@ Let's say we want to assemble some code to `$c000` and some data to `$2000`. We 
 
 ```asm6502
 .define segment {
-    name = code
+    name = "code"
     start = $c000
 }
 
 .define segment {
-    name = data
+    name = "data"
     start = $2000
 }
 
@@ -182,12 +182,12 @@ For instance, to have a segment start where another segment ends, you could do s
 
 ```asm6502
 .define segment {
-    name = code
+    name = "code"
     start = $c000
 }
 
 .define segment {
-    name = data
+    name = "data"
     start = segments.code.start
 }
 ```
@@ -208,7 +208,7 @@ It is possible to change the program counter that is used when assembling, for e
 For example:
 ```asm6502
 .define segment {
-    name = to_relocate
+    name = "to_relocate"
     start = $4000
     pc = $8000
 }
@@ -223,12 +223,12 @@ Let's take an example where you first have a 64-byte header and then the rest of
 
 ```asm6502
 .define bank {
-    name = header
+    name = "header"
     size = 64
     fill = 0
 }
 .define bank {
-    name = main
+    name = "main"
 }
 ```
 
@@ -247,15 +247,15 @@ Let's extend the above example:
 ...bank definitions from above...
 
 .define segment {
-    name = my_header
+    name = "my_header"
     bank = header
 }
 .define segment {
-    name = code
+    name = "code"
     start = $1000
 }
 .define segment {
-    name = data
+    name = "data"
     start = $4000
 }
 ```

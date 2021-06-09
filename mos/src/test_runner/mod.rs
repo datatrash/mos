@@ -6,7 +6,7 @@ use codespan_reporting::diagnostic::Diagnostic;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
-    codegen, Assertion, CodegenContext, CodegenOptions, SymbolType, TestElement, Trace,
+    codegen, Assertion, CodegenContext, CodegenOptions, SymbolData, SymbolType, TestElement, Trace,
 };
 use mos_core::errors::Diagnostics;
 use mos_core::parser;
@@ -289,7 +289,7 @@ impl TestRunner {
                 .evaluate_expression(&assertion.expr, false)
                 .ok()
                 .flatten();
-            if eval_result == Some(0) || eval_result.is_none() {
+            if eval_result == Some(SymbolData::Number(0)) || eval_result.is_none() {
                 let message = assertion.failure_message.clone().unwrap_or_else(|| {
                     let expr = format!("{}", &assertion.expr.data).trim().to_string();
                     format!("assertion failed: {}", expr)
@@ -392,14 +392,15 @@ fn format_trace(trace: Trace, ctx: &CodegenContext) -> String {
         let value = evaluator.evaluate_expression(expr, false).ok().flatten();
 
         let value = match value {
-            Some(value) => {
+            Some(SymbolData::Number(value)) => {
                 if value < 256 {
                     format!("${:02X}", value)
                 } else {
                     format!("${:04X}", value)
                 }
             }
-            None => "<unknown>".into(),
+            Some(SymbolData::String(str)) => str.clone(),
+            _ => "<unknown>".into(),
         };
         eval.push(format!("{} = {}", &expr.data, value));
     }

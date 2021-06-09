@@ -1,7 +1,8 @@
-use crate::codegen::{ProgramCounter, Symbol, SymbolIndex, SymbolTable};
+use crate::codegen::{ProgramCounter, Symbol, SymbolData, SymbolIndex, SymbolTable};
 use crate::parser::code_map::Span;
 use crate::parser::{
-    AddressModifier, Expression, ExpressionFactor, ExpressionFactorFlags, IdentifierPath, Located,
+    AddressModifier, BinaryOp, Expression, ExpressionFactor, ExpressionFactorFlags, IdentifierPath,
+    Located,
 };
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -23,7 +24,7 @@ pub trait FunctionCallback {
         &mut self,
         ctx: &Evaluator,
         args: &[&Located<Expression>],
-    ) -> EvaluationResult<Option<i64>>;
+    ) -> EvaluationResult<Option<SymbolData>>;
 }
 
 pub struct Evaluator<'a> {
@@ -54,6 +55,44 @@ impl SymbolSnapshot {
             functions,
             Some(self.pc),
         )
+    }
+}
+
+impl BinaryOp {
+    fn apply_i64(&self, lhs: i64, rhs: i64) -> i64 {
+        match self {
+            BinaryOp::Add => lhs + rhs,
+            BinaryOp::Sub => lhs - rhs,
+            BinaryOp::Mul => lhs * rhs,
+            BinaryOp::Div => match rhs {
+                0 => 0,
+                _ => lhs / rhs,
+            },
+            BinaryOp::Mod => match rhs {
+                0 => 0,
+                _ => lhs % rhs,
+            },
+            BinaryOp::Shl => lhs << rhs,
+            BinaryOp::Shr => lhs >> rhs,
+            BinaryOp::Xor => lhs ^ rhs,
+            BinaryOp::Eq => (lhs == rhs) as i64,
+            BinaryOp::Ne => (lhs != rhs) as i64,
+            BinaryOp::Gt => (lhs > rhs) as i64,
+            BinaryOp::GtEq => (lhs >= rhs) as i64,
+            BinaryOp::Lt => (lhs < rhs) as i64,
+            BinaryOp::LtEq => (lhs <= rhs) as i64,
+            BinaryOp::And => (lhs != 0 && rhs != 0) as i64,
+            BinaryOp::Or => (lhs != 0 || rhs != 0) as i64,
+        }
+    }
+
+    fn try_apply_str(&self, lhs: String, rhs: String) -> Option<SymbolData> {
+        match self {
+            BinaryOp::Add => Some((lhs + rhs.as_str()).into()),
+            BinaryOp::Eq => Some((lhs == rhs).into()),
+            BinaryOp::Ne => Some((lhs != rhs).into()),
+            _ => None,
+        }
     }
 }
 
@@ -116,23 +155,26 @@ impl<'a> Evaluator<'a> {
         &self,
         expr: &Located<Expression>,
         track_usage: bool,
-    ) -> EvaluationResult<Option<i64>> {
+    ) -> EvaluationResult<Option<SymbolData>> {
         match &expr.data {
             Expression::Factor { factor, flags, .. } => {
                 match self.evaluate_expression_factor(factor, track_usage)? {
-                    Some(mut value) => {
-                        if flags.contains(ExpressionFactorFlags::NOT) {
-                            if value == 0 {
-                                value = 1
-                            } else {
-                                value = 0
+                    Some(value) => match value {
+                        SymbolData::Number(mut number) => {
+                            if flags.contains(ExpressionFactorFlags::NOT) {
+                                if number == 0 {
+                                    number = 1
+                                } else {
+                                    number = 0
+                                }
                             }
+                            if flags.contains(ExpressionFactorFlags::NEG) {
+                                number = -number;
+                            }
+                            Ok(Some(number.into()))
                         }
-                        if flags.contains(ExpressionFactorFlags::NEG) {
-                            value = -value;
-                        }
-                        Ok(Some(value))
-                    }
+                        _ => Ok(Some(value)),
+                    },
                     None => Ok(None),
                 }
             }
@@ -140,7 +182,21 @@ impl<'a> Evaluator<'a> {
                 let lhs = self.evaluate_expression(&bin.lhs, track_usage)?;
                 let rhs = self.evaluate_expression(&bin.rhs, track_usage)?;
                 match (lhs, rhs) {
-                    (Some(lhs), Some(rhs)) => Ok(Some(bin.op.data.apply(lhs, rhs))),
+                    (Some(SymbolData::Number(lhs)), Some(SymbolData::Number(rhs))) => {
+                        Ok(Some(bin.op.data.apply_i64(lhs, rhs).into()))
+                    }
+                    (Some(SymbolData::String(lhs)), Some(SymbolData::String(rhs))) => {
+                        match bin.op.data.try_apply_str(lhs, rhs) {
+                            Some(result) => Ok(Some(result)),
+                            None => Err(EvaluationError {
+                                span: bin.op.span,
+                                message: format!(
+                                    "cannot apply operation '{}' on strings",
+                                    bin.op.data
+                                ),
+                            }),
+                        }
+                    }
                     _ => Ok(None),
                 }
             }
@@ -151,10 +207,10 @@ impl<'a> Evaluator<'a> {
         &self,
         factor: &Located<ExpressionFactor>,
         track_usage: bool,
-    ) -> EvaluationResult<Option<i64>> {
+    ) -> EvaluationResult<Option<SymbolData>> {
         match &factor.data {
             ExpressionFactor::CurrentProgramCounter(_) => {
-                Ok(Some(self.pc.unwrap_or_default().as_i64()))
+                Ok(Some(self.pc.unwrap_or_default().as_i64().into()))
             }
             ExpressionFactor::ExprParens { inner, .. } => {
                 self.evaluate_expression(inner, track_usage)
@@ -181,15 +237,22 @@ impl<'a> Evaluator<'a> {
                     });
                 }
 
-                Ok(symbol_data.and_then(|d| d.try_as_i64()).map(|val| {
-                    match modifier.as_ref().map(|m| &m.data) {
-                        Some(AddressModifier::LowByte) => val & 255,
-                        Some(AddressModifier::HighByte) => (val >> 8) & 255,
-                        _ => val,
+                Ok(symbol_data.and_then(|data| match data {
+                    SymbolData::MacroDefinition(_) => None,
+                    SymbolData::Number(val) => {
+                        let result = match modifier.as_ref().map(|m| &m.data) {
+                            Some(AddressModifier::LowByte) => val & 255,
+                            Some(AddressModifier::HighByte) => (val >> 8) & 255,
+                            _ => *val,
+                        };
+                        Some(SymbolData::Number(result))
                     }
+                    SymbolData::String(q) => Some(SymbolData::String(q.clone())),
+                    SymbolData::Placeholder => None,
                 }))
             }
-            ExpressionFactor::Number { value: number, .. } => Ok(Some(number.data.value())),
+            ExpressionFactor::Number { value: number, .. } => Ok(Some(number.data.value().into())),
+            ExpressionFactor::QuotedString(q) => Ok(Some(SymbolData::String(q.text.data.clone()))),
         }
     }
 

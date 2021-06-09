@@ -1,4 +1,6 @@
-use mos_core::codegen::{CodegenContext, EvaluationResult, Evaluator, FunctionCallback};
+use mos_core::codegen::{
+    CodegenContext, EvaluationResult, Evaluator, FunctionCallback, SymbolData,
+};
 use mos_core::parser::{Expression, Located};
 use std::sync::{Arc, Mutex};
 
@@ -27,9 +29,11 @@ pub fn ensure_ram_fn(
             &mut self,
             ctx: &Evaluator,
             args: &[&Located<Expression>],
-        ) -> EvaluationResult<Option<i64>> {
+        ) -> EvaluationResult<Option<SymbolData>> {
             let arg = args.first().unwrap();
-            let address = ctx.evaluate_expression(arg, false)?;
+            let address = ctx
+                .evaluate_expression(arg, false)?
+                .and_then(|d| d.try_as_i64());
             let val = address.and_then(|a| {
                 let len = if self.word { 2 } else { 1 };
                 let bytes = self.memory_accessor.lock().unwrap().read(a as u16, len);
@@ -44,7 +48,7 @@ pub fn ensure_ram_fn(
                     bytes.get(0).map(|b| *b as i64)
                 }
             });
-            Ok(val)
+            Ok(val.map(SymbolData::Number))
         }
     }
 

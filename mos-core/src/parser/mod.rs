@@ -110,23 +110,6 @@ where
     }
 }
 
-/// If parsing fails, try to continue but log the error in the parser's [State]. Eat the following error.
-fn expect_and_eat<'a, F, E, T>(
-    parser: F,
-    error_msg: E,
-) -> impl FnMut(LocatedSpan<'a>) -> IResult<'a, Option<T>>
-where
-    F: FnMut(LocatedSpan<'a>) -> IResult<'a, T>,
-    E: ToString,
-{
-    let mut e = expect(parser, error_msg);
-    move |input| {
-        let (input, result) = e(input)?;
-        input.extra.shared_state().ignore_next_error();
-        Ok((input, result))
-    }
-}
-
 /// Handles a comment in the C++ style, e.g. `// foo"`
 fn cpp_comment(input: LocatedSpan) -> IResult<LocatedSpan> {
     recognize(pair(tag("//"), is_not("\n\r")))(input)
@@ -740,21 +723,22 @@ fn text(input: LocatedSpan) -> IResult<Token> {
     map_once(
         tuple((
             mws(tag_no_case(".text")),
-            expect_and_eat(
-                ws(alt((
-                    map(tag_no_case("ascii"), |_| TextEncoding::Ascii),
-                    map(tag_no_case("petscii"), |_| TextEncoding::Petscii),
-                    map(tag_no_case("petscreen"), |_| TextEncoding::Petscreen),
-                    map(not(alphanumeric1), |_| {
-                        // If there are no characters, then we leave it to 'unspecified'
-                        TextEncoding::Unspecified
-                    }),
-                ))),
-                "unknown text encoding",
-            ),
-            quoted_string,
+            alt((
+                map(
+                    tuple((
+                        ws(alt((
+                            map(tag_no_case("ascii"), |_| TextEncoding::Ascii),
+                            map(tag_no_case("petscii"), |_| TextEncoding::Petscii),
+                            map(tag_no_case("petscreen"), |_| TextEncoding::Petscreen),
+                        ))),
+                        expression,
+                    )),
+                    |(encoding, text)| (Some(encoding), text),
+                ),
+                map(expression, |expr| (None, expr)),
+            )),
         )),
-        |(tag, encoding, text)| {
+        |(tag, (encoding, text))| {
             let tag = tag.map_into(|_| ".text".to_string());
             Token::Text {
                 tag,
@@ -782,6 +766,11 @@ fn quoted_string(input: LocatedSpan) -> IResult<QuotedString> {
         tuple((ws(char('"')), located(string), char('"'))),
         move |(lquote, text, _)| QuotedString { lquote, text },
     )(input)
+}
+
+/// Tries to parse a quoted string as part of an expression
+fn quoted_string_factor(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
+    located(map(quoted_string, ExpressionFactor::QuotedString))(input)
 }
 
 /// Tries to parse a test directive, of the form `.test test_identifier {}`
@@ -898,6 +887,14 @@ fn number(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                     located(|input| value(NumberType::Dec)(input)),
                     ws(recognize(many1(is_a("0123456789")))),
                 )),
+                tuple((
+                    located(|input| value(NumberType::Dec)(input)),
+                    ws(tag_no_case("true")),
+                )),
+                tuple((
+                    located(|input| value(NumberType::Dec)(input)),
+                    ws(tag_no_case("false")),
+                )),
             )),
             move |(ty, value)| {
                 let loc = value.span;
@@ -1001,6 +998,7 @@ fn expression_factor_inner(input: LocatedSpan) -> IResult<Located<ExpressionFact
         identifier_value,
         current_pc,
         expression_parens,
+        quoted_string_factor,
     ))(input)
 }
 
@@ -1264,6 +1262,7 @@ mod test {
             "lda  %11101   +   (  $ff  * -12367 ) / foo",
             "LDA  %11101   +   (  $ff  * -12367 ) / foo",
         );
+        check("lda  \"foo\"", "LDA  \"foo\"");
     }
 
     #[test]
@@ -1310,6 +1309,7 @@ mod test {
         check(".macro foo() { nop }", ".MACRO foo() { NOP }");
         check(".macro foo(val) { nop }", ".MACRO foo(val) { NOP }");
         check("foo()", "foo()");
+        check("foo(1, \"bar\")", "foo(1, \"bar\")");
     }
 
     #[test]
@@ -1481,10 +1481,12 @@ mod test {
             "   .TEXT   PETSCREEN \"blah\"",
         );
         check("   .text    \"blah\"", "   .TEXT    \"blah\"");
-        check_err(
-            "   .text   fartscii  \"blah\"",
-            "test.asm:1:9: error: unknown text encoding",
+
+        check(
+            "   .text    ascii some_identifier",
+            "   .TEXT    ASCII some_identifier",
         );
+        check("   .text    some_identifier", "   .TEXT    some_identifier");
     }
 
     #[test]
