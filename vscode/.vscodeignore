@@ -1,5 +1,7 @@
 **
 !language-configuration.json
+!syntaxes
+!syntaxes/asm.tmLanguage.json
 !out/extension.js
 !out/MOS_VERSION
 !package.json
