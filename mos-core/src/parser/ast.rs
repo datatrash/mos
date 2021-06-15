@@ -610,7 +610,7 @@ pub enum Token {
     },
     Test {
         tag: Located<String>,
-        id: Located<Identifier>,
+        id: Located<Expression>,
         block: Block,
     },
     Text {

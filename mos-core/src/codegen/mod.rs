@@ -1024,25 +1024,28 @@ impl CodegenContext {
             }
             Token::Test { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    let should_add_test_symbol = match &self.options.active_test {
-                        Some(active_test) => {
-                            if &self.current_scope.join(&id.data) == active_test {
-                                self.emit_tokens(&block.inner)?;
-                                true
-                            } else {
-                                false
+                    if let Some(test_name) = self.evaluate_expression_as_string(&id, true)? {
+                        let test_name = IdentifierPath::from(test_name.as_str());
+                        let should_add_test_symbol = match &self.options.active_test {
+                            Some(active_test) => {
+                                if &self.current_scope.join(&test_name) == active_test {
+                                    self.emit_tokens(&block.inner)?;
+                                    true
+                                } else {
+                                    false
+                                }
                             }
+                            None => {
+                                // No active test, so enumerate all tests
+                                true
+                            }
+                        };
+                        if should_add_test_symbol {
+                            self.add_symbol(
+                                &test_name,
+                                self.symbol(id.span, pc.as_i64(), SymbolType::TestCase),
+                            )?;
                         }
-                        None => {
-                            // No active test, so enumerate all tests
-                            true
-                        }
-                    };
-                    if should_add_test_symbol {
-                        self.add_symbol(
-                            &id.data,
-                            self.symbol(id.span, pc.as_i64(), SymbolType::TestCase),
-                        )?;
                     }
                 }
             }
@@ -2193,7 +2196,7 @@ pub mod tests {
 
     #[test]
     fn can_compile_specified_test() -> CoreResult<()> {
-        let src = ".test a { nop }\n.test b { asl }";
+        let src = ".test \"a\" { nop }\n.test \"b\" { asl }";
         let ctx = test_codegen_with_options(
             src,
             CodegenOptions {
@@ -2217,13 +2220,13 @@ pub mod tests {
     #[test]
     fn no_tests_compiled_when_no_active_test_specified() -> CoreResult<()> {
         let mut ctx = test_codegen_with_options(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 nop
                 .trace
                 .assert foo
             }
-            asl",
+            asl"#,
             CodegenOptions {
                 active_test: None,
                 ..Default::default()

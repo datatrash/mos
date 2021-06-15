@@ -486,13 +486,13 @@ mod tests {
     #[test]
     fn step_over() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 jsr foo
                 brk
            foo: nop
                 rts
-            }",
+            }"#,
             idpath!("a"),
         )?;
         runner.step_over()?;
@@ -503,13 +503,13 @@ mod tests {
     #[test]
     fn step_out() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 jsr foo
                 brk
            foo: nop
                 rts
-            }",
+            }"#,
             idpath!("a"),
         )?;
         runner.execute_instruction()?;
@@ -524,7 +524,7 @@ mod tests {
         let src = InMemoryParsingSource::new()
             .add(
                 "test.asm",
-                ".test a {brk}\n.test b {brk}\nscope: {\n.test c {brk}\n}",
+                ".test \"a\" {brk}\n.test \"b\" {brk}\nscope: {\n.test \"c\" {brk}\n}",
             )
             .into();
         let cases = enumerate_test_cases(src, Path::new("test.asm"))?;
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn use_pc_sp_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert * == $c001\n.assert cpu.sp == $fd\nbrk\n}",
+            ".test \"a\" {\nnop\n.assert * == $c001\n.assert cpu.sp == $fd\nbrk\n}",
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(2));
@@ -546,14 +546,14 @@ mod tests {
     #[test]
     fn use_index_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 .loop 2 {
                     .assert * == $c000 + index
                     nop
                  }
                  brk
-             }",
+             }"#,
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(4));
@@ -563,8 +563,8 @@ mod tests {
     #[test]
     fn use_registers_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 lda #$1
                 ldx #$2
                 ldy #$3
@@ -572,7 +572,7 @@ mod tests {
                 .assert cpu.x == 2
                 .assert cpu.y == 3
                 brk
-             }",
+             }"#,
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(6));
@@ -582,8 +582,8 @@ mod tests {
     #[test]
     fn use_flags_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 cli
                 lda #1
                 .assert !cpu.flags.zero
@@ -609,7 +609,7 @@ mod tests {
                 sbc #1
                 .assert cpu.flags.negative
                 brk
-             }",
+             }"#,
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(24));
@@ -619,8 +619,8 @@ mod tests {
     #[test]
     fn use_ram_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 lda #1
                 sta foo
                 lda #2
@@ -629,7 +629,7 @@ mod tests {
                 .assert ram16(foo) == 513
                 brk
                 foo: .word 0
-             }",
+             }"#,
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(12));
@@ -639,8 +639,8 @@ mod tests {
     #[test]
     fn nested_lookups() -> MosResult<()> {
         let mut runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 .const foo = 1
                 label: {
                     .const foo = 2
@@ -650,7 +650,7 @@ mod tests {
                 .assert foo == 1
                 .assert label.foo == 2
                 brk
-             }",
+             }"#,
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(0));
@@ -660,11 +660,11 @@ mod tests {
     #[test]
     fn can_determine_code_is_in_test_mode() -> MosResult<()> {
         let runner = get_runner(
-            r"
-            .test a {
+            r#"
+            .test "a" {
                 .if defined(TEST) { nop } else { asl }
                 brk
-             }",
+             }"#,
             idpath!("a"),
         )?;
         let ctx = runner.ctx.lock().unwrap();
@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn failing_assertion_with_message() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert 1 == 2 \"oh no\"\nbrk\n}",
+            ".test \"a\" {\nnop\n.assert 1 == 2 \"oh no\"\nbrk\n}",
             idpath!("a"),
         )?;
         assert_eq!(
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn failing_assertion_without_message() -> MosResult<()> {
-        let mut runner = get_runner(".test a {\nnop\n.assert 1 == 2\nbrk\n}", idpath!("a"))?;
+        let mut runner = get_runner(".test \"a\" {\nnop\n.assert 1 == 2\nbrk\n}", idpath!("a"))?;
         assert_eq!(
             runner.run()?.as_failure().diagnostic.to_string(),
             "test.asm:3:9: error: assertion failed: 1 == 2"
@@ -700,7 +700,7 @@ mod tests {
     fn trace_formatting() -> MosResult<()> {
         let mut runner = get_runner(
             r#"
-        .test a {
+        .test "a" {
             .trace
             .trace (*, cpu.sp, foo, ram($c000))
             .loop 2 { .trace (index) }
@@ -735,12 +735,12 @@ mod tests {
             .segment "b" { * = $1234 asl }
             
             .segment "a" {
-                .test a {
+                .test "a" {
                     .assert ram($1234) == $ea
                 }
             }
             .segment "b" {
-                .test b {
+                .test "b" {
                     .assert ram($1234) == $0a
                 }
             }

@@ -1,5 +1,5 @@
                     // Based on a c64unit example
-                    .test stack_pointer {
+                    .test "stack_pointer" {
                         lda #6
                         pha
                         lda #4
@@ -15,7 +15,7 @@
                         brk
                     }
 
-                    .test will_fail {
+                    .test "will_fail" {
                         .loop 2 {
                             .trace (index, *, ram($2000))
                         }
@@ -26,6 +26,6 @@
                         nop
                     }
 
-                    .test will_succeed {
+                    .test "will_succeed" {
                         brk
                     }

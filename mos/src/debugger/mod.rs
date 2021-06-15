@@ -896,14 +896,14 @@ mod tests {
 
     #[test]
     fn evaluate() -> MosResult<()> {
-        let src = r".test a {
+        let src = r#".test "a" {
                          ldx #123
                          foo: nop
                          {
                              foo: asl
                          }
                          brk
-                     }";
+                     }"#;
         let mut session = launch_session_and_break(
             src,
             vec![MachineBreakpoint {

@@ -802,10 +802,10 @@ fn interpolated_string_factor(input: LocatedSpan) -> IResult<Located<ExpressionF
     ))(input)
 }
 
-/// Tries to parse a test directive, of the form `.test test_identifier {}`
+/// Tries to parse a test directive, of the form `.test "test_identifier" {}`
 fn test(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(tag_no_case(".test")), ws(identifier_name), block)),
+        tuple((mws(tag_no_case(".test")), expression, block)),
         move |(tag, id, block)| {
             let tag = tag.map_into(|_| ".test".to_string());
             Token::Test { tag, id, block }
@@ -1494,7 +1494,10 @@ mod test {
 
     #[test]
     fn parse_test() {
-        check("   .test    my_test { nop }", "   .TEST    my_test { NOP }");
+        check(
+            "   .test    \"my_test\" { nop }",
+            "   .TEST    \"my_test\" { NOP }",
+        );
     }
 
     #[test]

@@ -68,7 +68,7 @@
                         nop
                     }
 
-                    .test my_test {
+                    .test "my_test" {
                         nop
                     }
 

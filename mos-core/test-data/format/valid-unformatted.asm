@@ -45,7 +45,7 @@ nop
  .import   foo    as    bar    from    "other.asm" {nop}
     .loop 123 {  nop}
 
-    .test  my_test   { nop }
+    .test  "my_test"   { nop }
     .assert   1== 2
         .assert   1== 2   "oh snap"
            .trace    (   *)

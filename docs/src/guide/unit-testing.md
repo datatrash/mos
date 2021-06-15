@@ -6,7 +6,7 @@ When writing code, it can be very convenient to be able to test individual subro
 A test can be defined anywhere in your source files, and looks like a bit like this:
 
 ```asm6502
-.test test_name {
+.test "test_name" {
     // Do some setup
     lda #123
     sta foo

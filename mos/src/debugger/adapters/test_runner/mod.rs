@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn breakpoints() -> MosResult<()> {
         let source = InMemoryParsingSource::new()
-            .add("test.asm", ".test a {\nnop\nnop\n}")
+            .add("test.asm", ".test \"a\" {\nnop\nnop\n}")
             .into();
         let mut adapter = TestRunnerAdapter::new(false, source, "test.asm", &idpath!("a"))?;
         adapter.set_breakpoints(
