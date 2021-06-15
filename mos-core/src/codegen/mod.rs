@@ -183,6 +183,8 @@ pub struct CodegenContext {
     current_scope: IdentifierPath,
     current_scope_nx: SymbolIndex,
 
+    next_macro_scope_id: usize,
+
     test_elements: Vec<TestElement>,
 
     source_map: SourceMap,
@@ -228,6 +230,7 @@ impl CodegenContext {
             undefined: HashSet::new(),
             current_scope: IdentifierPath::empty(),
             current_scope_nx: SymbolIndex::new(0),
+            next_macro_scope_id: 0,
             test_elements: vec![],
             source_map: SourceMap::default(),
         }
@@ -312,6 +315,7 @@ impl CodegenContext {
 
     fn next_pass(&mut self) {
         self.pass_idx += 1;
+        self.next_macro_scope_id = 0;
 
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
@@ -951,11 +955,11 @@ impl CodegenContext {
                         .expect_args(name.span, args.len(), def.args.len())
                         .map_err(|e| self.map_evaluation_error(e))?;
 
-                    // If the macro was already invoked (in a previous pass or somewhere in this pass), clean up the scope so we can
-                    // start fresh.
-                    self.remove_scope(&name.data);
+                    let macro_scope =
+                        Identifier::new(format!("$macro_{}", self.next_macro_scope_id));
+                    self.next_macro_scope_id += 1;
 
-                    self.with_scope(&name.data, None, |s| {
+                    self.with_scope(&macro_scope, None, |s| {
                         for (idx, arg_name) in def.args.iter().enumerate() {
                             let (expr, _) = args.get(idx).unwrap();
 
@@ -1187,14 +1191,6 @@ impl CodegenContext {
         self.current_scope_nx = old_scope_nx;
         self.current_scope.pop();
         result
-    }
-
-    fn remove_scope(&mut self, scope: &Identifier) {
-        if let Some(scope_nx) = self.symbols.try_index(self.symbols.root, scope) {
-            for child_nx in self.symbols.children(scope_nx).values() {
-                self.symbols.remove_all(*child_nx);
-            }
-        }
     }
 
     pub fn register_fn<F: 'static + FunctionCallback + Send + Sync>(
