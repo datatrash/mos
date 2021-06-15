@@ -9,6 +9,7 @@ use mos_core::codegen::{
     codegen, Assertion, CodegenContext, CodegenOptions, SymbolData, SymbolType, TestElement, Trace,
 };
 use mos_core::errors::Diagnostics;
+use mos_core::io::BinaryWriter;
 use mos_core::parser;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::ParsingSource;
@@ -114,14 +115,7 @@ pub fn enumerate_test_cases(
     src: Arc<Mutex<dyn ParsingSource>>,
     input_path: &Path,
 ) -> MosResult<Vec<(SpanLoc, IdentifierPath)>> {
-    let mut ctx = generate(
-        src,
-        input_path,
-        CodegenOptions {
-            pc: 0x2000.into(),
-            ..Default::default()
-        },
-    )?;
+    let mut ctx = generate(src, input_path, CodegenOptions::default())?;
     struct DummyMemoryAccessor;
     impl MemoryAccessor for DummyMemoryAccessor {
         fn read(&mut self, _: u16, _: usize) -> Vec<u8> {
@@ -158,22 +152,19 @@ impl TestRunner {
             src,
             input_path,
             CodegenOptions {
-                pc: 0x2000.into(),
                 active_test: Some(test_path.clone()),
                 predefined_constants,
                 ..Default::default()
             },
         )?;
 
-        let test_pc = ctx
+        let active_test = ctx
             .symbols()
             .try_index(ctx.symbols().root, test_path)
             .map(|nx| ctx.symbols().try_get(nx))
-            .flatten()
-            .map(|symbol| symbol.data.as_i64());
-
-        let test_pc = match test_pc {
-            Some(pc) => pc,
+            .flatten();
+        let active_test = match active_test {
+            Some(test) => test,
             None => {
                 return Err(Diagnostics::from(
                     Diagnostic::error().with_message(format!("Test case not found: {}", test_path)),
@@ -181,15 +172,28 @@ impl TestRunner {
                 .into());
             }
         };
-
         let ram = Arc::new(RwLock::new(BasicRam::new()));
-        for segment in ctx.segments().values() {
-            ram.write()
-                .unwrap()
-                .load_program(segment.range().start, segment.range_data());
-        }
+
+        // The emulated RAM will be filled with the bank that contains the segment containing the active test
+        let segment = ctx
+            .segments()
+            .get(active_test.segment.as_ref().unwrap())
+            .unwrap();
+        // If a segment is not assigned to a bank, then it should pick a default bank, which we assume to be the first
+        let default_bank_id = ctx.banks().keys().next().unwrap();
+        let segment_bank = segment.options().bank.as_ref().unwrap_or(&default_bank_id);
+        let mut bw = BinaryWriter {};
+        let test_bank = bw
+            .merge_segments(&ctx)?
+            .into_iter()
+            .find(|bank| &bank.options().name == segment_bank)
+            .unwrap();
+        ram.write()
+            .unwrap()
+            .load_program(test_bank.range().start, test_bank.data());
+
         let mut cpu = MOS6502::new();
-        cpu.set_program_counter(test_pc as u16);
+        cpu.set_program_counter(active_test.data.as_i64() as u16);
 
         ensure_ram_fn(
             &mut ctx,
@@ -492,7 +496,7 @@ mod tests {
             idpath!("a"),
         )?;
         runner.step_over()?;
-        assert_eq!(runner.cpu.get_program_counter(), 0x2003);
+        assert_eq!(runner.cpu.get_program_counter(), 0xc003);
         Ok(())
     }
 
@@ -509,9 +513,9 @@ mod tests {
             idpath!("a"),
         )?;
         runner.execute_instruction()?;
-        assert_eq!(runner.cpu.get_program_counter(), 0x2004);
+        assert_eq!(runner.cpu.get_program_counter(), 0xc004);
         runner.step_out()?;
-        assert_eq!(runner.cpu.get_program_counter(), 0x2003);
+        assert_eq!(runner.cpu.get_program_counter(), 0xc003);
         Ok(())
     }
 
@@ -532,7 +536,7 @@ mod tests {
     #[test]
     fn use_pc_sp_in_assertions() -> MosResult<()> {
         let mut runner = get_runner(
-            ".test a {\nnop\n.assert * == $2001\n.assert cpu.sp == $fd\nbrk\n}",
+            ".test a {\nnop\n.assert * == $c001\n.assert cpu.sp == $fd\nbrk\n}",
             idpath!("a"),
         )?;
         assert_eq!(runner.run()?, ExecuteResult::TestSuccess(2));
@@ -545,7 +549,7 @@ mod tests {
             r"
             .test a {
                 .loop 2 {
-                    .assert * == $2000 + index
+                    .assert * == $c000 + index
                     nop
                  }
                  brk
@@ -698,7 +702,7 @@ mod tests {
             r#"
         .test a {
             .trace
-            .trace (*, cpu.sp, foo, ram($2000))
+            .trace (*, cpu.sp, foo, ram($c000))
             .loop 2 { .trace (index) }
             .assert 1 == 2
         }
@@ -709,13 +713,45 @@ mod tests {
             runner.run()?.as_failure().traces,
             vec![
                 FormattedTrace(
-                    "* = $2000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
+                    "* = $C000, SP = $FD, flags = -----I--, A = $00, X = $00, Y = $00".into()
                 ),
-                FormattedTrace("* = $2000, cpu.sp = $FD, foo = <unknown>, ram($2000) = $00".into()),
+                FormattedTrace("* = $C000, cpu.sp = $FD, foo = <unknown>, ram($c000) = $00".into()),
                 FormattedTrace("index = $00".into()),
                 FormattedTrace("index = $01".into()),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn run_tests_in_correct_bank() -> MosResult<()> {
+        const SOURCE: &str = r#"
+            .define bank { name = "a" }
+            .define bank { name = "b" }
+            .define segment { name = "a" bank = "a" }
+            .define segment { name = "b" bank = "b" }
+            
+            .segment "a" { * = $1234 nop }
+            .segment "b" { * = $1234 asl }
+            
+            .segment "a" {
+                .test a {
+                    .assert ram($1234) == $ea
+                }
+            }
+            .segment "b" {
+                .test b {
+                    .assert ram($1234) == $0a
+                }
+            }
+        "#;
+
+        let mut runner = get_runner(SOURCE, idpath!("a"))?;
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(0));
+
+        let mut runner = get_runner(SOURCE, idpath!("b"))?;
+        assert_eq!(runner.run()?, ExecuteResult::TestSuccess(0));
+
         Ok(())
     }
 

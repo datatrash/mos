@@ -404,6 +404,7 @@ impl SymbolTable<Symbol> {
             if let Some(data) = data {
                 let symbol = Symbol {
                     pass_idx: 0,
+                    segment: None,
                     span: None,
                     data: (*data).into(),
                     ty,

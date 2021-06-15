@@ -314,7 +314,7 @@ mod tests {
             vec![MachineBreakpoint {
                 line: 2,
                 column: None,
-                range: ProgramCounter::new(0x2001)..ProgramCounter::new(0x2002),
+                range: ProgramCounter::new(0xc001)..ProgramCounter::new(0xc002),
             }],
         )?;
         adapter.start()?;

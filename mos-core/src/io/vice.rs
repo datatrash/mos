@@ -28,6 +28,7 @@ mod tests {
             "foo",
             Symbol {
                 span: None,
+                segment: None,
                 pass_idx: 0,
                 data: SymbolData::Number(0x1234),
                 ty: SymbolType::Label,

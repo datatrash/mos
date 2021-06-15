@@ -892,7 +892,7 @@ mod tests {
     use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn evaluate() -> MosResult<()> {
@@ -909,7 +909,7 @@ mod tests {
             vec![MachineBreakpoint {
                 line: 2,
                 column: None,
-                range: ProgramCounter::new(0x2002)..ProgramCounter::new(0x2003),
+                range: ProgramCounter::new(0xc002)..ProgramCounter::new(0xc003),
             }],
         )?;
 
@@ -924,7 +924,7 @@ mod tests {
             vec![MachineBreakpoint {
                 line: 4,
                 column: None,
-                range: ProgramCounter::new(0x2003)..ProgramCounter::new(0x2004),
+                range: ProgramCounter::new(0xc003)..ProgramCounter::new(0xc004),
             }],
         )?;
 
@@ -966,11 +966,15 @@ mod tests {
         ConfigurationDoneRequestHandler {}.handle(&mut session, ())?;
 
         // Wait for breakpoint to hit
+        let now = Instant::now();
         while !matches!(
             session.machine_adapter()?.running_state()?,
             MachineRunningState::Stopped(_)
         ) {
             thread::sleep(Duration::from_millis(50));
+            if now.elapsed().as_secs() > 2 {
+                panic!("waiting for breakpoint timed out");
+            }
         }
 
         Ok(session)

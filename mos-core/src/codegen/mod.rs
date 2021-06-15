@@ -147,6 +147,7 @@ pub enum SymbolType {
 pub struct Symbol {
     pub pass_idx: usize,
     pub span: Option<Span>,
+    pub segment: Option<Identifier>,
     pub data: SymbolData,
     pub ty: SymbolType,
 }
@@ -307,6 +308,7 @@ impl CodegenContext {
     ) -> Symbol {
         Symbol {
             pass_idx: self.pass_idx,
+            segment: self.current_segment.clone(),
             span: span.into(),
             data: data.into(),
             ty,
@@ -585,6 +587,7 @@ impl CodegenContext {
                             let name = Identifier::new(extractor.get_string(self, "name")?);
 
                             let opts = BankOptions {
+                                name: name.clone(),
                                 size: extractor.try_get_i64(self, "size")?.map(|s| s as usize),
                                 fill: extractor.try_get_i64(self, "fill")?.map(|s| s as u8),
                                 filename: extractor.try_get_string(self, "filename")?,
@@ -1318,7 +1321,8 @@ pub fn codegen(
 
     // If no banks were defined, define a default one
     if ctx.banks.is_empty() {
-        ctx.banks.insert("default".into(), BankOptions::default());
+        ctx.banks
+            .insert("default".into(), BankOptions::new("default"));
     }
 
     let e = Diagnostics::default().with_code_map(&ctx.tree.code_map);

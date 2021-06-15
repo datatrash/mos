@@ -19,14 +19,16 @@ pub struct Bank {
 
 #[derive(Clone)]
 pub struct BankOptions {
+    pub name: Identifier,
     pub size: Option<usize>,
     pub fill: Option<u8>,
     pub filename: Option<String>,
 }
 
-impl Default for BankOptions {
-    fn default() -> Self {
+impl BankOptions {
+    pub fn new(name: impl Into<Identifier>) -> Self {
         Self {
+            name: name.into(),
             size: None,
             fill: None,
             filename: None,
@@ -41,6 +43,14 @@ impl Bank {
             data: vec![],
             options,
         }
+    }
+
+    pub fn options(&self) -> &BankOptions {
+        &self.options
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
     pub fn range(&self) -> Range<usize> {
@@ -85,7 +95,7 @@ impl Bank {
         Bank {
             range: 0..2,
             data: vec![(pc & 255) as u8, ((pc >> 8) & 255) as u8],
-            options: Default::default(),
+            options: BankOptions::new("prg_header"),
         }
     }
 }
@@ -231,8 +241,10 @@ mod tests {
         seg2.emit(&[5, 6, 7]);
 
         let mut bank = Bank::new(BankOptions {
+            name: "dummy".into(),
+            size: None,
             fill: Some(123),
-            ..Default::default()
+            filename: None,
         });
         bank.merge(&seg1);
         bank.merge(&seg2);
