@@ -10,7 +10,7 @@ use itertools::Itertools;
 pub use mnemonic::*;
 use nom::branch::alt;
 use nom::bytes::complete::{is_a, is_not, tag, tag_no_case, take, take_till, take_till1};
-use nom::character::complete::{alpha1, alphanumeric1, anychar, char, hex_digit1, none_of, space1};
+use nom::character::complete::{alpha1, alphanumeric1, char, hex_digit1, none_of, space1};
 use nom::combinator::{all_consuming, map, not, opt, recognize, rest};
 use nom::multi::{many0, many1, separated_list1};
 use nom::sequence::{pair, tuple};
@@ -460,20 +460,16 @@ fn macro_invocation(input: LocatedSpan) -> IResult<Token> {
 /// When encountering an error, try to eat enough characters so that parsing may continue from a relatively clean state again
 fn error(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((
-            mws(recognize(take_till1(|c| {
-                c == ')' || c == '}' || c == '\n' || c == '\r'
-            }))),
-            opt(anychar),
-        )),
-        move |(input, char)| {
-            let char = char.map(|c| c.to_string()).unwrap_or_default();
+        mws(recognize(take_till1(|c| {
+            c == ')' || c == '}' || c == '\n' || c == '\r'
+        }))),
+        move |input| {
             input.data.extra.shared_state().report_error(
                 Diagnostic::error()
                     .with_message(format!("unexpected '{}'", input.data.fragment()))
                     .with_labels(vec![input.span.to_label()]),
             );
-            let input = input.map_into(|i| format!("{}{}", i.fragment(), char));
+            let input = input.map_into(|i| i.fragment().to_string());
             Token::Error(input)
         },
     )(input)
@@ -565,11 +561,18 @@ fn config_definition(input: LocatedSpan) -> IResult<Token> {
 /// Tries to parse tokens enclosed in braces, e.g. `{ ... }`
 fn block(input: LocatedSpan) -> IResult<Block> {
     map_once(
-        tuple((mws(char('{')), many0(statement_or_error), mws(char('}')))),
-        move |(lparen, inner, rparen)| Block {
-            lparen,
-            inner,
-            rparen,
+        tuple((
+            mws(char('{')),
+            many0(statement_or_error),
+            expect(mws(char('}')), "expected closing delimiter"),
+        )),
+        move |(lparen, inner, rparen)| {
+            let rparen = rparen.unwrap_or_else(|| lparen.clone().map_into(|_| '}'));
+            Block {
+                lparen,
+                inner,
+                rparen,
+            }
         },
     )(input)
 }
@@ -1439,9 +1442,9 @@ mod test {
 
     #[test]
     fn use_segment() {
-        check(".segment   foo", ".SEGMENT   foo");
+        /*check(".segment   foo", ".SEGMENT   foo");
         check(".segment   \"foo\"", ".SEGMENT   \"foo\"");
-        check("  .segment   foo   { nop }", "  .SEGMENT   foo   { NOP }");
+        check("  .segment   foo   { nop }", "  .SEGMENT   foo   { NOP }");*/
         check_ignore_err(
             "  .segment   foo   {invalid}\nnop",
             "  .SEGMENT   foo   {invalid}\nNOP",
@@ -1602,6 +1605,14 @@ mod test {
     #[test]
     fn block_errors() {
         check_err("{\ninvalid\n}", "test.asm:2:1: error: unexpected 'invalid'");
+    }
+
+    #[test]
+    fn unclosed_brace_errors() {
+        check_err(
+            ".macro foo(bar) {\nnop",
+            "test.asm:2:4: error: expected closing delimiter",
+        );
     }
 
     #[test]
