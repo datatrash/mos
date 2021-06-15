@@ -1340,7 +1340,6 @@ pub mod tests {
     use crate::parser::code_map::LineCol;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
-    use mos_testing::enable_default_tracing;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -1844,7 +1843,6 @@ pub mod tests {
 
     #[test]
     fn can_access_forward_declared_labels() -> CoreResult<()> {
-        enable_default_tracing();
         let ctx = test_codegen("jmp my_label\nmy_label: nop")?;
         assert_eq!(
             ctx.current_segment().range_data(),
@@ -1886,7 +1884,6 @@ pub mod tests {
 
     #[test]
     fn can_modify_addresses() -> CoreResult<()> {
-        enable_default_tracing();
         let ctx = test_codegen("lda #<my_label\nlda #>my_label\nmy_label: nop")?;
         assert_eq!(
             ctx.current_segment().range_data(),
@@ -1899,6 +1896,17 @@ pub mod tests {
     fn error_unknown_identifiers() {
         let err = test_codegen(".byte foo\n.byte foo2").err().unwrap();
         assert_eq!(err.to_string(), "test.asm:1:7: error: unknown identifier: foo\ntest.asm:2:7: error: unknown identifier: foo2");
+    }
+
+    #[test]
+    fn error_unknown_nested_identifiers() {
+        let err = test_codegen("foo: { nop }\nlda foo.blahblah")
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:2:5: error: unknown identifier: foo.blahblah"
+        );
     }
 
     #[test]

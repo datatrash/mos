@@ -254,13 +254,20 @@ impl<S: Clone + Debug> SymbolTable<S> {
         path: I,
     ) -> Vec<QueryTraversalStep> {
         let path = path.into();
+        log::trace!(
+            "Getting query traversal steps for path '{}' with parent '{:?}'",
+            &path,
+            nx
+        );
         let mut ids = path.clone();
         let mut cur_nx = Some(nx);
         let mut traversal = vec![];
         while let Some(id) = ids.pop_front() {
+            log::trace!("`--> Looking up id '{}' in parent: '{:?}'", id, cur_nx);
             if let Some(c) = cur_nx {
                 traversal.push(QueryTraversalStep::Symbol(c));
                 cur_nx = self.try_index(c, id);
+                log::trace!("   `--> This resulted in: {:?}", cur_nx);
             }
         }
 
@@ -283,7 +290,11 @@ impl<S: Clone + Debug> SymbolTable<S> {
                         traversal.extend(self.query_traversal_steps(parent_nx, path));
                         traversal
                     }
-                    None => traversal,
+                    None => {
+                        // We cannot bubble up anymore, but didn't complete our full traversal.
+                        // So...symbol not found, unfortunately
+                        vec![]
+                    }
                 }
             }
         }
@@ -509,6 +520,10 @@ mod tests {
         // Can also query symbols that exist on a higher level
         let nx_c = t.table.insert(t.table.root, "c", 50);
         assert_eq!(t.table.query(t.s_ss, &id!("c")), Some(nx_c));
+
+        // Cannot query symbols that do not exist
+        assert_eq!(t.table.query(t.s, &id!("blah")), None);
+        assert_eq!(t.table.query(t.table.root, &idpath!("S.SS.blah")), None);
     }
 
     #[test]
