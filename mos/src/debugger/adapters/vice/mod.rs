@@ -8,6 +8,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use itertools::Itertools;
 use mos_core::errors::Diagnostics;
 use std::collections::HashMap;
+use std::io::Read;
 use std::net::TcpListener;
 use std::process::{Child, Stdio};
 
@@ -270,15 +271,26 @@ impl ViceAdapter {
 
         // Launch VICE but make sure it doesn't inherit any stdout/stderr stuff from our main LSP, since that will cause the LSp
         // communication to break once VICE exits.
-        let process = Command::new(launch_args.vice_path.as_ref().unwrap())
+        let mut process = Command::new(launch_args.vice_path.as_ref().unwrap())
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
+
+        let stderr = child_stream_to_vec(process.stderr.take().expect("!stderr"));
 
         let mut attempts = 50;
         let stream = loop {
+            if let Ok(s) = std::str::from_utf8(&stderr.lock().unwrap()) {
+                if s.contains("Unknown option") {
+                    return Err(Diagnostics::from(
+                            Diagnostic::error().with_message("Your version of VICE does not support the '-binarymonitor' flag. Please update to VICE 3.5 or newer."),
+                        )
+                            .into());
+                }
+            }
+
             let stream = TcpStream::connect_timeout(
                 &format!("127.0.0.1:{}", port).parse().unwrap(),
                 Duration::from_secs(1),
@@ -468,6 +480,38 @@ fn make_writer(
         Ok(())
     });
     (writer_sender, writer)
+}
+
+// Used for monitoring Vice's stderr
+fn child_stream_to_vec<R>(mut stream: R) -> Arc<Mutex<Vec<u8>>>
+where
+    R: Read + Send + 'static,
+{
+    let out = Arc::new(Mutex::new(Vec::new()));
+    let vec = out.clone();
+    thread::Builder::new()
+        .name("child_stream_to_vec".into())
+        .spawn(move || loop {
+            let mut buf = [0];
+            match stream.read(&mut buf) {
+                Err(err) => {
+                    println!("{}] Error reading from stream: {}", line!(), err);
+                    break;
+                }
+                Ok(got) => {
+                    if got == 0 {
+                        break;
+                    } else if got == 1 {
+                        vec.lock().expect("!lock").push(buf[0])
+                    } else {
+                        println!("{}] Unexpected number of bytes: {}", line!(), got);
+                        break;
+                    }
+                }
+            }
+        })
+        .expect("!thread");
+    out
 }
 
 #[cfg(test)]
