@@ -872,10 +872,10 @@ impl CodegenContext {
                     match get_opcode_bytes(i.mnemonic.data, am, suffix, value) {
                         Ok(bytes) => self.emit(full_span, &bytes)?,
                         Err(()) => {
-                            // Emit 'nothing' so at least the code map gets updated
-                            self.emit(full_span, &[])?;
+                            // Emit 'BRK' so at least the code map gets updated
+                            self.emit(full_span, &[0])?;
                             return Err(Diagnostic::error()
-                                .with_message("operand size mismatch")
+                                .with_message("invalid instruction")
                                 .with_labels(vec![full_span.to_label()])
                                 .into());
                         }
@@ -1257,13 +1257,13 @@ pub fn codegen(
     #[cfg(not(test))]
     const MAX_ITERATIONS: usize = usize::MAX;
 
+    let mut errors = Diagnostics::default().with_code_map(&ctx.tree.code_map);
     ctx.pass_idx = 0;
     while ctx.pass_idx != MAX_ITERATIONS {
         match ctx.emit_tokens(&ast.main_file().tokens) {
             Ok(()) => (),
             Err(e) => {
-                let e = e.with_code_map(&ctx.tree.code_map);
-                return (Some(ctx), e);
+                errors = e.with_code_map(&ctx.tree.code_map);
             }
         }
         ctx.after_pass().expect("Could not finalize pass");
@@ -1328,8 +1328,7 @@ pub fn codegen(
             .insert("default".into(), BankOptions::new("default"));
     }
 
-    let e = Diagnostics::default().with_code_map(&ctx.tree.code_map);
-    (Some(ctx), e)
+    (Some(ctx), errors)
 }
 
 #[cfg(test)]
@@ -1384,12 +1383,22 @@ pub mod tests {
     }
 
     #[test]
+    fn illegal_instructions() -> CoreResult<()> {
+        assert_eq!(
+            test_codegen("ldx $1234,x").err().unwrap().to_string(),
+            "test.asm:1:1: error: invalid instruction"
+        );
+        assert_eq!(
+            test_codegen("inc #$12").err().unwrap().to_string(),
+            "test.asm:1:1: error: invalid instruction"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn can_detect_operand_size_mismatch() {
         let err = test_codegen("lda (foo,x)\nfoo: nop").err().unwrap();
-        assert_eq!(
-            err.to_string(),
-            "test.asm:1:1: error: operand size mismatch"
-        );
+        assert_eq!(err.to_string(), "test.asm:1:1: error: invalid instruction");
     }
 
     #[test]
