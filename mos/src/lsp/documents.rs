@@ -71,7 +71,13 @@ fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     ctx.tree = tree;
     ctx.error = error;
     if let Some(tree) = &ctx.tree {
-        let (context, error) = codegen(tree.clone(), CodegenOptions::default());
+        let (context, error) = codegen(
+            tree.clone(),
+            CodegenOptions {
+                enable_greedy_analysis: true,
+                ..Default::default()
+            },
+        );
         ctx.codegen = context.map(|c| Arc::new(Mutex::new(c)));
 
         // Merge already existing parse errors

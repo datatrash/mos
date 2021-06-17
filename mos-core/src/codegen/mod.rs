@@ -47,6 +47,11 @@ pub struct CodegenOptions {
     ///
     /// However, if we want to be able to set breakpoints in the middle of macro code, then we do NOT want to move the source map offsets.
     pub move_macro_source_map_to_invocation: bool,
+
+    /// Do we want to do more work to improve analysis results?
+    /// For instance, when a macro is defined but not invoked, no symbols or other analysis information will be generated.
+    /// When this flag is enabled, an uninvoked macro will get invoked once without passing in any parameters.
+    pub enable_greedy_analysis: bool,
 }
 
 impl Default for CodegenOptions {
@@ -56,6 +61,7 @@ impl Default for CodegenOptions {
             active_test: None,
             predefined_constants: HashMap::new(),
             move_macro_source_map_to_invocation: false,
+            enable_greedy_analysis: false,
         }
     }
 }
@@ -681,10 +687,19 @@ impl CodegenContext {
                 value, if_, else_, ..
             } => {
                 if let Some(value) = self.evaluate_expression_as_i64(value, true)? {
-                    if value != 0 {
+                    let emit_if = value != 0;
+                    if emit_if {
                         self.emit_tokens(&if_.inner)?;
-                    } else if let Some(e) = else_ {
-                        self.emit_tokens(&e.inner)?;
+                    } else if self.options.enable_greedy_analysis {
+                        self.with_dummy_segment(|s| s.emit_tokens(&if_.inner))?;
+                    }
+
+                    if let Some(e) = else_ {
+                        if !emit_if {
+                            self.emit_tokens(&e.inner)?;
+                        } else if self.options.enable_greedy_analysis {
+                            self.with_dummy_segment(|s| s.emit_tokens(&e.inner))?;
+                        }
                     }
                 }
             }
@@ -1162,6 +1177,20 @@ impl CodegenContext {
             .get_or_create_definition_mut(DefinitionType::Symbol(symbol_nx))
     }
 
+    fn with_dummy_segment<F: FnOnce(&mut Self) -> CoreResult<()>>(
+        &mut self,
+        f: F,
+    ) -> CoreResult<()> {
+        let prev_segment = self.current_segment.clone();
+        self.segments
+            .insert("$dummy".into(), Segment::new(SegmentOptions::default()));
+        self.current_segment = Some(Identifier::new("$dummy"));
+        let result = f(self);
+        self.segments.remove(&Identifier::new("$dummy"));
+        self.current_segment = prev_segment;
+        result
+    }
+
     fn with_scope<F: FnOnce(&mut Self) -> CoreResult<()>>(
         &mut self,
         scope: &Identifier,
@@ -1234,6 +1263,35 @@ impl CodegenContext {
             }
         }
         self.register_fn("defined", DefinedFn {});
+    }
+
+    pub fn finish(&mut self) {
+        // If no banks were defined, define a default one
+        if self.banks.is_empty() {
+            self.banks
+                .insert("default".into(), BankOptions::new("default"));
+        }
+
+        // Do we want to invoke uninvoked macros to generate analysis info?
+        if self.options.enable_greedy_analysis {
+            // We don't want to actually emit any tokens into an existing segment, so we'll create a dummy one
+            let _ = self.with_dummy_segment(|s| {
+                let mut macro_defs = vec![];
+                for (symbol_nx, symbol) in s.symbols.all().values() {
+                    if let SymbolData::MacroDefinition(def) = &symbol.data {
+                        macro_defs.push((*symbol_nx, def.clone()));
+                    }
+                }
+
+                for (symbol_nx, def) in macro_defs {
+                    if s.symbol_definition(symbol_nx).is_unused() {
+                        let _ = s.emit_tokens(&def.block);
+                    }
+                }
+
+                Ok(())
+            });
+        }
     }
 }
 
@@ -1321,12 +1379,7 @@ pub fn codegen(
     }
 
     // We're done!
-
-    // If no banks were defined, define a default one
-    if ctx.banks.is_empty() {
-        ctx.banks
-            .insert("default".into(), BankOptions::new("default"));
-    }
+    ctx.finish();
 
     (Some(ctx), errors)
 }
@@ -1985,6 +2038,25 @@ pub mod tests {
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xad, 0x04, 0xc0, 0x00]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_invoke_uninvoked_macros() -> CoreResult<()> {
+        let ctx = test_codegen_with_options(
+            ".macro foo(val) {\n    nop\n.if val { nop }\n}",
+            CodegenOptions {
+                enable_greedy_analysis: true,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(ctx.current_segment().range_data(), vec![]);
+        assert_eq!(
+            ctx.source_map()
+                .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, None)
+                .is_empty(),
+            false
         );
         Ok(())
     }

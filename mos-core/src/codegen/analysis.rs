@@ -28,6 +28,10 @@ pub enum DefinitionType {
 }
 
 impl Definition {
+    pub fn is_unused(&self) -> bool {
+        self.usages.is_empty()
+    }
+
     pub fn usages(&self) -> Vec<&DefinitionLocation> {
         self.usages.iter().collect_vec()
     }

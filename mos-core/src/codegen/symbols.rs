@@ -589,7 +589,9 @@ mod tests {
             .collect_vec();
         assert_unordered_eq(&vis, &[idpath!("a"), idpath!("b"), idpath!("U")]);
 
-        let vis = dbg!(t.table.visible_symbols(t.t, true))
+        let vis = t
+            .table
+            .visible_symbols(t.t, true)
             .into_iter()
             .map(|(_, idx)| idx)
             .collect_vec();
