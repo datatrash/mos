@@ -8,7 +8,7 @@ use lsp_types::{
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
     SemanticTokensResult,
 };
-use mos_core::parser::code_map::{CodeMap, Span};
+use mos_core::parser::code_map::{CodeMap, LineCol, Span, SpanLoc};
 use mos_core::parser::{
     ArgItem, Block, Expression, ExpressionFactor, Identifier, ImportArgs, ImportAs,
     InterpolatedString, InterpolatedStringItem, SpecificImportArg, Token, VariableType,
@@ -88,11 +88,11 @@ impl TokenType {
 
 pub fn caps() -> SemanticTokensOptions {
     let lookup = TokenType::iter().map(|ty| (ty, ty.type_to_u32())).collect();
-    TOKEN_TYPE_LOOKUP.set(lookup).unwrap();
+    let _ = TOKEN_TYPE_LOOKUP.set(lookup);
     let lookup = TokenType::iter()
         .map(|ty| (ty, ty.modifiers_to_u32()))
         .collect();
-    TOKEN_MODIFIER_LOOKUP.set(lookup).unwrap();
+    let _ = TOKEN_MODIFIER_LOOKUP.set(lookup);
 
     let legend = SemanticTokensLegend {
         token_types: TokenType::available_types(),
@@ -134,16 +134,57 @@ impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHand
 }
 
 fn to_deltas(code_map: &CodeMap, semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
-    let mut prev_line = 0;
-    let mut prev_start = 0;
-
     let semtoks = semtoks
         .into_iter()
         .map(|st| (code_map.look_up_span(st.span), st.token_type))
         .collect_vec();
 
+    let semtoks_per_line = semtoks
+        .into_iter()
+        .sorted_by_key(|(location, _)| (location.begin.line, location.begin.column))
+        .map(|(location, ty)| {
+            let mut result = vec![];
+
+            let mut line = location.begin.line;
+            let mut column = location.begin.column;
+            loop {
+                let length = if line == location.end.line {
+                    location.end.column
+                } else {
+                    location.file.source_line(line).len()
+                };
+
+                let begin = LineCol { line, column };
+                let end = LineCol {
+                    line,
+                    column: length,
+                };
+                result.push((
+                    SpanLoc {
+                        file: location.file.clone(),
+                        begin,
+                        end,
+                    },
+                    ty,
+                ));
+
+                if line == location.end.line {
+                    break;
+                } else {
+                    line += 1;
+                    column = 0;
+                }
+            }
+
+            result
+        })
+        .flatten()
+        .collect_vec();
+
+    let mut prev_line = 0;
+    let mut prev_start = 0;
     let mut result = vec![];
-    for (location, ty) in semtoks
+    for (location, ty) in semtoks_per_line
         .iter()
         .sorted_by_key(|(location, _)| (location.begin.line, location.begin.column))
     {
@@ -389,5 +430,42 @@ fn emit_expression_semantic(expression: &Expression) -> SemTokBuilder {
                 SemTokBuilder::new().identifier(name).expression_args(args)
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp::testing::test_root;
+    use crate::lsp::LspServer;
+
+    #[test]
+    fn provide_tokens() -> MosResult<()> {
+        caps(); // initialize a few globals
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            ".macro foo() {\n    .const bar = 1\n}",
+        )?;
+        let response = server.semantic_tokens(test_root().join("main.asm"))?;
+        if let Some(SemanticTokensResult::Tokens(SemanticTokens { data: tokens, .. })) = response {
+            let tokens = tokens
+                .into_iter()
+                .map(|tok| (tok.delta_line, tok.delta_start, tok.length))
+                .collect_vec();
+
+            assert_eq!(
+                tokens,
+                vec![
+                    /* 'foo' */ (0, 7, 3),
+                    /* 'bar' */ (1, 11, 3),
+                    /* '1' */ (0, 6, 1),
+                ]
+            );
+        } else {
+            panic!()
+        }
+
+        Ok(())
     }
 }

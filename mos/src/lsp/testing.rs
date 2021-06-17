@@ -3,11 +3,13 @@ use crate::lsp::{LspContext, LspServer};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
 use lsp_types::request::{
     Completion, GotoDefinition, HoverRequest, PrepareRenameRequest, References, Rename, Request,
+    SemanticTokensFullRequest,
 };
 use lsp_types::{
     CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverParams, Position, ReferenceContext, ReferenceParams,
-    RenameParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
+    RenameParams, SemanticTokensParams, SemanticTokensResult, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, Url,
 };
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
@@ -126,6 +128,20 @@ impl LspServer {
                 position,
             },
             work_done_progress_params: Default::default(),
+        }))?;
+        Ok(self.lock_context().pop_response())
+    }
+
+    pub fn semantic_tokens<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> MosResult<Option<SemanticTokensResult>> {
+        self.handle_message(request::<SemanticTokensFullRequest>(SemanticTokensParams {
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+            text_document: TextDocumentIdentifier {
+                uri: Url::from_file_path(path).unwrap(),
+            },
         }))?;
         Ok(self.lock_context().pop_response())
     }
