@@ -901,18 +901,14 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
                                 width = options.whitespace.label_margin
                             );
                             had_standalone_comment = true;
-                            prev_newlines = 0;
-                            should_add = true;
                         } else {
                             had_standalone_comment = false;
-                            prev_newlines = 0;
-                            should_add = true;
                         }
                     } else {
                         had_standalone_comment = false;
-                        prev_newlines = 0;
-                        should_add = true;
                     }
+                    prev_newlines = 0;
+                    should_add = true;
                 }
 
                 if should_add {

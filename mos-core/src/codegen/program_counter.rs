@@ -13,7 +13,7 @@ impl ProgramCounter {
         Self(pc)
     }
 
-    pub fn to_le_bytes(&self) -> [u8; 2] {
+    pub fn to_le_bytes(self) -> [u8; 2] {
         (self.0 as u16).to_le_bytes()
     }
 

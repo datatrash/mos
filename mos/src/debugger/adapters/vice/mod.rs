@@ -52,7 +52,7 @@ impl MemoryAccessor for ViceAdapter {
         while self.received_memory.is_empty() {
             let _ = self.handle_responses(true);
         }
-        std::mem::replace(&mut self.received_memory, vec![])
+        std::mem::take(&mut self.received_memory)
     }
 
     fn write(&mut self, _address: u16, _bytes: &[u8]) {
@@ -144,7 +144,7 @@ impl MachineAdapter for ViceAdapter {
         let was_running = matches!(&self.running_state, MachineRunningState::Running);
 
         // Delete all existing breakpoints for this source path
-        let existing = std::mem::replace(&mut self.breakpoints, vec![]);
+        let existing = std::mem::take(&mut self.breakpoints);
         for bp in existing {
             if bp.source_path == source_path {
                 self.send(ViceRequest::CheckpointDelete(bp.id.unwrap() as u32))?;

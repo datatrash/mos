@@ -272,7 +272,7 @@ impl CodegenContext {
     }
 
     pub fn remove_test_elements(&mut self) -> Vec<TestElement> {
-        std::mem::replace(&mut self.test_elements, vec![])
+        std::mem::take(&mut self.test_elements)
     }
 
     pub fn source_map(&self) -> &SourceMap {

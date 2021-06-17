@@ -876,7 +876,7 @@ impl DebugSession {
 
     fn send_pending_events(&mut self) -> MosResult<()> {
         if let Some(conn) = self.connection() {
-            let events = std::mem::replace(&mut self.pending_events, vec![]);
+            let events = std::mem::take(&mut self.pending_events);
             for e in events {
                 conn.sender.send(e)?;
             }

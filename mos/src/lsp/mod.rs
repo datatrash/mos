@@ -200,7 +200,7 @@ impl LspContext {
         // Grab the handlers and unlock the shutdown manager
         let handlers = {
             let mut mgr = self.shutdown_manager.lock().unwrap();
-            std::mem::replace(&mut mgr.handlers, HashMap::new())
+            std::mem::take(&mut mgr.handlers)
         };
         for sender in handlers.values() {
             let _ = sender.send(());

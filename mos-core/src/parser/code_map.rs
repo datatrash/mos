@@ -49,8 +49,8 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn to_label(&self) -> Label<Span> {
-        Label::primary(*self, 0..0)
+    pub fn to_label(self) -> Label<Span> {
+        Label::primary(self, 0..0)
     }
 
     /// Makes a span from offsets relative to the start of this span.
