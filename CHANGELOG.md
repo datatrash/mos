@@ -7,9 +7,16 @@
 * A listing file can be generated for every segment by specifying `listing = true` in the `[build]` section of `mos.toml`
 * Instead of just generating a Commodore-compatible `.prg` file, it is now also possible to generate a raw binary or a raw binary per segment
 
-### Bugfixes
+### Notable bugfixes
 * Nested macros are now looked up correctly ([#168](https://github.com/datatrash/mos/issues/168))
 * Symbol resolution doesn't return incorrect symbols when lookups fail halfway through
+* Error reporting shows correct paths on Windows now, instead of UNC paths ([#192](https://github.com/datatrash/mos/issues/192)) 
+* Files imported from subdirectories are resolved in a platform-independent way (i.e. forward or backslashes may be used)
+* Uninvoked macros and untaken if/else paths now get proper refactoring support ([#180](https://github.com/datatrash/mos/issues/180))
+* When attempting to debug with an unsupported version of VICE a proper error message is created ([#186](https://github.com/datatrash/mos/issues/186))
+* Syntax grammar files were not packaged in the VSCode extension ([#185](https://github.com/datatrash/mos/issues/185))
+
+For a full list of changes please refer to the [0.7.0 milestone on GitHub](https://github.com/datatrash/mos/milestone/8?closed=1).
 
 ## 0.6.0 (2021-06-02)
 

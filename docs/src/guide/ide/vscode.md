@@ -15,6 +15,10 @@ Once you have it installed, the following features will become available:
 
 The debugger supports breakpoints, local symbols, watches and evaluating expressions.
 
+::: danger
+The debugger requires VICE 3.5+, which introduces the `-binarymonitor` command line argument.
+:::
+
 ## Building and launching
 To build your application from within VSCode, use the `mos: Build` build command.
 
