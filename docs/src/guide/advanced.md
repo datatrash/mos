@@ -293,3 +293,4 @@ Banks are not available when you've set `build.output-format` in `mos.toml` to `
 | `size` | number | The size (in bytes) of the bank. If the bank is not exactly filled, you can choose to pad it with the `fill` byte. |
 | `fill` | byte | The byte to fill banks with that were not exactly filled up. |
 | `filename` | string | The filename of the file the bank should be written to. If you have multiple banks with different filenames then your build will generate multiple files as well. |
+| `segment` | boolean | Set this to `true` to create a segment with the same name as the bank and no other options set. This is useful when you want to create a bank just to output some header bytes, for instance. |

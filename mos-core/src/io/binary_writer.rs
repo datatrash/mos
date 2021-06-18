@@ -22,6 +22,7 @@ pub struct BankOptions {
     pub name: Identifier,
     pub size: Option<usize>,
     pub fill: Option<u8>,
+    pub create_segment: bool,
     pub filename: Option<String>,
 }
 
@@ -31,6 +32,7 @@ impl BankOptions {
             name: name.into(),
             size: None,
             fill: None,
+            create_segment: false,
             filename: None,
         }
     }
@@ -245,6 +247,7 @@ mod tests {
             size: None,
             fill: Some(123),
             filename: None,
+            create_segment: false,
         });
         bank.merge(&seg1);
         bank.merge(&seg2);

@@ -1,0 +1,4 @@
+[build]
+entry = "main.asm"
+output-format = "bin"
+output-filename = "cart.crt"

@@ -1,4 +1,4 @@
-                    .import * from "c64.asm"
+                    .import * from "../shared/c64.asm"
 
                     basic_start(start)
 

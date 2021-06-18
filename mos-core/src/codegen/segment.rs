@@ -66,6 +66,10 @@ impl Segment {
         &self.options
     }
 
+    pub fn options_mut(&mut self) -> &mut SegmentOptions {
+        &mut self.options
+    }
+
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
     }

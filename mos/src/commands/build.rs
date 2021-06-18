@@ -3,7 +3,7 @@ use crate::diagnostic_emitter::MosResult;
 use clap::App;
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
-use mos_core::codegen::{codegen, CodegenOptions};
+use mos_core::codegen::{codegen, CodegenContext, CodegenOptions};
 use mos_core::errors::map_io_error;
 use mos_core::errors::Diagnostics;
 use mos_core::io::{to_listing, to_vice_symbols, Bank, BinaryWriter};
@@ -23,6 +23,36 @@ pub struct BuildOptions {
     pub symbols: Vec<SymbolType>,
     pub output_format: Option<OutputFormat>,
     pub output_filename: Option<String>,
+}
+
+impl BuildOptions {
+    pub fn input_path(&self, root: &Path) -> PathBuf {
+        root.join(PathBuf::from(&self.entry))
+    }
+
+    pub fn output_format(&self, ctx: &CodegenContext) -> OutputFormat {
+        match self.output_format {
+            Some(f) => f,
+            None if ctx.banks().len() == 1 => OutputFormat::Prg,
+            _ => OutputFormat::Bin,
+        }
+    }
+
+    pub fn output_filename(&self, root: &Path, ctx: &CodegenContext) -> String {
+        let ext = match self.output_format(ctx) {
+            OutputFormat::Prg => "prg",
+            OutputFormat::Bin => "bin",
+        };
+
+        match self.output_filename.as_ref() {
+            Some(f) => f.clone(),
+            None => format!(
+                "{}.{}",
+                self.input_path(root).file_stem().unwrap().to_string_lossy(),
+                ext
+            ),
+        }
+    }
 }
 
 impl Default for BuildOptions {
@@ -59,10 +89,8 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     let target_dir = root.join(&cfg.build.target_directory);
     fs::create_dir_all(&target_dir)?;
 
-    let input_path = root.join(PathBuf::from(&cfg.build.entry));
-
     let source = FileSystemParsingSource::new();
-    let (tree, error) = parser::parse(&input_path, source.into());
+    let (tree, error) = parser::parse(&cfg.build.input_path(root), source.into());
     if !error.is_empty() {
         return Err(error.into());
     }
@@ -80,14 +108,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     }
     let generated_code = generated_code.unwrap();
 
-    let output_format = cfg.build.output_format.unwrap_or_else(|| {
-        if generated_code.banks().len() == 1 {
-            OutputFormat::Prg
-        } else {
-            OutputFormat::Bin
-        }
-    });
-    if output_format == OutputFormat::Prg && generated_code.banks().len() != 1 {
+    if cfg.build.output_format == Some(OutputFormat::Prg) && generated_code.banks().len() != 1 {
         return Err(Diagnostics::from(Diagnostic::error().with_message(
                 r#"A program with 'output-format = "prg" must contain a single bank only."#,
             ).with_notes(vec![
@@ -96,24 +117,12 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
             .into());
     }
 
-    let ext = match output_format {
-        OutputFormat::Prg => "prg",
-        OutputFormat::Bin => "bin",
-    };
-
-    let filename = match cfg.build.output_filename.as_ref() {
-        Some(f) => f.clone(),
-        None => format!(
-            "{}.{}",
-            input_path.file_stem().unwrap().to_string_lossy(),
-            ext
-        ),
-    };
+    let filename = cfg.build.output_filename(root, &generated_code);
 
     let mut bw = BinaryWriter {};
     let mut banks = bw.merge_segments(&generated_code)?;
 
-    if output_format == OutputFormat::Prg {
+    if cfg.build.output_format(&generated_code) == OutputFormat::Prg {
         // Add the two-byte PRG header as a first bank
         let mut new_banks = vec![Bank::prg_header(banks[0].range().start)];
         new_banks.extend(banks);
@@ -136,8 +145,14 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
     for symbol_type in &cfg.build.symbols {
         match symbol_type {
             SymbolType::Vice => {
-                let symbol_path =
-                    format!("{}.vs", input_path.file_stem().unwrap().to_string_lossy());
+                let symbol_path = format!(
+                    "{}.vs",
+                    cfg.build
+                        .input_path(root)
+                        .file_stem()
+                        .unwrap()
+                        .to_string_lossy()
+                );
                 let mut out =
                     fs::File::create(target_dir.join(symbol_path)).map_err(map_io_error)?;
                 out.write_all(to_vice_symbols(generated_code.symbols()).as_bytes())

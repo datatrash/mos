@@ -279,8 +279,8 @@ impl<'a> Evaluator<'a> {
                 InterpolatedStringItem::String(s) => result += s.data.as_str(),
                 InterpolatedStringItem::IdentifierPath(path) => {
                     if let Some(data) = self.lookup_symbol(path, track_usage) {
-                        if let Some(data) = data.try_as_str() {
-                            result += data;
+                        if let Some(data) = data.try_as_string() {
+                            result += data.as_str();
                         } else {
                             return Err(EvaluationError {
                                 span: path.span,

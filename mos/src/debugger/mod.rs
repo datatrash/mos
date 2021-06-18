@@ -128,12 +128,15 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
         conn.no_debug = args.no_debug.unwrap_or_default();
         let cfg = conn.lock_lsp().config().unwrap();
 
-        let src_path = PathBuf::from(args.workspace.clone()).join(PathBuf::from(&cfg.build.entry));
+        let root = PathBuf::from(args.workspace.clone());
+        let src_path = root.join(PathBuf::from(&cfg.build.entry));
 
-        let prg_path = PathBuf::from(args.workspace.clone())
-            .join(PathBuf::from(&cfg.build.target_directory))
-            .join(PathBuf::from(&cfg.build.entry))
-            .with_extension("prg");
+        let prg_path = {
+            let codegen = conn.lock_lsp().codegen().unwrap();
+            let codegen = codegen.lock().unwrap();
+            root.join(&cfg.build.target_directory)
+                .join(cfg.build.output_filename(&root, &codegen))
+        };
 
         if let Some(tr) = &args.test_runner {
             let source = conn.lock_lsp().parsing_source();

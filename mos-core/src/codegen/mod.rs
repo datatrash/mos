@@ -125,9 +125,10 @@ impl SymbolData {
         }
     }
 
-    pub fn try_as_str(&self) -> Option<&str> {
+    pub fn try_as_string(&self) -> Option<String> {
         match &self {
-            SymbolData::String(val) => Some(val.as_str()),
+            SymbolData::Number(val) => Some(val.to_string()),
+            SymbolData::String(val) => Some(val.clone()),
             _ => None,
         }
     }
@@ -586,6 +587,7 @@ impl CodegenContext {
                         "bank" => {
                             let extractor = ConfigValidator::new()
                                 .required("name")
+                                .allowed("create-segment")
                                 .allowed("size")
                                 .allowed("fill")
                                 .allowed("filename")
@@ -596,9 +598,22 @@ impl CodegenContext {
                                 name: name.clone(),
                                 size: extractor.try_get_i64(self, "size")?.map(|s| s as usize),
                                 fill: extractor.try_get_i64(self, "fill")?.map(|s| s as u8),
+                                create_segment: extractor
+                                    .try_get_i64(self, "create-segment")?
+                                    .map(|s| s != 0)
+                                    .unwrap_or_default(),
                                 filename: extractor.try_get_string(self, "filename")?,
                             };
-                            self.banks.insert(name, opts);
+                            let create_segment = opts.create_segment;
+                            self.banks.insert(name.clone(), opts);
+
+                            if create_segment {
+                                let segment_opts = SegmentOptions {
+                                    bank: Some(name.clone()),
+                                    ..Default::default()
+                                };
+                                self.segments.insert(name, Segment::new(segment_opts));
+                            }
                         }
                         "segment" => {
                             let extractor = ConfigValidator::new()
@@ -1265,17 +1280,44 @@ impl CodegenContext {
         self.register_fn("defined", DefinedFn {});
     }
 
-    pub fn finish(&mut self) {
+    pub fn finalize(&mut self) -> CoreResult<()> {
         // If no banks were defined, define a default one
         if self.banks.is_empty() {
             self.banks
                 .insert("default".into(), BankOptions::new("default"));
+
+            // Assign all segments that don't have a bank to this bank
+            for segment in self.segments.values_mut() {
+                if segment.options().bank.is_none() {
+                    segment.options_mut().bank = Some("default".into());
+                }
+            }
+        }
+
+        // If there is only a 'default' segment, assign it to the first bank we have (if not yet assigned)
+        if self.segments.len() == 1 {
+            let segment = self.segments.values_mut().next().unwrap();
+            segment.options_mut().bank = Some(self.banks.keys().next().unwrap().clone());
+        }
+
+        // Check if all segments now have a bank
+        let mut seg_err = Diagnostics::default();
+        for (segment_name, segment) in self.segments.iter() {
+            if segment.options().bank.is_none() {
+                seg_err.push(Diagnostic::error().with_message(format!(
+                    "Segment '{}' is not assigned to any bank",
+                    segment_name
+                )));
+            }
+        }
+        if !seg_err.is_empty() {
+            return Err(seg_err);
         }
 
         // Do we want to invoke uninvoked macros to generate analysis info?
         if self.options.enable_greedy_analysis {
             // We don't want to actually emit any tokens into an existing segment, so we'll create a dummy one
-            let _ = self.with_dummy_segment(|s| {
+            self.with_dummy_segment(|s| {
                 let mut macro_defs = vec![];
                 for (symbol_nx, symbol) in s.symbols.all().values() {
                     if let SymbolData::MacroDefinition(def) = &symbol.data {
@@ -1290,8 +1332,10 @@ impl CodegenContext {
                 }
 
                 Ok(())
-            });
+            })?;
         }
+
+        Ok(())
     }
 }
 
@@ -1379,7 +1423,9 @@ pub fn codegen(
     }
 
     // We're done!
-    ctx.finish();
+    if let Err(e) = ctx.finalize() {
+        errors.extend(e);
+    }
 
     (Some(ctx), errors)
 }
@@ -1567,6 +1613,14 @@ pub mod tests {
         assert_eq!(bank.fill, Some(123));
         assert_eq!(bank.filename, Some("foo.bin".into()));
         assert_eq!(ctx.banks.get(&Identifier::new("default")).is_none(), true);
+        Ok(())
+    }
+
+    #[test]
+    fn can_define_banks_and_segment() -> CoreResult<()> {
+        let ctx = test_codegen(".define bank {\nname = \"foo\"\ncreate-segment = true\n}")?;
+        assert_eq!(ctx.banks.get(&Identifier::new("foo")).is_some(), true);
+        assert_eq!(ctx.segments.get(&Identifier::new("foo")).is_some(), true);
         Ok(())
     }
 

@@ -9,12 +9,23 @@ fn kvp(input: LocatedSpan) -> IResult<Token> {
     }));
 
     map_once(
-        tuple((mws(identifier_name), mws(char('=')), mws(value))),
+        tuple((mws(config_key), mws(char('=')), mws(value))),
         move |(key, eq, value)| {
             let key = key.map(|k| k.as_str().to_string());
             let value = Box::new(value);
             Token::ConfigPair { key, eq, value }
         },
+    )(input)
+}
+
+/// Tries to parse a config key
+fn config_key(input: LocatedSpan) -> IResult<String> {
+    map_once(
+        recognize(pair(
+            alt((alpha1, tag("-"))),
+            many0(alt((alphanumeric1, tag("-")))),
+        )),
+        move |id: LocatedSpan| id.fragment().to_string(),
     )(input)
 }
 
@@ -48,7 +59,7 @@ mod tests {
             num =    123
             path =   a.b
             nested =  {
-                nested_id   = nested_v
+                nested-id   = nested-v
             }
         }",
             r"/*   */   
@@ -56,7 +67,7 @@ mod tests {
             num =    123
             path =   a.b
             nested =  {
-                nested_id   = nested_v
+                nested-id   = nested-v
             }
         }",
         );

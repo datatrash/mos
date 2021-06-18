@@ -179,9 +179,7 @@ impl TestRunner {
             .segments()
             .get(active_test.segment.as_ref().unwrap())
             .unwrap();
-        // If a segment is not assigned to a bank, then it should pick a default bank, which we assume to be the first
-        let default_bank_id = ctx.banks().keys().next().unwrap();
-        let segment_bank = segment.options().bank.as_ref().unwrap_or(&default_bank_id);
+        let segment_bank = segment.options().bank.as_ref().unwrap();
         let mut bw = BinaryWriter {};
         let test_bank = bw
             .merge_segments(&ctx)?
