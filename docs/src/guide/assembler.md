@@ -141,6 +141,22 @@ lda defined(ADDRESS)   // a will now contain '1'
 lda !defined(ADDRESS)  // a will now contain '0'
 ```
 
+## String handling
+It is possible to use strings in expressions and in variable definitions, e.g.:
+
+```asm6502
+.const MY_HELLO = "hello"
+.const MY_WORLD = " world"
+.const GREETING = MY_HELLO + MY_WORLD
+```
+
+It is also possible to do string interpolation using curly braces, e.g.:
+
+```asm6502
+.const MY_HELLO = "hello"
+.const GREETING = "{MY_HELLO} world"  // <-- results in "hello world"
+```
+
 ## Data definition
 You may include data inline like so:
 
