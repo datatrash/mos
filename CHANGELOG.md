@@ -1,8 +1,10 @@
 # Changelog
 
-## 0.7.0 (unreleased)
+## 0.7.0 (2021-06-18)
 
 ### New features
+* "Banks" can be used to control how the final binary is laid out (e.g. to create cartridge files)
+* Strings can be used as symbols, with support for string interpolation and concatenation
 * Error formatting is improved and made configurable through the `--error-style` option
 * A listing file can be generated for every segment by specifying `listing = true` in the `[build]` section of `mos.toml`
 * Instead of just generating a Commodore-compatible `.prg` file, it is now also possible to generate a raw binary or a raw binary per segment
