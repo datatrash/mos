@@ -690,8 +690,17 @@ fn import(input: LocatedSpan) -> IResult<Token> {
 
             let current_file: PathBuf = state.current_file.name().into();
             let parent = current_file.parent().unwrap();
+
             // TODO: Should be able to interpolate the filenames that get imported
-            let path = parent.join(&filename.uninterpolated_text());
+            // For now, take the filename, split it according to platform-independent path delimiters and rejoin
+            let uninterpolated_filename = filename.uninterpolated_text();
+            let filename_parts = uninterpolated_filename
+                .split(&['/', '\\'][..])
+                .collect_vec();
+            let mut path = parent.to_path_buf();
+            for part in filename_parts {
+                path = path.join(&part);
+            }
 
             state
                 .to_import
