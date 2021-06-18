@@ -82,3 +82,10 @@
              warmstart: inc $d020
                         jmp warmstart
                     }
+
+                    .segment "bank_0" {
+                        .test "header_is_in_the_right_place" {
+                            .assert ram($8004) == $C3
+
+                        }
+                    }
