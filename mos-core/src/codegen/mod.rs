@@ -1018,6 +1018,12 @@ impl CodegenContext {
 
                         Ok(())
                     })?;
+                } else {
+                    self.undefined.insert(UndefinedSymbol {
+                        scope_nx: self.current_scope_nx,
+                        id: name.data.clone().into(),
+                        span: Some(name.span),
+                    });
                 }
             }
             Token::ProgramCounterDefinition { value, .. } => {
@@ -2092,6 +2098,16 @@ pub mod tests {
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xad, 0x04, 0xc0, 0x00]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cannot_use_unknown_macros() -> CoreResult<()> {
+        let err = test_codegen("foo(1)").err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "test.asm:1:1: error: unknown identifier: foo"
         );
         Ok(())
     }

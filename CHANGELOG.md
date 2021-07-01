@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1 (unreleased)
+
+### Bugfixes
+* Trying to invoke an undefined macro correctly did not report the macro as undefined ([#195](https://github.com/datatrash/mos/issues/195))
+
 ## 0.7.0 (2021-06-18)
 
 ### New features
