@@ -15,7 +15,7 @@ bitflags = "1"
 codespan-reporting = "0.11"
 derive_more = "0.99"
 fs-err = "2"
-indexmap = "1.6"
+indexmap = "1.7"
 itertools = "0.10"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 loggerv = "0.7"
