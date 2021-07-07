@@ -301,6 +301,10 @@ impl ViceAdapter {
                     log::debug!("VICE refused connection...");
                     thread::sleep(Duration::from_millis(300));
                 }
+                Err(e) if e.kind() == ErrorKind::TimedOut => {
+                    log::debug!("VICE connection timed out...");
+                    thread::sleep(Duration::from_millis(300));
+                }
                 Err(e) => {
                     return Err(e.into());
                 }
