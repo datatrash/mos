@@ -9,12 +9,8 @@ use lsp_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     Position, PublishDiagnosticsParams, Range, Url,
 };
-use mos_core::codegen::{codegen, CodegenOptions};
 use mos_core::errors::Diagnostics;
-use mos_core::parser::parse;
-use mos_core::parser::source::ParsingSource;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 pub struct DidOpenTextDocumentHandler;
 pub struct DidChangeTextDocumentHandler;
@@ -54,35 +50,7 @@ impl NotificationHandler<DidCloseTextDocument> for DidCloseTextDocumentHandler {
 fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
     let path = uri.to_file_path().unwrap();
     ctx.parsing_source().lock().unwrap().insert(&path, source);
-
-    ctx.tree = None;
-    ctx.codegen = None;
-    ctx.error = Diagnostics::default();
-
-    let entry = ctx.config().unwrap_or_default().build.entry;
-    let entry = ctx.working_directory().join(&entry);
-    if !ctx.parsing_source().lock().unwrap().exists(entry.as_ref()) {
-        log::trace!(
-            "`--> Entrypoint does not (yet) exist in memory or disk. Not doing any parsing."
-        );
-        return;
-    }
-    let (tree, error) = parse(entry.as_ref(), ctx.parsing_source.clone());
-    ctx.tree = tree;
-    ctx.error = error;
-    if let Some(tree) = &ctx.tree {
-        let (context, error) = codegen(
-            tree.clone(),
-            CodegenOptions {
-                enable_greedy_analysis: true,
-                ..Default::default()
-            },
-        );
-        ctx.codegen = context.map(|c| Arc::new(Mutex::new(c)));
-
-        // Merge already existing parse errors
-        ctx.error.extend(error);
-    }
+    ctx.perform_codegen();
 }
 
 fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {

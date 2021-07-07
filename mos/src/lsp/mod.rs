@@ -34,11 +34,13 @@ use lsp_types::{
     InitializeParams, OneOf, RenameOptions, ServerCapabilities, TextDocumentPositionParams,
     TextDocumentSyncKind, Url,
 };
-use mos_core::codegen::{Analysis, CodegenContext, Definition, DefinitionType};
+use mos_core::codegen::{
+    codegen, Analysis, CodegenContext, CodegenOptions, Definition, DefinitionType,
+};
 use mos_core::errors::{map_io_error, CoreResult, Diagnostics};
 use mos_core::parser::code_map::{LineCol, SpanLoc};
 use mos_core::parser::source::ParsingSource;
-use mos_core::parser::ParseTree;
+use mos_core::parser::{parse, ParseTree};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -216,6 +218,37 @@ impl LspContext {
             .flatten()
     }
 
+    pub(crate) fn perform_codegen(&mut self) {
+        self.tree = None;
+        self.codegen = None;
+        self.error = Diagnostics::default();
+
+        let entry = self.config().unwrap_or_default().build.entry;
+        let entry = self.working_directory().join(&entry);
+        if !self.parsing_source().lock().unwrap().exists(entry.as_ref()) {
+            log::trace!(
+                "`--> Entrypoint does not (yet) exist in memory or disk. Not doing any parsing."
+            );
+            return;
+        }
+        let (tree, error) = parse(entry.as_ref(), self.parsing_source.clone());
+        self.tree = tree;
+        self.error = error;
+        if let Some(tree) = &self.tree {
+            let (context, error) = codegen(
+                tree.clone(),
+                CodegenOptions {
+                    enable_greedy_analysis: true,
+                    ..Default::default()
+                },
+            );
+            self.codegen = context.map(|c| Arc::new(Mutex::new(c)));
+
+            // Merge already existing parse errors
+            self.error.extend(error);
+        }
+    }
+
     #[cfg(test)]
     fn working_directory(&self) -> PathBuf {
         use crate::lsp::testing::test_root;
@@ -305,7 +338,10 @@ pub struct LspServer {
 }
 
 impl LspServer {
-    pub fn new(context: LspContext) -> Self {
+    pub fn new(mut context: LspContext) -> Self {
+        // Make sure codegen is done at least once, when the LSP server starts up
+        context.perform_codegen();
+
         let request_handlers = HashMap::new();
         let notification_handlers = HashMap::new();
 
