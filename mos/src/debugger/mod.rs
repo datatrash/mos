@@ -131,12 +131,20 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
         let root = PathBuf::from(args.workspace.clone());
         let src_path = root.join(PathBuf::from(&cfg.build.entry));
 
-        let prg_path = {
-            let codegen = conn.lock_lsp().codegen().unwrap();
+        let prg_path = conn.lock_lsp().codegen().map(|codegen| {
             let codegen = codegen.lock().unwrap();
             root.join(&cfg.build.target_directory)
                 .join(cfg.build.output_filename(&root, &codegen))
-        };
+        });
+
+        if prg_path.is_none() {
+            return Err(Diagnostics::from(
+                Diagnostic::error()
+                    .with_message("Could not find output binary. Did assembly fail?"),
+            )
+            .into());
+        }
+        let prg_path = prg_path.unwrap();
 
         if let Some(tr) = &args.test_runner {
             let source = conn.lock_lsp().parsing_source();
