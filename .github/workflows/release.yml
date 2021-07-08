@@ -50,6 +50,7 @@ jobs:
         with:
           tag_name: ${{ env.MOS_VERSION }}
           release_name: ${{ env.MOS_VERSION }}
+          body: See [changelog](https://github.com/datatrash/mos/blob/${{ env.MOS_VERSION }}/CHANGELOG.md) for details.
 
       - name: Save release upload URL to artifact
         run: echo "${{ steps.release.outputs.upload_url }}" > artifacts/release-upload-url
