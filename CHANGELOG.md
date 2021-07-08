@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.2 (2021-07-08)
+
+### New features
+* The `mos.path` property may now be quoted, easing use on Windows. ([#204](https://github.com/datatrash/mos/issues/204))
+
+### Bugfixes
+* When launching the debugger no files have to be open in the editor. ([#203](https://github.com/datatrash/mos/issues/203))
+
 ## 0.7.1 (2021-07-01)
 
 ### Bugfixes

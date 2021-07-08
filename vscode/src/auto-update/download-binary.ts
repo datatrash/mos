@@ -7,12 +7,13 @@ import rimraf from "rimraf";
 import {promisify} from "util";
 import decompress from "decompress";
 import * as semver from 'semver';
+const unquote: any = require('unquote');
 
 export async function getMosBinary(ctx: vscode.ExtensionContext): Promise<string | undefined> {
     const mos_version = await fs.readFile(path.join(vscode.extensions.getExtension("datatrash.mos")!!.extensionPath, "out", "MOS_VERSION"), "utf8");
 
     let cfg = vscode.workspace.getConfiguration("mos");
-    const explicitPath = cfg.get<string>("path");
+    const explicitPath = unquote(cfg.get<string>("path"));
     if (explicitPath) {
         if (explicitPath.startsWith("~/")) {
             return os.homedir() + explicitPath.slice("~".length);

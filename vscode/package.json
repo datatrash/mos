@@ -141,6 +141,7 @@
     "rimraf": "^3.0.2",
     "semver": "^7.3.4",
     "smart-buffer": "^4.1.0",
+    "unquote": "^1.1.1",
     "vscode-debugadapter": "^1.46.0",
     "vscode-debugprotocol": "^1.46.0",
     "vscode-languageclient": "^7.0.0"
