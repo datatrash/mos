@@ -457,11 +457,11 @@ fn macro_invocation(input: LocatedSpan) -> IResult<Token> {
     })(input)
 }
 
-/// When encountering an error, try to eat enough characters so that parsing may continue from a relatively clean state again
-fn error(input: LocatedSpan) -> IResult<Token> {
+#[doc(hidden)]
+fn error_impl(input: LocatedSpan, stop_at_closing_brace: bool) -> IResult<Token> {
     map_once(
         mws(recognize(take_till1(|c| {
-            c == ')' || c == '}' || c == '\n' || c == '\r'
+            (c == ')' || c == '\n' || c == '\r') || (c == '}' && stop_at_closing_brace)
         }))),
         move |input| {
             input.data.extra.shared_state().report_error(
@@ -473,6 +473,16 @@ fn error(input: LocatedSpan) -> IResult<Token> {
             Token::Error(input)
         },
     )(input)
+}
+
+/// When encountering an error outside a block, try to eat enough characters so that parsing may continue from a relatively clean state again
+fn error(input: LocatedSpan) -> IResult<Token> {
+    error_impl(input, false)
+}
+
+/// When encountering an error inside a block, deal it with like an error outside of a block, but try to stop at a closing brace as well
+fn error_in_block(input: LocatedSpan) -> IResult<Token> {
+    error_impl(input, true)
 }
 
 /// Tries to parse a label in the form of `foo:`
@@ -563,7 +573,7 @@ fn block(input: LocatedSpan) -> IResult<Block> {
     map_once(
         tuple((
             mws(char('{')),
-            many0(statement_or_error),
+            many0(alt((statement, error_in_block))),
             expect(mws(char('}')), "expected closing delimiter"),
         )),
         move |(lparen, inner, rparen)| {
@@ -893,11 +903,6 @@ fn statement(input: LocatedSpan) -> IResult<Token> {
     ))(input)
 }
 
-/// Tries to parse any valid statement but will fallback to [error] in case of trouble
-fn statement_or_error(input: LocatedSpan) -> IResult<Token> {
-    alt((statement, error))(input)
-}
-
 /// Tries to eat the remaining characters
 fn eof(input: LocatedSpan) -> IResult<Token> {
     map(mws(rest), move |rest| Token::Eof(rest.map_into(|_| ())))(input)
@@ -905,11 +910,14 @@ fn eof(input: LocatedSpan) -> IResult<Token> {
 
 /// Parses an entire file
 fn source_file(input: LocatedSpan) -> IResult<Vec<Token>> {
-    map(tuple((many0(statement_or_error), eof)), |(tokens, eof)| {
-        let mut result = tokens;
-        result.push(eof);
-        result
-    })(input)
+    map(
+        tuple((many0(alt((statement, error))), eof)),
+        |(tokens, eof)| {
+            let mut result = tokens;
+            result.push(eof);
+            result
+        },
+    )(input)
 }
 
 /// Parses a number of any possible [NumberType]
@@ -1390,6 +1398,15 @@ mod test {
                 LDA #234
             }
         ",
+        );
+    }
+
+    #[test]
+    fn parse_unexpected_braces() {
+        // A single closing-brace should be flagged as an error, and the next line should just be parsed normally (also an error in this case)
+        check_err(
+            "}\nfoo",
+            "test.asm:1:1: error: unexpected '}'\ntest.asm:2:1: error: unexpected 'foo'",
         );
     }
 

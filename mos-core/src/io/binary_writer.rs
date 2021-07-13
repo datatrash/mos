@@ -310,7 +310,6 @@ mod tests {
         
         .segment "a" { .byte 1, 2, 3, 4 }
         .segment "b" { .byte 5, 6, 7 }
-        }
         "#,
         )?;
         let mut bw = BinaryWriter {};
@@ -338,7 +337,6 @@ mod tests {
         
         .segment "a" { .byte 1, 2, 3, 4 }
         .segment "b" { .byte 5, 6, 7 }
-        }
         "#,
         )?;
         let mut bw = BinaryWriter {};
@@ -409,6 +407,5 @@ mod tests {
         .segment "header2" { .byte 5, 6, 7 }
         .segment "default_lo" { nop }
         .segment "default_hi" { asl }
-        }
         "#;
 }
