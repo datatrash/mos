@@ -478,8 +478,12 @@ impl CodegenContext {
                     segment.pc(),
                     &bytes
                 );
-                self.source_map
-                    .add(self.current_scope_nx, span, segment.pc(), bytes.len());
+                self.source_map.add(
+                    self.current_scope_nx,
+                    span,
+                    segment.target_pc(),
+                    bytes.len(),
+                );
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
@@ -2328,26 +2332,35 @@ pub mod tests {
 
     #[test]
     fn can_perform_source_map_lookups() -> CoreResult<()> {
-        let ctx = test_codegen("lda $d020\nsta $d021")?;
-        let offset = ctx.source_map().address_to_offset(0xc003).unwrap();
+        let ctx = test_codegen(
+            r#".define segment {
+    name = "relocated"
+    start = $c000
+    pc = $8000
+}
+
+lda $d020
+sta $d021"#,
+        )?;
+        let offset = ctx.source_map().address_to_offset(0x8003).unwrap();
         let sl = ctx.tree.code_map.look_up_span(offset.span);
-        assert_eq!(offset.pc, 0xc003..0xc006);
+        assert_eq!(offset.pc, 0x8003..0x8006);
         assert_eq!(sl.file.name(), "test.asm");
-        assert_eq!(sl.begin.line, 1);
+        assert_eq!(sl.begin.line, 7);
         assert_eq!(sl.begin.column, 0);
-        assert_eq!(sl.end.line, 1);
+        assert_eq!(sl.end.line, 7);
         assert_eq!(sl.end.column, 9);
 
         let offsets = ctx
             .source_map
-            .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, 4);
+            .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 7, 4);
         let offset = offsets[0];
         let sl = ctx.tree.code_map.look_up_span(offset.span);
-        assert_eq!(offset.pc, 0xc003..0xc006);
+        assert_eq!(offset.pc, 0x8003..0x8006);
         assert_eq!(sl.file.name(), "test.asm");
-        assert_eq!(sl.begin.line, 1);
+        assert_eq!(sl.begin.line, 7);
         assert_eq!(sl.begin.column, 0);
-        assert_eq!(sl.end.line, 1);
+        assert_eq!(sl.end.line, 7);
         assert_eq!(sl.end.column, 9);
 
         Ok(())

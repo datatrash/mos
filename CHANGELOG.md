@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.3 (2021-07-14)
+
+### Bugfixes
+* When setting breakpoints, the breakpoint should be set at the location the code is ultimately designed to go to. Usually this is the same as the location it is emitted, but this is not the case for code that is designed to be moved to another location. ([#206](https://github.com/datatrash/mos/issues/206))
+* A unexpected closing brace would break parsing of the rest of the file.([#205](https://github.com/datatrash/mos/issues/205))
+
 ## 0.7.2 (2021-07-08)
 
 ### New features
