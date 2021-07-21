@@ -1,6 +1,5 @@
 use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
-use clap::App;
 use fs_err::OpenOptions;
 use mos_core::errors::map_io_error;
 use mos_core::formatting::format;
@@ -9,9 +8,10 @@ use mos_core::parser::source::FileSystemParsingSource;
 use mos_core::LINE_ENDING;
 use std::io::Write;
 
-pub fn format_app() -> App<'static> {
-    App::new("format").about("Formats input file(s)")
-}
+/// Formats input file(s)
+#[derive(argh::FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "format")]
+pub struct FormatArgs {}
 
 pub fn format_command(cfg: &Config) -> MosResult<()> {
     let input_name = cfg.build.entry.clone();

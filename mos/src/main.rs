@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use clap::{App, AppSettings, Arg, ArgMatches};
 use fs_err as fs;
 
 use crate::commands::*;
@@ -26,38 +25,38 @@ mod test_runner;
 /// Miscellaneous utility methods
 mod utils;
 
-fn get_app() -> App<'static> {
-    App::new("mos")
-        .about("https://mos.datatra.sh")
-        .version(option_env!("RELEASE_VERSION").unwrap_or("unknown"))
-        .global_setting(AppSettings::ColoredHelp)
-        .arg(
-            Arg::new("verbose")
-                .short('v')
-                .multiple(true)
-                .takes_value(false)
-                .about("Sets the level of verbosity"),
-        )
-        .arg(
-            Arg::new("no-color")
-                .long("no-color")
-                .about("Disables colorized output"),
-        )
-        .arg(
-            Arg::new("error-style")
-                .short('e')
-                .long("error-style")
-                .takes_value(true)
-                .about("The style of error output")
-                .value_name("style")
-                .possible_values(&["short", "medium", "rich"])
-                .default_value("rich"),
-        )
-        .subcommand(build_app())
-        .subcommand(format_app())
-        .subcommand(init_app())
-        .subcommand(lsp_app())
-        .subcommand(test_app())
+#[derive(argh::FromArgs, PartialEq, Debug)]
+/// mos - https://mos.datatra.sh
+pub struct Args {
+    #[argh(subcommand)]
+    subcommand: Subcommand,
+    /// disables colorized output
+    #[argh(switch)]
+    no_color: bool,
+    /// logging verbosity
+    #[argh(switch, short = 'v')]
+    verbosity: u8,
+    /// error style
+    #[argh(option, short = 'e', default = "ErrorStyle::Rich")]
+    error_style: ErrorStyle,
+}
+
+#[derive(PartialEq, Debug, strum::EnumString)]
+pub enum ErrorStyle {
+    Short,
+    Medium,
+    Rich,
+}
+
+#[derive(argh::FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+pub enum Subcommand {
+    Init(InitArgs),
+    Build(BuildArgs),
+    Format(FormatArgs),
+    Test(TestArgs),
+    Lsp(LspArgs),
+    Version(VersionArgs),
 }
 
 fn mos_toml_path<P: Into<PathBuf>>(
@@ -88,7 +87,7 @@ fn mos_toml_path<P: Into<PathBuf>>(
     }
 }
 
-fn run(args: &ArgMatches) -> MosResult<()> {
+fn run(args: &Args) -> MosResult<()> {
     let mos_toml = mos_toml_path(None, &Path::new("."))?;
     let (root, cfg) = match mos_toml {
         Some(path) => {
@@ -105,12 +104,12 @@ fn run(args: &ArgMatches) -> MosResult<()> {
         }
     };
 
-    match args.subcommand() {
-        Some(("build", _)) => build_command(&root, &cfg),
-        Some(("format", _)) => format_command(&cfg),
-        Some(("init", _)) => init_command(&root, &cfg),
-        Some(("lsp", subargs)) => lsp_command(subargs),
-        Some(("test", _)) => {
+    match &args.subcommand {
+        Subcommand::Build(_) => build_command(&root, &cfg),
+        Subcommand::Format(_) => format_command(&cfg),
+        Subcommand::Init(_) => init_command(&root, &cfg),
+        Subcommand::Lsp(subargs) => lsp_command(subargs),
+        Subcommand::Test(_) => {
             let exit_code = test_command(args, &root, &cfg)?;
             if exit_code > 0 {
                 std::process::exit(exit_code);
@@ -118,10 +117,7 @@ fn run(args: &ArgMatches) -> MosResult<()> {
                 Ok(())
             }
         }
-        _ => {
-            let _ = get_app().print_help()?;
-            Ok(())
-        }
+        Subcommand::Version(_) => version_command(),
     }
 }
 
@@ -129,19 +125,18 @@ fn main() {
     #[cfg(windows)]
     ansi_term::enable_ansi_support().unwrap();
 
-    let args = get_app().get_matches();
-    let no_color = args.is_present("no-color");
+    let args: Args = argh::from_env();
 
     loggerv::Logger::new()
-        .verbosity(1 + args.occurrences_of("verbose")) // show 'info' by default
-        .colors(!no_color)
+        .verbosity((1 + args.verbosity) as u64) // show 'info' by default
+        .colors(!args.no_color)
         .module_path(false)
         .init()
         .unwrap();
 
     if let Err(e) = run(&args) {
-        match args.subcommand_name() {
-            Some("lsp") => {
+        match &args.subcommand {
+            Subcommand::Lsp(_) => {
                 // Don't try to emit to stdout since it's probably gone by this time in the LSP
             }
             _ => DiagnosticEmitter::stdout(&args).emit(e),
@@ -158,31 +153,7 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::diagnostic_emitter::MosResult;
-    use crate::{get_app, mos_toml_path};
-
-    #[test]
-    fn can_invoke_build() {
-        let args = get_app().get_matches_from(vec!["mos", "build"]);
-        assert_eq!(args.subcommand_name(), Some("build"));
-    }
-
-    #[test]
-    fn can_invoke_format() {
-        let args = get_app().get_matches_from(vec!["mos", "format"]);
-        assert_eq!(args.subcommand_name(), Some("format"));
-    }
-
-    #[test]
-    fn can_invoke_init() {
-        let args = get_app().get_matches_from(vec!["mos", "init"]);
-        assert_eq!(args.subcommand_name(), Some("init"));
-    }
-
-    #[test]
-    fn can_invoke_subcommand_with_verbose_logging() {
-        let args = get_app().get_matches_from(vec!["mos", "-vvv", "format"]);
-        assert_eq!(args.subcommand_name(), Some("format"));
-    }
+    use crate::mos_toml_path;
 
     #[test]
     fn can_locate_mos_toml() -> MosResult<()> {

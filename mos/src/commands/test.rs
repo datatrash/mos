@@ -2,12 +2,17 @@ use crate::config::Config;
 use crate::diagnostic_emitter::{DiagnosticEmitter, MosResult};
 use crate::test_runner::{enumerate_test_cases, format_cpu_details, ExecuteResult, TestRunner};
 use crate::utils::paint;
+use crate::Args;
 use ansi_term::Colour;
-use clap::{App, ArgMatches};
 use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+/// Runs unit test(s)
+#[derive(argh::FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "test")]
+pub struct TestArgs {}
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
@@ -25,12 +30,8 @@ impl Default for TestOptions {
     }
 }
 
-pub fn test_app() -> App<'static> {
-    App::new("test").about("Runs unit test(s)")
-}
-
-pub fn test_command(args: &ArgMatches, root: &Path, cfg: &Config) -> MosResult<i32> {
-    let use_color = !args.is_present("no-color");
+pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
+    let use_color = !args.no_color;
     let src: Arc<Mutex<dyn ParsingSource>> = FileSystemParsingSource::new().into();
     let input_path = root.join(PathBuf::from(&cfg.build.entry));
     let mut test_cases = enumerate_test_cases(src.clone(), &input_path)?;
@@ -127,6 +128,7 @@ pub fn test_command(args: &ArgMatches, root: &Path, cfg: &Config) -> MosResult<i
 mod tests {
     use super::*;
     use crate::commands::BuildOptions;
+    use crate::{ErrorStyle, Subcommand};
     use anyhow::Result;
     use std::path::PathBuf;
 
@@ -145,10 +147,7 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(
-            test_command(&ArgMatches::default(), root().as_path(), &cfg)?,
-            0
-        );
+        assert_eq!(test_command(&test_args(), root().as_path(), &cfg)?, 0);
         Ok(())
     }
 
@@ -167,11 +166,17 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(
-            test_command(&ArgMatches::default(), root().as_path(), &cfg)?,
-            1
-        );
+        assert_eq!(test_command(&test_args(), root().as_path(), &cfg)?, 1);
         Ok(())
+    }
+
+    fn test_args() -> Args {
+        Args {
+            subcommand: Subcommand::Test(TestArgs {}),
+            no_color: false,
+            verbosity: 0,
+            error_style: ErrorStyle::Short,
+        }
     }
 
     fn root() -> PathBuf {

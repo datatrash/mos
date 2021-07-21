@@ -1,6 +1,5 @@
 use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
-use clap::App;
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
 use mos_core::codegen::{codegen, CodegenContext, CodegenOptions};
@@ -13,6 +12,11 @@ use serde::Deserialize;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use strum::EnumString;
+
+/// Assembles input file(s)
+#[derive(argh::FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "build")]
+pub struct BuildArgs {}
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
@@ -79,10 +83,6 @@ pub enum OutputFormat {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub enum SymbolType {
     Vice,
-}
-
-pub fn build_app() -> App<'static> {
-    App::new("build").about("Assembles input file(s)")
 }
 
 pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {

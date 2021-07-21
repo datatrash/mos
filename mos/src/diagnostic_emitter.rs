@@ -1,4 +1,4 @@
-use clap::ArgMatches;
+use crate::{Args, ErrorStyle};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::termcolor::{ColorChoice, ColorSpec, StandardStream, WriteColor};
 use codespan_reporting::term::{Config, DisplayStyle};
@@ -14,17 +14,17 @@ pub struct DiagnosticEmitter {
 }
 
 impl DiagnosticEmitter {
-    pub fn stdout(args: &ArgMatches) -> Self {
-        let color_choice = if args.is_present("no-color") {
+    pub fn stdout(args: &Args) -> Self {
+        let color_choice = if args.no_color {
             ColorChoice::Never
         } else {
             ColorChoice::Auto
         };
 
-        let display_style = match args.value_of("error-style") {
-            Some("short") => DisplayStyle::Short,
-            Some("medium") => DisplayStyle::Medium,
-            _ => DisplayStyle::Rich,
+        let display_style = match args.error_style {
+            ErrorStyle::Short => DisplayStyle::Short,
+            ErrorStyle::Medium => DisplayStyle::Medium,
+            ErrorStyle::Rich => DisplayStyle::Rich,
         };
 
         let config = Config {

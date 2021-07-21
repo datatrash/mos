@@ -1,38 +1,22 @@
 use crate::debugger::DebugServer;
 use crate::diagnostic_emitter::MosResult;
 use crate::lsp::{LspContext, LspServer};
-use clap::{App, Arg, ArgMatches};
-use codespan_reporting::diagnostic::Diagnostic;
-use mos_core::errors::Diagnostics;
 
-pub fn lsp_app() -> App<'static> {
-    App::new("lsp")
-        .about("Starts a language server, listening on stdin")
-        .arg(
-            Arg::new("port")
-                .about("The port on which the debug adapter server should listen")
-                .default_missing_value("6503")
-                .long("debug-adapter-port")
-                .takes_value(true),
-        )
+/// Starts a Language Server
+#[derive(argh::FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "lsp")]
+pub struct LspArgs {
+    /// the port on which the debug adapter server should listen
+    #[argh(option, default = "6503", short = 'p')]
+    debug_adapter_port: u16,
 }
 
-pub fn lsp_command(args: &ArgMatches) -> MosResult<()> {
-    let port = args
-        .value_of("port")
-        .unwrap_or("6503")
-        .parse::<u16>()
-        .map_err(|_| {
-            Diagnostics::from(Diagnostic::error().with_message(
-                "the specified LSP port is not a valid integer in the range of 0-65535",
-            ))
-        })?;
-
+pub fn lsp_command(args: &LspArgs) -> MosResult<()> {
     let mut ctx = LspContext::new();
     ctx.listen_stdio();
     let lsp = LspServer::new(ctx);
     let mut dbg = DebugServer::new(lsp.context());
-    dbg.start(port)?;
+    dbg.start(args.debug_adapter_port)?;
 
     lsp.start()?;
     log::info!("LSP ended");

@@ -1,14 +1,14 @@
 use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
-use clap::App;
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
 use mos_core::errors::{map_io_error, Diagnostics};
 use std::path::Path;
 
-pub fn init_app() -> App<'static> {
-    App::new("init").about("Creates a new MOS project configuration file")
-}
+/// Creates a new MOS project configuration file
+#[derive(argh::FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "init")]
+pub struct InitArgs {}
 
 pub fn init_command(root: &Path, _cfg: &Config) -> MosResult<()> {
     if root.join("mos.toml").exists() {
