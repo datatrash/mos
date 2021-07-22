@@ -9,14 +9,17 @@
                         }
                     }
 
-                    .macro xex_segment_header(name, begin, end) {
+                    .macro xex_segment_header(name, start, end) {
+                        // the end of a segment is inclusive, so the last emitted byte is actually at end - 1
+                        .const end_offset = end - 1
+
                         .define bank {
                             name = "${name}-header"
                             create-segment = true
                         }
 
                         .segment "${name}-header" {
-                            .byte <begin, >begin, <end, >end
+                            .byte <start, >start, <end_offset, >end_offset
                         }
                     }
 

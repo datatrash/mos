@@ -70,7 +70,7 @@ impl Default for CodegenOptions {
 pub enum SymbolData {
     MacroDefinition(MacroDefinition),
     Number(i64),
-    /// A symbol that was defined to prevent 'undefined identifier' errors, but doesn't hold any data otherwise
+    /// A symbol that was defined to prevent 'unknown identifier' errors, but doesn't hold any data otherwise
     Placeholder,
     String(String),
 }
@@ -328,7 +328,6 @@ impl CodegenContext {
 
         log::trace!("\n* NEXT PASS ({}) *", self.pass_idx);
         self.segments.values_mut().for_each(|s| s.reset());
-        self.undefined.clear();
         self.test_elements.clear();
         self.source_map.clear();
     }
@@ -1369,6 +1368,8 @@ pub fn codegen(
     #[cfg(not(test))]
     const MAX_ITERATIONS: usize = usize::MAX;
 
+    let mut prev_undefined = HashSet::new();
+
     let mut errors = Diagnostics::default().with_code_map(&ctx.tree.code_map);
     ctx.pass_idx = 0;
     while ctx.pass_idx != MAX_ITERATIONS {
@@ -1397,35 +1398,29 @@ pub fn codegen(
             // Nothing undefined anymore? Then we're done!
             if ctx.undefined.is_empty() {
                 break;
-            }
+            } else {
+                // If the same symbols are undefined that were undefined in the previous pass, they are truly undefined.
+                if ctx.undefined == prev_undefined {
+                    let errors = ctx
+                        .undefined
+                        .iter()
+                        .sorted_by_key(|k| k.id.to_string())
+                        .map(|item| {
+                            let mut diag = Diagnostic::error()
+                                .with_message(format!("unknown identifier: {}", item.id));
+                            if let Some(span) = item.span {
+                                diag = diag.with_labels(vec![span.to_label()]);
+                            }
 
-            // Anything that was undefined at some point should be defined by now.
-            // If not, it is truly undefined.
-            let errors = ctx
-                .undefined
-                .iter()
-                .sorted_by_key(|k| k.id.to_string())
-                .filter_map(|item| {
-                    if ctx
-                        .get_evaluator()
-                        .get_symbol(item.scope_nx, &item.id)
-                        .is_none()
-                    {
-                        let mut diag = Diagnostic::error()
-                            .with_message(format!("unknown identifier: {}", item.id));
-                        if let Some(span) = item.span {
-                            diag = diag.with_labels(vec![span.to_label()]);
-                        }
+                            diag
+                        })
+                        .collect_vec();
 
-                        Some(diag)
-                    } else {
-                        None
-                    }
-                })
-                .collect_vec();
-            if !errors.is_empty() {
-                let e = Diagnostics::from(errors).with_code_map(&ctx.tree.code_map);
-                return (Some(ctx), e);
+                    let e = Diagnostics::from(errors).with_code_map(&ctx.tree.code_map);
+                    return (Some(ctx), e);
+                }
+
+                prev_undefined = std::mem::take(&mut ctx.undefined);
             }
         }
 
@@ -2102,6 +2097,46 @@ pub mod tests {
         assert_eq!(
             ctx.current_segment().range_data(),
             vec![0xea, 0xad, 0x04, 0xc0, 0x00]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn can_use_forward_declared_values_in_macros() -> CoreResult<()> {
+        let ctx = test_codegen(
+            r#"
+            .macro macro(end) {
+                .const end2 = end - 1
+                .byte <end2, >end2
+            }
+            .define bank {
+                name = "first"
+                create-segment = true
+            }
+            .segment "first" {
+                macro(segments.second.end)
+            }                
+            
+            .define bank {
+                name = "second"
+                create-segment = true
+            }
+            .segment "second" { nop }
+            "#,
+        )?;
+        assert_eq!(
+            ctx.segments
+                .get(&Identifier::new("first"))
+                .unwrap()
+                .range_data(),
+            vec![0x00, 0x20]
+        );
+        assert_eq!(
+            ctx.segments
+                .get(&Identifier::new("second"))
+                .unwrap()
+                .range_data(),
+            vec![0xea]
         );
         Ok(())
     }

@@ -7,7 +7,7 @@
                     ///////////////////////////////////////////////////
                     // First XEX segment
                     ///////////////////////////////////////////////////
-                    xex_segment_header("first", segments.first.start, segments.first.end - 1)
+                    xex_segment_header("first", segments.first.start, segments.first.end)
 
                     .define bank {
                         name = "first"
@@ -34,7 +34,7 @@
                     ///////////////////////////////////////////////////
                     // Second XEX segment
                     ///////////////////////////////////////////////////
-                    xex_segment_header("second", segments.second.start, segments.second.end - 1)
+                    xex_segment_header("second", segments.second.start, segments.second.end)
 
                     .define bank {
                         name = "second"
@@ -67,7 +67,7 @@
                     ///////////////////////////////////////////////////
                     // Main XEX segment
                     ///////////////////////////////////////////////////
-                    xex_segment_header("main", segments.main.start, segments.main.end - 1)
+                    xex_segment_header("main", segments.main.start, segments.main.end)
 
                     .define bank {
                         name = "main"

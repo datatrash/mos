@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.4 (2021-07-22)
+
+### Bugfixes
+* `Unknown identifier` errors were emitted too often. ([#211](https://github.com/datatrash/mos/issues/211))
+
 ## 0.7.3 (2021-07-14)
 
 ### Bugfixes
