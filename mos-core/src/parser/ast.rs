@@ -751,7 +751,7 @@ impl<T> From<&Located<T>> for Span {
 
 impl<T> AsRef<Located<T>> for Located<T> {
     fn as_ref(&self) -> &Located<T> {
-        &self
+        self
     }
 }
 
@@ -1146,7 +1146,7 @@ impl Display for Token {
                     "{}{}{}{}",
                     tag.map(|t| t.to_uppercase()),
                     lparen,
-                    format_arglist(&args),
+                    format_arglist(args),
                     rparen
                 )
             }

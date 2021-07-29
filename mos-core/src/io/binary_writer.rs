@@ -112,7 +112,7 @@ impl BinaryWriter {
 
         // Check if all segments are assigned to a valid bank
         for (segment_name, segment) in ctx.segments() {
-            let bank_name = segment.options().bank.as_ref().unwrap_or(&default_bank);
+            let bank_name = segment.options().bank.as_ref().unwrap_or(default_bank);
             if !ctx.banks().contains_key(bank_name) {
                 errors.push(Diagnostic::error().with_message(format!(
                     "segment '{}' is assigned to bank '{}' but this bank does not exist",
@@ -127,7 +127,7 @@ impl BinaryWriter {
                 .segments()
                 .iter()
                 .filter(|(_, segment)| {
-                    segment.options().bank.as_ref().unwrap_or(&default_bank) == bank_name
+                    segment.options().bank.as_ref().unwrap_or(default_bank) == bank_name
                         && segment.options().write
                 })
                 .collect();
@@ -146,7 +146,7 @@ impl BinaryWriter {
                 }),
             };
             for (_segment_name, segment) in segments {
-                bank.merge(&segment);
+                bank.merge(segment);
             }
             if let Some(size) = bank_options.size {
                 match bank.data.len().cmp(&size) {

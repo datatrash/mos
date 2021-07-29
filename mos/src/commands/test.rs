@@ -91,7 +91,7 @@ pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
     if !failed.is_empty() {
         log::info!("failed tests:");
         log::info!("");
-        let mut emitter = DiagnosticEmitter::stdout(&args);
+        let mut emitter = DiagnosticEmitter::stdout(args);
         for (failed_test_name, failure) in &failed {
             log::info!("test: {}", failed_test_name);
             emitter.emit_diagnostics(&failure.diagnostic);

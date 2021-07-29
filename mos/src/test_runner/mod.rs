@@ -286,7 +286,7 @@ impl TestRunner {
                 .symbols
                 .ensure_cpu_symbols(self.registers(), self.cpu.get_status_register());
             let ctx = self.ctx.lock().unwrap();
-            let evaluator = assertion.snapshot.get_evaluator(&ctx.functions());
+            let evaluator = assertion.snapshot.get_evaluator(ctx.functions());
             let eval_result = evaluator
                 .evaluate_expression(&assertion.expr, false)
                 .ok()

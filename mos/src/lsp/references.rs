@@ -34,7 +34,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
             if let Some(location) = &def.location {
                 let tree = ctx.tree.as_ref().unwrap();
                 let origin = def.try_get_usage_containing(
-                    &tree,
+                    tree,
                     &params
                         .text_document_position_params
                         .text_document

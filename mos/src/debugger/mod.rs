@@ -516,7 +516,7 @@ impl EvaluateRequestHandler {
         if let Some(mut codegen) = conn.codegen() {
             codegen.symbols_mut().ensure_cpu_symbols(registers, flags);
             if let Some(scope) = current_scope(&state, &codegen)? {
-                let expression = parse_expression(&expr)?;
+                let expression = parse_expression(expr)?;
                 let evaluator = codegen.get_evaluator_for_scope(scope);
                 let result = match evaluator.evaluate_expression(&expression, true) {
                     Ok(Some(val)) => val.to_string(),
@@ -670,7 +670,7 @@ impl DebugSession {
             sel.recv(receiver);
 
             // ...or from the LSP telling us we should be shutting down...
-            sel.recv(&lsp_shutdown_receiver.receiver());
+            sel.recv(lsp_shutdown_receiver.receiver());
 
             // ...or from the machine...
             let machine_receiver = self
@@ -683,7 +683,7 @@ impl DebugSession {
 
             let oper = sel.select();
             match oper.index() {
-                0 => match oper.recv(&receiver) {
+                0 => match oper.recv(receiver) {
                     Ok(m) => self.handle_message(m)?,
                     Err(_) => break,
                 },

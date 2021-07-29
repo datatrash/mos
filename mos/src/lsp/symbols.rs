@@ -199,7 +199,7 @@ impl<'a> DocSymEmitter<'a> {
                         .codegen
                         .lock()
                         .unwrap()
-                        .evaluate_expression_as_string(&id, false)
+                        .evaluate_expression_as_string(id, false)
                     {
                         self.emit_document_symbols(&b.inner, Some(&Identifier::new(symbol_id)))
                     } else {

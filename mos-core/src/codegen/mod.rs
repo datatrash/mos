@@ -1063,7 +1063,7 @@ impl CodegenContext {
             }
             Token::Test { id, block, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
-                    if let Some(test_name) = self.evaluate_expression_as_string(&id, true)? {
+                    if let Some(test_name) = self.evaluate_expression_as_string(id, true)? {
                         let test_name = IdentifierPath::from(test_name.as_str());
                         let should_add_test_symbol = match &self.options.active_test {
                             Some(active_test) => {
@@ -1110,7 +1110,7 @@ impl CodegenContext {
                 }
             }
             Token::VariableDefinition { ty, id, value, .. } => {
-                if let Some(value) = self.evaluate_expression(&value, true)? {
+                if let Some(value) = self.evaluate_expression(value, true)? {
                     let ty = match &ty.data {
                         VariableType::Constant => SymbolType::Constant,
                         VariableType::Variable => SymbolType::Variable,

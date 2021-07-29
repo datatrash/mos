@@ -202,8 +202,8 @@ fn to_deltas(code_map: &CodeMap, semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
             delta_line: delta_line as u32,
             delta_start: delta_start as u32,
             length: (location.end.column - location.begin.column) as u32,
-            token_type: *TOKEN_TYPE_LOOKUP.get().unwrap().get(&ty).unwrap(),
-            token_modifiers_bitset: *TOKEN_MODIFIER_LOOKUP.get().unwrap().get(&ty).unwrap(),
+            token_type: *TOKEN_TYPE_LOOKUP.get().unwrap().get(ty).unwrap(),
+            token_modifiers_bitset: *TOKEN_MODIFIER_LOOKUP.get().unwrap().get(ty).unwrap(),
         });
     }
 
@@ -240,7 +240,7 @@ impl SemTokBuilder {
     }
 
     fn token(mut self, val: &Token) -> Self {
-        self.tokens.extend(emit_semantic(&val).tokens);
+        self.tokens.extend(emit_semantic(val).tokens);
         self
     }
 
@@ -250,7 +250,7 @@ impl SemTokBuilder {
     }
 
     fn expression(mut self, val: &Expression) -> Self {
-        self.tokens.extend(emit_expression_semantic(&val).tokens);
+        self.tokens.extend(emit_expression_semantic(val).tokens);
         self
     }
 
@@ -324,7 +324,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
         }
         Token::Eof(_) => b,
         Token::Error(_) => b,
-        Token::Expression(expr) => b.expression(&expr),
+        Token::Expression(expr) => b.expression(expr),
         Token::File {
             tag: _, filename, ..
         } => b.interpolated_string(filename),
@@ -364,7 +364,7 @@ fn emit_semantic(token: &Token) -> SemTokBuilder {
             else_,
             ..
         } => {
-            let b = b.block(&if_).expression(&value.data);
+            let b = b.block(if_).expression(&value.data);
             match else_ {
                 Some(e) => b.block(e),
                 None => b,

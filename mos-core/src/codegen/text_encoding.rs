@@ -4,8 +4,8 @@ use crate::parser::TextEncoding;
 pub fn encode_text(str: &str, encoding: TextEncoding) -> Vec<u8> {
     match encoding {
         TextEncoding::Ascii | TextEncoding::Unspecified => str.as_bytes().to_vec(),
-        TextEncoding::Petscii => Petscii::from_str(&str).as_bytes().to_vec(),
-        TextEncoding::Petscreen => Petscii::from_str(&str)
+        TextEncoding::Petscii => Petscii::from_str(str).as_bytes().to_vec(),
+        TextEncoding::Petscreen => Petscii::from_str(str)
             .as_bytes()
             .iter()
             .map(|c| match c {
