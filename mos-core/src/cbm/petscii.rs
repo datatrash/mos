@@ -147,7 +147,7 @@ impl Petscii {
         if src_len > dst_len {
             return Err(());
         } else {
-            &bytes[..src_len].copy_from_slice(&self.0);
+            let _ = &bytes[..src_len].copy_from_slice(&self.0);
             for i in src_len..dst_len {
                 bytes[i] = pad_byte;
             }
