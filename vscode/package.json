@@ -131,7 +131,6 @@
     "compile": "node bundle",
     "publish": "vsce publish",
     "mos-version": "node mos-version",
-    "test": "jest --passWithNoTests",
     "vscode:prepublish": "npm run mos-version && node bundle"
   },
   "dependencies": {
@@ -149,33 +148,13 @@
   "devDependencies": {
     "@types/decompress": "^4.2.4",
     "@types/glob": "^7.1.4",
-    "@types/jest": "^27.0.2",
     "@types/node": "^16.9.4",
     "@types/rimraf": "^3.0.2",
     "@types/semver": "^7.3.8",
     "@types/vscode": "^1.60.0",
     "esbuild": "^0.12.28",
     "glob": "^7.1.6",
-    "jest": "^27.2.1",
-    "ts-jest": "^27.0.5",
     "typescript": "^4.4.3",
     "vsce": "^1.99.0"
-  },
-  "jest": {
-    "roots": [
-      "src"
-    ],
-    "transform": {
-      "^.+\\.tsx?$": "ts-jest"
-    },
-    "testRegex": "(/__tests__/.*|(\\.|/)(test|spec))\\.tsx?$",
-    "moduleFileExtensions": [
-      "ts",
-      "tsx",
-      "js",
-      "jsx",
-      "json",
-      "node"
-    ]
   }
 }
