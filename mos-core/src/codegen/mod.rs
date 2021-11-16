@@ -894,7 +894,10 @@ impl CodegenContext {
                                 0
                             } else {
                                 return Err(Diagnostic::error()
-                                    .with_message("branch too far")
+                                    .with_message(format!(
+                                        "branch too far trying to reach ${:4X} from ${:4X}",
+                                        value, cur_pc
+                                    ))
                                     .with_labels(vec![i.mnemonic.span.to_label()])
                                     .into());
                             }
@@ -1369,6 +1372,7 @@ pub fn codegen(
     const MAX_ITERATIONS: usize = usize::MAX;
 
     let mut prev_undefined = HashSet::new();
+    let mut prev_errors = Diagnostics::default().with_code_map(&ctx.tree.code_map);
 
     let mut errors = Diagnostics::default().with_code_map(&ctx.tree.code_map);
     ctx.pass_idx = 0;
@@ -1395,34 +1399,45 @@ pub fn codegen(
         } else {
             // There were segments, so we have emitted something.
 
-            // Nothing undefined anymore? Then we're done!
-            if ctx.undefined.is_empty() {
-                break;
-            } else {
-                // If the same symbols are undefined that were undefined in the previous pass, they are truly undefined.
-                if ctx.undefined == prev_undefined {
-                    let errors = ctx
-                        .undefined
-                        .iter()
-                        .sorted_by_key(|k| k.id.to_string())
-                        .map(|item| {
-                            let mut diag = Diagnostic::error()
-                                .with_message(format!("unknown identifier: {}", item.id));
-                            if let Some(span) = item.span {
-                                diag = diag.with_labels(vec![span.to_label()]);
-                            }
+            // Did we have the exact same errors in the previous pass? Then we need to bail.
+            if !errors.is_empty() && errors == prev_errors {
+                return (Some(ctx), errors);
+            }
 
-                            diag
-                        })
-                        .collect_vec();
+            // If there were no other errors, then we should see if there was anything undefined.
+            if errors.is_empty() {
+                // Nothing undefined anymore? Then we're done!
+                if ctx.undefined.is_empty() {
+                    break;
+                } else {
+                    // If the same symbols are undefined that were undefined in the previous pass, they are truly undefined.
+                    if ctx.undefined == prev_undefined {
+                        let errors = ctx
+                            .undefined
+                            .iter()
+                            .sorted_by_key(|k| k.id.to_string())
+                            .map(|item| {
+                                let mut diag = Diagnostic::error()
+                                    .with_message(format!("unknown identifier: {}", item.id));
+                                if let Some(span) = item.span {
+                                    diag = diag.with_labels(vec![span.to_label()]);
+                                }
 
-                    let e = Diagnostics::from(errors).with_code_map(&ctx.tree.code_map);
-                    return (Some(ctx), e);
+                                diag
+                            })
+                            .collect_vec();
+
+                        let e = Diagnostics::from(errors).with_code_map(&ctx.tree.code_map);
+                        return (Some(ctx), e);
+                    }
+
+                    prev_undefined = std::mem::take(&mut ctx.undefined);
                 }
-
-                prev_undefined = std::mem::take(&mut ctx.undefined);
             }
         }
+
+        prev_errors = errors;
+        errors = Diagnostics::default().with_code_map(&ctx.tree.code_map);
 
         ctx.next_pass();
     }
@@ -1443,6 +1458,8 @@ pub mod tests {
     use crate::parser::code_map::LineCol;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
     use crate::parser::{parse_or_err, Identifier};
+    use itertools::Itertools;
+    use mos_testing::enable_default_tracing;
     use std::path::Path;
     use std::sync::{Arc, Mutex};
 
@@ -2086,6 +2103,36 @@ pub mod tests {
         assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0xd0, 0xfd]);
         let ctx = test_codegen("bne foo\nfoo: nop")?;
         assert_eq!(ctx.current_segment().range_data(), vec![0xd0, 0x00, 0xea]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn can_perform_branch_calculations_over_multiple_passes() -> CoreResult<()> {
+        enable_default_tracing();
+
+        let lda_fwd = (0..50).map(|val| format!("lda l{}", val)).join("\n");
+        let fwd = (0..50).map(|val| format!("l{}: nop", val)).join("\n");
+        let src = lda_fwd + "\nbne foo\nfoo: asl\n" + &fwd;
+
+        let _ctx = test_codegen(&src)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn cannot_perform_too_far_branch_calculations() -> CoreResult<()> {
+        let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
+        let src = format!("foo: {}bne foo", many_nops);
+        let ast = parse_or_err(
+            &Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", &src).into(),
+        )?;
+        let (_, err) = codegen(ast.clone(), CodegenOptions::default());
+        assert_eq!(
+            err.to_string(),
+            "test.asm:141:1: error: branch too far trying to reach $C000 from $C08E"
+        );
         Ok(())
     }
 
@@ -2215,19 +2262,6 @@ pub mod tests {
             err.to_string(),
             "test.asm:2:1: error: expected 1 arguments, got 2"
         );
-    }
-
-    #[test]
-    fn cannot_perform_too_far_branch_calculations() -> CoreResult<()> {
-        let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
-        let src = format!("foo: {}bne foo", many_nops);
-        let ast = parse_or_err(
-            &Path::new("test.asm"),
-            InMemoryParsingSource::new().add("test.asm", &src).into(),
-        )?;
-        let (_, err) = codegen(ast.clone(), CodegenOptions::default());
-        assert_eq!(err.to_string(), "test.asm:141:1: error: branch too far");
-        Ok(())
     }
 
     #[test]

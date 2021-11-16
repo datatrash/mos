@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.5 (2021-11-16)
+
+### Bugfixes
+* 'Branch too far' errors could trigger based on label positions in previous passes.
+
 ## 0.7.4 (2021-07-22)
 
 ### Bugfixes
