@@ -65,21 +65,21 @@ You can add watch expressions to keep track of the value of symbols whenever you
 
 You can also access a few extra symbols that allow you to access CPU registers and memory locations:
 
-| Key | Description |
-| --- | ----------- |
-| cpu.a | The accumulator (A) register |
-| cpu.x | The X register |
-| cpu.y | The Y register |
-| cpu.sp | THe stack pointer |
-| * | The program counter |
-| cpu.flags.zero | The Z flag |
-| cpu.flags.carry | The C flag |
-| cpu.flags.interrupt_disable | The I flag |
-| cpu.flags.decimal | The D flag |
-| cpu.flags.overflow | The V flag |
-| cpu.flags.negative | The N flag |
-| ram(...) | Read a byte from ram, e.g. `ram($d020)` |
-| ram16(...) | Read a word from ram, e.g. `ram16($0314)` |
+| Key                         | Description                               |
+|-----------------------------|-------------------------------------------|
+| cpu.a                       | The accumulator (A) register              |
+| cpu.x                       | The X register                            |
+| cpu.y                       | The Y register                            |
+| cpu.sp                      | The stack pointer                         |
+| *                           | The program counter                       |
+| cpu.flags.zero              | The Z flag                                |
+| cpu.flags.carry             | The C flag                                |
+| cpu.flags.interrupt_disable | The I flag                                |
+| cpu.flags.decimal           | The D flag                                |
+| cpu.flags.overflow          | The V flag                                |
+| cpu.flags.negative          | The N flag                                |
+| ram(...)                    | Read a byte from ram, e.g. `ram($d020)`   |
+| ram16(...)                  | Read a word from ram, e.g. `ram16($0314)` |
 
 ## Options
 The following plugin options are available:

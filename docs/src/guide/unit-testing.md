@@ -33,21 +33,21 @@ In every part of your test (and even the subroutines you are testing) you can ad
 ### Available flags
 Since the tests are run on an emulated 6502 you can access CPU and memory information in your assertions as you well:
 
-| Key | Description |
-| --- | ----------- |
-| cpu.a | The accumulator (A) register |
-| cpu.x | The X register |
-| cpu.y | The Y register |
-| cpu.sp | THe stack pointer |
-| * | The program counter |
-| cpu.flags.zero | The Z flag |
-| cpu.flags.carry | The C flag |
-| cpu.flags.interrupt_disable | The I flag |
-| cpu.flags.decimal | The D flag |
-| cpu.flags.overflow | The V flag |
-| cpu.flags.negative | The N flag |
-| ram(...) | Read a byte from ram, e.g. `ram($d020)` |
-| ram16(...) | Read a word from ram, e.g. `ram16($0314)` |
+| Key                         | Description                               |
+|-----------------------------|-------------------------------------------|
+| cpu.a                       | The accumulator (A) register              |
+| cpu.x                       | The X register                            |
+| cpu.y                       | The Y register                            |
+| cpu.sp                      | The stack pointer                         |
+| *                           | The program counter                       |
+| cpu.flags.zero              | The Z flag                                |
+| cpu.flags.carry             | The C flag                                |
+| cpu.flags.interrupt_disable | The I flag                                |
+| cpu.flags.decimal           | The D flag                                |
+| cpu.flags.overflow          | The V flag                                |
+| cpu.flags.negative          | The N flag                                |
+| ram(...)                    | Read a byte from ram, e.g. `ram($d020)`   |
+| ram16(...)                  | Read a word from ram, e.g. `ram16($0314)` |
 
 ### Custom failure message
 When an assertion fails, it will log the expression that was being tested. You can optionally also provide a custom message, like so:
