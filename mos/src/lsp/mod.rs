@@ -213,9 +213,7 @@ impl LspContext {
         self.parsing_source
             .lock()
             .unwrap()
-            .try_get_contents(&self.working_directory().join("mos.toml"))
-            .map(|toml| Config::from_toml(&toml).ok())
-            .flatten()
+            .try_get_contents(&self.working_directory().join("mos.toml")).and_then(|toml| Config::from_toml(&toml).ok())
     }
 
     pub(crate) fn perform_codegen(&mut self) {

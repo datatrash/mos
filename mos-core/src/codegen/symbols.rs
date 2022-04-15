@@ -54,17 +54,11 @@ impl<S: Clone + Debug> SymbolTable<S> {
     }
 
     pub fn try_get(&self, nx: SymbolIndex) -> Option<&S> {
-        self.graph
-            .node_weight(nx)
-            .map(|i| i.data.as_ref())
-            .flatten()
+        self.graph.node_weight(nx).and_then(|i| i.data.as_ref())
     }
 
     pub fn try_get_mut(&mut self, nx: SymbolIndex) -> Option<&mut S> {
-        self.graph
-            .node_weight_mut(nx)
-            .map(|i| i.data.as_mut())
-            .flatten()
+        self.graph.node_weight_mut(nx).and_then(|i| i.data.as_mut())
     }
 
     pub fn insert<I: Into<Identifier>, D: Into<Option<S>>>(
@@ -224,11 +218,10 @@ impl<S: Clone + Debug> SymbolTable<S> {
     pub fn query<I: Into<IdentifierPath>>(&self, nx: SymbolIndex, path: I) -> Option<SymbolIndex> {
         self.query_traversal_steps(nx, path)
             .last()
-            .map(|tx| match tx {
+            .and_then(|tx| match tx {
                 QueryTraversalStep::Symbol(nx) => Some(*nx),
                 _ => None,
             })
-            .flatten()
     }
 
     /// Query for the symbol on every level, bubbling up

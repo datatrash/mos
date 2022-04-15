@@ -143,7 +143,7 @@ mod tests {
         src: Arc<Mutex<dyn ParsingSource>>,
         options: CodegenOptions,
     ) -> CoreResult<CodegenContext> {
-        let ast = parse_or_err(&Path::new("test.asm"), src)?;
+        let ast = parse_or_err(Path::new("test.asm"), src)?;
         let (ctx, err) = codegen(ast, options);
         if err.is_empty() {
             Ok(ctx.unwrap())

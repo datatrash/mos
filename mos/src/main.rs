@@ -169,10 +169,10 @@ mod tests {
                 .is_some()
         };
 
-        assert_eq!(is_present("./test/test2/test3"), true);
-        assert_eq!(is_present("./test/test2"), true);
-        assert_eq!(is_present("./test"), true);
-        assert_eq!(is_present("."), false);
+        assert!(is_present("./test/test2/test3"));
+        assert!(is_present("./test/test2"));
+        assert!(is_present("./test"));
+        assert!(!is_present("."));
 
         drop(file);
         root.close()?;

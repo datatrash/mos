@@ -84,12 +84,10 @@ impl RequestHandler<References> for FindReferencesHandler {
         );
 
         let locations = defs
-            .into_iter()
-            .map(|(_, def)| match params.context.include_declaration {
+            .into_iter().flat_map(|(_, def)| match params.context.include_declaration {
                 true => def.definition_and_usages(),
                 false => def.usages(),
             })
-            .flatten()
             .map(|dl| to_location(analysis.look_up(dl.span)))
             .collect_vec();
 
@@ -111,8 +109,7 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
         let analysis = codegen.analysis();
         let defs = ctx.find_definitions(analysis, &params.text_document_position_params);
         let highlights = defs
-            .into_iter()
-            .map(|(_, def)| {
+            .into_iter().flat_map(|(_, def)| {
                 def.definition_and_usages()
                     .into_iter()
                     .filter_map(|dl| {
@@ -128,7 +125,6 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
                     })
                     .collect_vec()
             })
-            .flatten()
             .collect();
 
         Ok(Some(highlights))

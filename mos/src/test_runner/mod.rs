@@ -46,7 +46,7 @@ pub struct TestFailure {
 
 impl Debug for TestFailure {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.diagnostic.to_string())
+        write!(f, "{}", self.diagnostic)
     }
 }
 
@@ -160,9 +160,7 @@ impl TestRunner {
 
         let active_test = ctx
             .symbols()
-            .try_index(ctx.symbols().root, test_path)
-            .map(|nx| ctx.symbols().try_get(nx))
-            .flatten();
+            .try_index(ctx.symbols().root, test_path).and_then(|nx| ctx.symbols().try_get(nx));
         let active_test = match active_test {
             Some(test) => test,
             None => {
@@ -755,7 +753,7 @@ mod tests {
 
     fn get_runner(source: &str, test_path: IdentifierPath) -> MosResult<TestRunner> {
         let src = InMemoryParsingSource::new().add("test.asm", source).into();
-        Ok(TestRunner::new(src, Path::new("test.asm"), &test_path)?)
+        TestRunner::new(src, Path::new("test.asm"), &test_path)
     }
 
     impl ExecuteResult {

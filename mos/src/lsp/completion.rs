@@ -117,7 +117,7 @@ mod tests {
             "vic: { .const border = $d020 }\n  lda ",
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(1, 6))?;
-        assert_unordered_eq(&unwrap(&response), &vec!["segments", "vic"]);
+        assert_unordered_eq(&unwrap(&response), &["segments", "vic"]);
         Ok(())
     }
 
@@ -129,7 +129,7 @@ mod tests {
             "{\nlda \n}\nvic: { .const border = $d020 }",
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(1, 4))?;
-        assert_unordered_eq(&unwrap(&response), &vec!["segments", "vic"]);
+        assert_unordered_eq(&unwrap(&response), &["segments", "vic"]);
         Ok(())
     }
 
@@ -141,7 +141,7 @@ mod tests {
             "outer: { vic: { .const border = $d020 } }\nfoo: {\nlda outer.vic.\n}",
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(2, 14))?;
-        assert_unordered_eq(&unwrap(&response), &vec!["border"]);
+        assert_unordered_eq(&unwrap(&response), &["border"]);
         Ok(())
     }
 
@@ -153,7 +153,7 @@ mod tests {
             "outer: { vic: { .const border = $d020 } }\n lda #outer.vic.",
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(1, 16))?;
-        assert_unordered_eq(&unwrap(&response), &vec!["border"]);
+        assert_unordered_eq(&unwrap(&response), &["border"]);
         Ok(())
     }
 
@@ -161,7 +161,7 @@ mod tests {
         match response {
             Some(r) => match r {
                 CompletionResponse::Array(items) => {
-                    items.into_iter().map(|i| i.label.as_str()).collect()
+                    items.iter().map(|i| i.label.as_str()).collect()
                 }
                 _ => panic!(),
             },

@@ -339,8 +339,7 @@ impl CodegenContext {
     fn try_current_segment(&self) -> Option<&Segment> {
         self.current_segment
             .as_ref()
-            .map(|cs| self.segments.get(cs))
-            .flatten()
+            .and_then(|cs| self.segments.get(cs))
     }
 
     fn try_current_segment_mut(&mut self) -> Option<&mut Segment> {
@@ -536,16 +535,15 @@ impl CodegenContext {
                 if self.try_current_target_pc().is_some() && self.options.active_test.is_some() {
                     let extracted_evaluator = self.get_evaluator().snapshot();
 
-                    let interpolated_failure_message;
-                    if let Some(fm) = &failure_message {
-                        interpolated_failure_message = Some(
+                    let interpolated_failure_message = if let Some(fm) = &failure_message {
+                        Some(
                             self.get_evaluator()
                                 .interpolate(fm, true)
                                 .map_err(|e| self.map_evaluation_error(e))?,
-                        );
+                        )
                     } else {
-                        interpolated_failure_message = None;
-                    }
+                        None
+                    };
                     self.test_elements.push(TestElement::Assertion(Assertion {
                         expr: value.clone(),
                         snapshot: extracted_evaluator,
@@ -1634,15 +1632,15 @@ pub mod tests {
         assert_eq!(bank.size, Some(8192));
         assert_eq!(bank.fill, Some(123));
         assert_eq!(bank.filename, Some("foo.bin".into()));
-        assert_eq!(ctx.banks.get(&Identifier::new("default")).is_none(), true);
+        assert!(ctx.banks.get(&Identifier::new("default")).is_none());
         Ok(())
     }
 
     #[test]
     fn can_define_banks_and_segment() -> CoreResult<()> {
         let ctx = test_codegen(".define bank {\nname = \"foo\"\ncreate-segment = true\n}")?;
-        assert_eq!(ctx.banks.get(&Identifier::new("foo")).is_some(), true);
-        assert_eq!(ctx.segments.get(&Identifier::new("foo")).is_some(), true);
+        assert!(ctx.banks.get(&Identifier::new("foo")).is_some());
+        assert!(ctx.segments.get(&Identifier::new("foo")).is_some());
         Ok(())
     }
 
@@ -1650,8 +1648,8 @@ pub mod tests {
     fn can_define_banks_with_string_interpolation() -> CoreResult<()> {
         let ctx =
             test_codegen(".macro def(NAME) { .define bank { name = NAME }}\ndef(\"foo\")\nnop")?;
-        assert_eq!(ctx.banks.get(&Identifier::new("foo")).is_some(), true);
-        assert_eq!(ctx.banks.get(&Identifier::new("default")).is_none(), true);
+        assert!(ctx.banks.get(&Identifier::new("foo")).is_some());
+        assert!(ctx.banks.get(&Identifier::new("default")).is_none());
         Ok(())
     }
 
@@ -1662,8 +1660,8 @@ pub mod tests {
         )?;
         assert_eq!(ctx.get_segment("foo").range(), 0xc000..0xc001);
         assert_eq!(ctx.get_segment("foo").range_data(), vec![0xea]);
-        assert_eq!(ctx.get_segment("foo").options().write, false);
-        assert_eq!(ctx.try_get_segment("default").is_none(), true);
+        assert!(!ctx.get_segment("foo").options().write);
+        assert!(ctx.try_get_segment("default").is_none());
         Ok(())
     }
 
@@ -2122,13 +2120,13 @@ pub mod tests {
 
     #[test]
     fn cannot_perform_too_far_branch_calculations() -> CoreResult<()> {
-        let many_nops = std::iter::repeat("nop\n").take(140).collect::<String>();
+        let many_nops = "nop\n".repeat(140);
         let src = format!("foo: {}bne foo", many_nops);
         let ast = parse_or_err(
-            &Path::new("test.asm"),
+            Path::new("test.asm"),
             InMemoryParsingSource::new().add("test.asm", &src).into(),
         )?;
-        let (_, err) = codegen(ast.clone(), CodegenOptions::default());
+        let (_, err) = codegen(ast, CodegenOptions::default());
         assert_eq!(
             err.to_string(),
             "test.asm:141:1: error: branch too far trying to reach $C000 from $C08E"
@@ -2208,12 +2206,10 @@ pub mod tests {
             },
         )?;
         assert_eq!(ctx.current_segment().range_data(), vec![]);
-        assert_eq!(
-            ctx.source_map()
-                .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, None)
-                .is_empty(),
-            false
-        );
+        assert!(!ctx
+            .source_map()
+            .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, None)
+            .is_empty());
         Ok(())
     }
 
@@ -2481,7 +2477,7 @@ sta $d021"#,
 
     pub fn test_codegen(code: &str) -> CoreResult<CodegenContext> {
         test_codegen_parsing_source(
-            InMemoryParsingSource::new().add("test.asm", &code).into(),
+            InMemoryParsingSource::new().add("test.asm", code).into(),
             CodegenOptions::default(),
         )
     }
@@ -2491,7 +2487,7 @@ sta $d021"#,
         options: CodegenOptions,
     ) -> CoreResult<CodegenContext> {
         test_codegen_parsing_source(
-            InMemoryParsingSource::new().add("test.asm", &code).into(),
+            InMemoryParsingSource::new().add("test.asm", code).into(),
             options,
         )
     }
@@ -2500,7 +2496,7 @@ sta $d021"#,
         src: Arc<Mutex<dyn ParsingSource>>,
         options: CodegenOptions,
     ) -> CoreResult<CodegenContext> {
-        let ast = parse_or_err(&Path::new("test.asm"), src)?;
+        let ast = parse_or_err(Path::new("test.asm"), src)?;
         let (ctx, err) = codegen(ast, options);
         if err.is_empty() {
             Ok(ctx.unwrap())

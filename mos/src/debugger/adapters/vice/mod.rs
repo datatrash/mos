@@ -219,8 +219,7 @@ impl MachineAdapter for ViceAdapter {
             .available_registers
             .iter()
             .find(|(_, value)| value.as_str() == "FL")
-            .map(|(flag_register_id, _)| self.current_register_values.get(flag_register_id))
-            .flatten();
+            .and_then(|(flag_register_id, _)| self.current_register_values.get(flag_register_id));
 
         match result {
             Some(r) => Ok(*r as u8),
@@ -545,7 +544,7 @@ mod tests {
                             .lock()
                             .unwrap()
                             .pop_front()
-                            .expect(&format!("Expected enqueued request: {:?}", req));
+                            .unwrap_or_else(|| panic!("Expected enqueued request: {:?}", req));
                         assert_eq!(req, exp_req);
                         for resp in responses {
                             sender.send(resp).unwrap();
@@ -631,12 +630,12 @@ mod tests {
     #[test]
     fn disconnect() -> MosResult<()> {
         let (mut adapter, mock) = launch()?;
-        assert_eq!(adapter.is_connected()?, true);
+        assert!(adapter.is_connected()?);
         mock.disconnect();
 
         // When trying to handle pending messages the adapter will discover it is not connected anymore
         adapter.handle_responses(true)?;
-        assert_eq!(adapter.is_connected()?, false);
+        assert!(!adapter.is_connected()?);
 
         Ok(())
     }

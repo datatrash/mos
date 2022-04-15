@@ -76,14 +76,12 @@ mod tests {
     fn check(source: &str, expected: &str) {
         let state = State::new(
             None,
-            InMemoryParsingSource::new()
-                .add("test.asm", &source.clone())
-                .into(),
+            InMemoryParsingSource::new().add("test.asm", source).into(),
         );
         let state = Arc::new(Mutex::new(state));
         let current_file = state.lock().unwrap().add_file("test.asm").unwrap();
         let instance = ParserInstance::new(state, current_file);
-        let input = LocatedSpan::new_extra(&source, instance);
+        let input = LocatedSpan::new_extra(source, instance);
         let (_, expr) = config_map(input).ok().unwrap();
         assert_eq!(format!("{}", expr), expected.to_string());
     }

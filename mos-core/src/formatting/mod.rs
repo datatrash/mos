@@ -103,24 +103,13 @@ impl Default for ListingOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FormattingOptions {
     pub mnemonics: MnemonicOptions,
     pub braces: BraceOptions,
     pub whitespace: WhitespaceOptions,
     pub listing: ListingOptions,
-}
-
-impl Default for FormattingOptions {
-    fn default() -> Self {
-        Self {
-            mnemonics: MnemonicOptions::default(),
-            braces: BraceOptions::default(),
-            whitespace: WhitespaceOptions::default(),
-            listing: ListingOptions::default(),
-        }
-    }
 }
 
 struct CodeFormatter {
@@ -797,7 +786,7 @@ fn join_chunks(chunks: Vec<Chunk>, options: &FormattingOptions) -> String {
             indent = Some(chunk.indent);
         }
 
-        for str in chunk.str.split_inclusive("\n") {
+        for str in chunk.str.split_inclusive('\n') {
             let mut ignore = false;
 
             match chunk.ty {
@@ -973,7 +962,6 @@ mod tests {
             FormattingOptions {
                 braces: BraceOptions {
                     position: BracePosition::NewLine,
-                    ..Default::default()
                 },
                 ..Default::default()
             },

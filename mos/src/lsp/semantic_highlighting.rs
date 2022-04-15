@@ -57,9 +57,7 @@ impl TokenType {
     }
 
     fn available_modifiers() -> Vec<SemanticTokenModifier> {
-        Self::iter()
-            .map(|ty| ty.semantic_token_modifiers())
-            .flatten()
+        Self::iter().flat_map(|ty| ty.semantic_token_modifiers())
             .unique()
             .collect_vec()
     }
@@ -141,8 +139,7 @@ fn to_deltas(code_map: &CodeMap, semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
 
     let semtoks_per_line = semtoks
         .into_iter()
-        .sorted_by_key(|(location, _)| (location.begin.line, location.begin.column))
-        .map(|(location, ty)| {
+        .sorted_by_key(|(location, _)| (location.begin.line, location.begin.column)).flat_map(|(location, ty)| {
             let mut result = vec![];
 
             let mut line = location.begin.line;
@@ -178,7 +175,6 @@ fn to_deltas(code_map: &CodeMap, semtoks: Vec<SemTok>) -> Vec<SemanticToken> {
 
             result
         })
-        .flatten()
         .collect_vec();
 
     let mut prev_line = 0;
@@ -296,9 +292,7 @@ impl SemTokBuilder {
 }
 
 fn emit_semantic_ast(ast: &[Token]) -> Vec<SemTok> {
-    ast.iter()
-        .map(|tok| emit_semantic(tok).tokens)
-        .flatten()
+    ast.iter().flat_map(|tok| emit_semantic(tok).tokens)
         .collect()
 }
 

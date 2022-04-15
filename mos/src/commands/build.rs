@@ -267,7 +267,7 @@ mod tests {
                     .unwrap()
                     .to_str()
                     .unwrap()
-                    .starts_with(".")
+                    .starts_with('.')
                 && item.path().file_name() != Some(OsStr::new("target"))
             {
                 build_all_examples_in(item.path())?;
@@ -282,7 +282,7 @@ mod tests {
 
         let cfg = Config {
             build: BuildOptions {
-                entry: entry.clone().to_string_lossy().into(),
+                entry: entry.to_string_lossy().into(),
                 target_directory: target.path().to_string_lossy().into(),
                 ..Default::default()
             },
@@ -294,7 +294,7 @@ mod tests {
             .path()
             .join(PathBuf::from(input).with_extension("prg"));
         let actual_bytes = std::fs::read(actual_path)?;
-        let expected_prg_path = PathBuf::from(entry).with_extension("prg").into_os_string();
+        let expected_prg_path = entry.with_extension("prg").into_os_string();
         let expected_prg_bytes = std::fs::read(expected_prg_path)?;
         assert_eq!(actual_bytes, expected_prg_bytes);
 
@@ -308,7 +308,7 @@ mod tests {
     fn config(entry: PathBuf, target: &Path) -> Config {
         Config {
             build: BuildOptions {
-                entry: entry.clone().to_string_lossy().into(),
+                entry: entry.to_string_lossy().into(),
                 target_directory: target.to_string_lossy().into(),
                 ..Default::default()
             },

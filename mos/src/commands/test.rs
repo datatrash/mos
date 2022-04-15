@@ -14,20 +14,11 @@ use std::sync::{Arc, Mutex};
 #[argh(subcommand, name = "test")]
 pub struct TestArgs {}
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct TestOptions {
     pub name: Option<String>,
     pub filter: Option<String>,
-}
-
-impl Default for TestOptions {
-    fn default() -> Self {
-        Self {
-            name: None,
-            filter: None,
-        }
-    }
 }
 
 pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
@@ -137,7 +128,7 @@ mod tests {
         let entry = test_cli_build().join("some-tests.asm");
         let cfg = Config {
             build: BuildOptions {
-                entry: entry.clone().to_string_lossy().into(),
+                entry: entry.to_string_lossy().into(),
                 target_directory: target().to_string_lossy().into(),
                 ..Default::default()
             },
@@ -156,7 +147,7 @@ mod tests {
         let entry = test_cli_build().join("some-tests.asm");
         let cfg = Config {
             build: BuildOptions {
-                entry: entry.clone().to_string_lossy().into(),
+                entry: entry.to_string_lossy().into(),
                 target_directory: target().to_string_lossy().into(),
                 ..Default::default()
             },

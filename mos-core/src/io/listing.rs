@@ -110,7 +110,7 @@ foo: nop
     5 C00F: 09 0A
     6 C011: 68 65 6C 6C 6F 20 74 68  .text "hello there"
     6 C019: 65 72 65"#
-                .replace("\n", LINE_ENDING)
+                .replace('\n', LINE_ENDING)
         );
 
         Ok(())
@@ -144,7 +144,7 @@ outer()"#,
     6                                    nop
     7                                }
     8 C000: EA 00                    outer()"#
-                .replace("\n", LINE_ENDING)
+                .replace('\n', LINE_ENDING)
         );
 
         Ok(())

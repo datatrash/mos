@@ -105,7 +105,7 @@ impl TestRunnerAdapter {
                                                         Colour::Yellow,
                                                         format!("({} cycles)", cycles)
                                                     ),
-                                                    failure.diagnostic.to_string(),
+                                                    failure.diagnostic,
                                                     format_cpu_details(&failure.cpu, true)
                                                 ),
                                                 location: failure.diagnostic.location(),

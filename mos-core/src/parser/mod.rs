@@ -1,5 +1,5 @@
 use crate::errors::{CoreResult, Diagnostics};
-use crate::parser::code_map::{File, Span, SpanLoc};
+use crate::parser::code_map::Span;
 use crate::parser::source::{InMemoryParsingSource, ParsingSource};
 use crate::GUIDE_URL;
 pub use ast::*;
@@ -39,19 +39,12 @@ pub mod testing;
 /// An error generated during parsing
 #[derive(Debug)]
 pub struct ParseError {
-    location: SpanLoc,
-    message: String,
-}
-
-#[derive(Debug)]
-pub struct ParseError2 {
-    file: Arc<File>,
     span: Span,
     message: String,
 }
 
-impl From<ParseError2> for Diagnostics {
-    fn from(e: ParseError2) -> Self {
+impl From<ParseError> for Diagnostics {
+    fn from(e: ParseError) -> Self {
         Diagnostic::error()
             .with_message(e.message)
             .with_labels(vec![e.span.to_label()])
@@ -201,6 +194,7 @@ where
 {
     move |input: LocatedSpan<'a>| {
         let (input, trivia) = opt(multiline_trivia)(input)?;
+        #[allow(clippy::redundant_closure)]
         let (input, result) = located_with_trivia(input, trivia, |i| inner(i))?;
         Ok((input, result))
     }
@@ -213,6 +207,7 @@ where
 {
     move |input: LocatedSpan<'a>| {
         let (input, trivia) = opt(trivia)(input)?;
+        #[allow(clippy::redundant_closure)]
         let (input, result) = located_with_trivia(input, trivia, |i| inner(i))?;
         Ok((input, result))
     }
@@ -865,7 +860,7 @@ fn trace(input: LocatedSpan) -> IResult<Token> {
         move |(tag, optional_args)| {
             let tag = tag.map_into(|_| ".trace".to_string());
             let lparen = optional_args.as_ref().map(|args| args.0.clone());
-            let args = optional_args.as_ref().map(|args| args.1.clone()).flatten();
+            let args = optional_args.as_ref().and_then(|args| args.1.clone());
             let rparen = optional_args.map(|args| args.2);
             Token::Trace {
                 tag,
@@ -1028,7 +1023,7 @@ fn fn_call(input: LocatedSpan) -> IResult<Located<ExpressionFactor>> {
                 ws(char(')')),
             )),
             move |(name, lparen, args, rparen)| {
-                let args = args.unwrap_or_else(Vec::new);
+                let args = args.unwrap_or_default();
                 ExpressionFactor::FunctionCall {
                     name,
                     lparen,
@@ -1666,7 +1661,7 @@ mod test {
 
     fn check(src: &str, expected: &str) {
         check_with_parsing_source(
-            InMemoryParsingSource::new().add("test.asm", &src).into(),
+            InMemoryParsingSource::new().add("test.asm", src).into(),
             expected,
         );
     }
@@ -1675,13 +1670,12 @@ mod test {
         src: Arc<Mutex<dyn ParsingSource>>,
         expected: &str,
     ) -> Arc<ParseTree> {
-        let (tree, error) = parse(&Path::new("test.asm"), src);
+        let (tree, error) = parse(Path::new("test.asm"), src);
         if !error.is_empty() {
             panic!("{}", error.to_string());
         }
         let tree = tree.unwrap();
         let actual = tree
-            .clone()
             .main_file()
             .tokens
             .iter()
@@ -1693,8 +1687,8 @@ mod test {
 
     fn check_ignore_err(src: &str, expected: &str) {
         let (tree, _) = parse(
-            &Path::new("test.asm"),
-            InMemoryParsingSource::new().add("test.asm", &src).into(),
+            Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", src).into(),
         );
         let actual = tree
             .unwrap()
@@ -1708,21 +1702,21 @@ mod test {
 
     fn check_err(src: &str, expected: &str) {
         check_err_with_parsing_source(
-            InMemoryParsingSource::new().add("test.asm", &src).into(),
+            InMemoryParsingSource::new().add("test.asm", src).into(),
             expected,
         );
     }
 
     fn check_err_with_parsing_source(source: Arc<Mutex<dyn ParsingSource>>, expected: &str) {
-        let (_, error) = parse(&Path::new("test.asm"), source);
+        let (_, error) = parse(Path::new("test.asm"), source);
         assert!(!error.is_empty());
         assert_eq!(error.to_string(), expected.to_string());
     }
 
     fn check_err_span(src: &str, start_column: usize, end_column: usize) {
         let (tree, errors) = parse(
-            &Path::new("test.asm"),
-            InMemoryParsingSource::new().add("test.asm", &src).into(),
+            Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", src).into(),
         );
         if !errors.is_empty() {
             assert_eq!(errors.len(), 1);

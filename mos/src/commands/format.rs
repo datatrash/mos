@@ -19,7 +19,7 @@ pub fn format_command(cfg: &Config) -> MosResult<()> {
 
     for file in tree.files.keys() {
         let formatted = format(file, tree.clone(), cfg.formatting);
-        let formatted = formatted.replace("\n", LINE_ENDING);
+        let formatted = formatted.replace('\n', LINE_ENDING);
         let mut output_file = OpenOptions::new()
             .truncate(true)
             .write(true)

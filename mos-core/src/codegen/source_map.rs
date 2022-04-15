@@ -3,7 +3,7 @@ use crate::codegen::ProgramCounter;
 use crate::parser::code_map::{CodeMap, Span};
 use std::ops::Range;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SourceMap {
     offsets: Vec<SourceMapOffset>,
 }
@@ -106,11 +106,5 @@ impl SourceMap {
                 offset.span = new_span;
             }
         });
-    }
-}
-
-impl Default for SourceMap {
-    fn default() -> Self {
-        Self { offsets: vec![] }
     }
 }
