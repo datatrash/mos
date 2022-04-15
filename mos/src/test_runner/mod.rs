@@ -160,7 +160,8 @@ impl TestRunner {
 
         let active_test = ctx
             .symbols()
-            .try_index(ctx.symbols().root, test_path).and_then(|nx| ctx.symbols().try_get(nx));
+            .try_index(ctx.symbols().root, test_path)
+            .and_then(|nx| ctx.symbols().try_get(nx));
         let active_test = match active_test {
             Some(test) => test,
             None => {

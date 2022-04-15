@@ -22,7 +22,8 @@ impl RequestHandler<CodeLensRequest> for CodeLensRequestHandler {
         .unwrap_or_default();
 
         let result = tests
-            .into_iter().flat_map(|(sl, test_case_path)| {
+            .into_iter()
+            .flat_map(|(sl, test_case_path)| {
                 let run = CodeLens {
                     range: to_range(sl.clone()),
                     command: Some(Command {

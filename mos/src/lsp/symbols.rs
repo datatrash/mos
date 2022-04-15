@@ -135,7 +135,8 @@ struct DocSymEmitter<'a> {
 
 impl<'a> DocSymEmitter<'a> {
     fn emit_document_symbols(&self, ast: &'a [Token], parent: Option<&Identifier>) -> Vec<DocSym> {
-        ast.iter().flat_map(|token| self.emit_document_symbol(token, parent))
+        ast.iter()
+            .flat_map(|token| self.emit_document_symbol(token, parent))
             .collect()
     }
 

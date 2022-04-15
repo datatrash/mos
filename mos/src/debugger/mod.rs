@@ -432,7 +432,8 @@ impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
             .collect_vec();
 
         let bps = line_column_pcs
-            .into_iter().flat_map(|(line, column, pcs)| {
+            .into_iter()
+            .flat_map(|(line, column, pcs)| {
                 pcs.into_iter().map(move |range| MachineBreakpoint {
                     line,
                     column,
