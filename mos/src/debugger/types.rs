@@ -136,6 +136,8 @@ pub struct Capabilities {
     pub supports_value_formatting_options: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supports_set_variable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_completions_request: Option<bool>,
 }
 
 pub struct LaunchRequest {}
@@ -740,6 +742,36 @@ pub struct EvaluateResponse {
     pub indexed_variables: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_reference: Option<String>,
+}
+
+pub struct CompletionsRequest {}
+
+impl Request for CompletionsRequest {
+    type Arguments = CompletionsArguments;
+    type Response = CompletionsResponse;
+    const COMMAND: &'static str = "completions";
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionsArguments {
+    pub frame_id: Option<usize>,
+    pub text: String,
+    pub column: usize,
+    pub line: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionsResponse {
+    pub targets: Vec<CompletionItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionItem {
+    // TODO: do we need the other fields for our use case?
+    pub label: String,
 }
 
 pub struct SetVariableRequest {}
