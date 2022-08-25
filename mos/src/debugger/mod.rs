@@ -117,6 +117,7 @@ impl Handler<InitializeRequest> for InitializeRequestHandler {
             supports_configuration_done_request: Some(true),
             supports_value_formatting_options: Some(true),
             supports_set_variable: Some(true),
+            supports_completions_request: Some(true),
         })
     }
 }
@@ -555,6 +556,108 @@ impl Handler<EvaluateRequest> for EvaluateRequestHandler {
     }
 }
 
+struct CompletionsRequestHandler {}
+
+impl CompletionsRequestHandler {
+    fn local_symbols(&self, conn: &DebugSession) -> MosResult<Vec<String>> {
+        if let Some(codegen) = conn.codegen() {
+            let state = conn.machine_adapter()?.running_state()?;
+            if let Some(scope) = current_scope(&state, &codegen)? {
+                return Ok(codegen
+                    .symbols()
+                    .visible_symbols(scope, true)
+                    .iter()
+                    .filter(|(id, _)| !id.is_special())
+                    .map(|(id, _)| id.to_string())
+                    .collect());
+            }
+        }
+
+        Ok(Vec::new())
+    }
+}
+
+impl Handler<CompletionsRequest> for CompletionsRequestHandler {
+    // TODO: prettify the signature. Why is CompletionsResponse not allowed?
+    fn handle(
+        &self,
+        conn: &mut DebugSession,
+        args: <CompletionsRequest as Request>::Arguments,
+    ) -> MosResult<<CompletionsRequest as Request>::Response> {
+        let registers = {
+            let adapter = conn.machine_adapter()?;
+            adapter.registers()?
+        };
+
+        let locals = self.local_symbols(conn)?;
+
+        // gets the current symbol being completed.
+        // assumes space separates each expression
+        let curr_completion = {
+            let (beginning, _) = args.text.split_at(args.column);
+            match beginning.rsplit_once(' ') {
+                Some((_, text)) => text,
+                None => beginning,
+            }
+        };
+
+        println!("Completion string: {}", curr_completion);
+
+        // get the completion candidates
+        let candidates: Vec<String> = if curr_completion.starts_with("cpu.flags.") {
+            let (_, after_dot_current) = curr_completion.split_at(10);
+            let flags = vec![
+                "carry".to_string(),
+                "zero".to_string(),
+                "interrupt_disable".to_string(),
+                "decimal".to_string(),
+                "overflow".to_string(),
+                "negative".to_string(),
+            ];
+            flags
+                .iter()
+                .filter(|sym| sym.starts_with(after_dot_current))
+                .map(|sym| sym.to_string())
+                .collect()
+        } else if curr_completion.starts_with("cpu.") {
+            let (_, after_dot_current) = curr_completion.split_at(4);
+            let subcommands = vec!["flags".to_string()];
+            registers
+                .keys()
+                .map(|kv_pair| kv_pair.to_lowercase())
+                .chain(subcommands)
+                .filter(|sym| sym.starts_with(after_dot_current))
+                .collect()
+        } else if curr_completion.starts_with("ram(") {
+            let (_, after_dot_current) = curr_completion.split_at(4);
+            locals
+                .iter()
+                .filter(|sym| sym.starts_with(after_dot_current))
+                .map(|sym| sym.to_string())
+                .collect()
+        } else {
+            // if no other matches, just give a few global symbols.
+            // try to match if any of them are trying to be completed
+            let globals = vec!["cpu".to_string(), "ram".to_string()];
+            globals
+                .iter()
+                .chain(locals.iter())
+                .filter(|sym| sym.starts_with(curr_completion))
+                .map(|sym| sym.to_string())
+                .collect()
+        };
+
+        Ok(CompletionsResponse {
+            targets: candidates
+                .iter()
+                .map(|candidate| CompletionItem {
+                    label: candidate.to_string(),
+                })
+                .collect(),
+        })
+    }
+}
+
 fn current_scope(
     state: &MachineRunningState,
     codegen: &CodegenContext,
@@ -729,6 +832,9 @@ impl DebugSession {
                     }
                     EvaluateRequest::COMMAND => {
                         self.handle(&EvaluateRequestHandler {}, req.arguments)
+                    }
+                    CompletionsRequest::COMMAND => {
+                        self.handle(&CompletionsRequestHandler {}, req.arguments)
                     }
                     InitializeRequest::COMMAND => {
                         self.handle(&InitializeRequestHandler {}, req.arguments)
@@ -946,6 +1052,155 @@ mod tests {
             response.result,
             "unknown identifier(s): invalid".to_string()
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn completions() -> MosResult<()> {
+        use mos_testing::assert_unordered_eq;
+
+        // TODO: completing in the middle of the word should probably not return the entire word?
+        //       or should it?
+
+        let src = r#".test "a" {
+                         ldx #123
+                         foo: nop
+                         {
+                             foo: asl
+                         }
+                         brk
+                     }"#;
+
+        let mut session = launch_session_and_break(
+            src,
+            vec![MachineBreakpoint {
+                line: 6,
+                column: None,
+                range: ProgramCounter::new(0xc002)..ProgramCounter::new(0xc003),
+            }],
+        )?;
+
+        // global symbols (top level ones)
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: String::new(),
+                    column: 0,
+                    line: None,
+                },
+            )?
+            .targets;
+        let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(response_labels.len(), 6);
+        assert_unordered_eq(
+            &response_labels,
+            &["cpu", "ram", "foo", "a", "TEST", "segments"],
+        );
+
+        // check that we get cpu back if we complete from c
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: "c".to_string(),
+                    column: 1,
+                    line: None,
+                },
+            )?
+            .targets;
+        assert_eq!(response.len(), 1);
+        assert_eq!(response[0].label, "cpu".to_string());
+
+        // that that cpu registers are completed successfully
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: "cpu.".to_string(),
+                    column: 4,
+                    line: None,
+                },
+            )?
+            .targets;
+        assert_eq!(response.len(), 5);
+        let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
+        assert_unordered_eq(&response_labels, &["a", "x", "y", "cyc", "flags"]);
+
+        // test that we get all flags
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: "cpu.flags.".to_string(),
+                    column: 10,
+                    line: None,
+                },
+            )?
+            .targets;
+        assert_eq!(response.len(), 6);
+        let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
+        assert_unordered_eq(
+            &response_labels,
+            &[
+                "carry",
+                "zero",
+                "interrupt_disable",
+                "decimal",
+                "overflow",
+                "negative",
+            ],
+        );
+
+        // test that global symbols/locals also complete successfully inside ram-block
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: "ram(".to_string(),
+                    column: 4,
+                    line: None,
+                },
+            )?
+            .targets;
+        let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
+        assert_unordered_eq(&response_labels, &["foo", "a", "TEST", "segments"]);
+
+        // test that we can also complete in the middle of a text
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: "cpu. == foo".to_string(),
+                    column: 4,
+                    line: None,
+                },
+            )?
+            .targets;
+        let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
+        assert_unordered_eq(&response_labels, &["a", "x", "y", "cyc", "flags"]);
+
+        // test that we can complete at the end
+        let response = CompletionsRequestHandler {}
+            .handle(
+                &mut session,
+                CompletionsArguments {
+                    frame_id: None,
+                    text: "foo == cpu.fl".to_string(),
+                    column: 13,
+                    line: None,
+                },
+            )?
+            .targets;
+        let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
+        assert_unordered_eq(&response_labels, &["flags"]);
 
         Ok(())
     }
