@@ -578,12 +578,11 @@ impl CompletionsRequestHandler {
 }
 
 impl Handler<CompletionsRequest> for CompletionsRequestHandler {
-    // TODO: prettify the signature. Why is CompletionsResponse not allowed?
     fn handle(
         &self,
         conn: &mut DebugSession,
         args: <CompletionsRequest as Request>::Arguments,
-    ) -> MosResult<<CompletionsRequest as Request>::Response> {
+    ) -> MosResult<CompletionsResponse> {
         let registers = {
             let adapter = conn.machine_adapter()?;
             adapter.registers()?
@@ -600,8 +599,6 @@ impl Handler<CompletionsRequest> for CompletionsRequestHandler {
                 None => beginning,
             }
         };
-
-        println!("Completion string: {}", curr_completion);
 
         // get the completion candidates
         let candidates: Vec<String> = if curr_completion.starts_with("cpu.flags.") {
@@ -1059,9 +1056,6 @@ mod tests {
     #[test]
     fn completions() -> MosResult<()> {
         use mos_testing::assert_unordered_eq;
-
-        // TODO: completing in the middle of the word should probably not return the entire word?
-        //       or should it?
 
         let src = r#".test "a" {
                          ldx #123
