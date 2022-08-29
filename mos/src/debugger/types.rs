@@ -770,7 +770,6 @@ pub struct CompletionsResponse {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionItem {
-    // TODO: do we need the other fields for our use case?
     pub label: String,
 }
 
