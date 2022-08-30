@@ -485,10 +485,10 @@ impl CodegenContext {
                 if segment.emit(bytes) {
                     Ok(())
                 } else {
-                    return Err(Diagnostic::error()
+                    Err(Diagnostic::error()
                         .with_message(format!("segment '{}' is out of range", name))
                         .with_labels(vec![span.to_label()])
-                        .into());
+                        .into())
                 }
             }
             None => {
@@ -881,7 +881,7 @@ impl CodegenContext {
                                 + 2)
                             .as_i64();
                             let mut offset = target_pc - cur_pc;
-                            if offset >= -128 && offset <= 127 {
+                            if (-128..=127).contains(&offset) {
                                 if offset < 0 {
                                     offset += 256;
                                 }

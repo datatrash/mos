@@ -56,7 +56,7 @@ impl PartialEq for TestFailure {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FormattedTrace(String);
 
 impl Display for FormattedTrace {

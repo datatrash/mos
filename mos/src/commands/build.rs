@@ -14,11 +14,11 @@ use std::path::{Path, PathBuf};
 use strum::EnumString;
 
 /// Assembles input file(s)
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand, name = "build")]
 pub struct BuildArgs {}
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct BuildOptions {
     pub entry: String,
@@ -72,14 +72,14 @@ impl Default for BuildOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, EnumString)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, EnumString)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub enum OutputFormat {
     Prg,
     Bin,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, EnumString)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, EnumString)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub enum SymbolType {
     Vice,

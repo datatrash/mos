@@ -18,7 +18,7 @@ pub struct SymbolTable<S: Clone + Debug> {
 pub type SymbolIndex = NodeIndex;
 pub type SymbolIndices<'a, S> = NodeIndices<'a, Item<S>>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum QueryTraversalStep {
     Symbol(SymbolIndex),
     Super(SymbolIndex),

@@ -6,7 +6,7 @@ use mos_core::errors::{map_io_error, Diagnostics};
 use std::path::Path;
 
 /// Creates a new MOS project configuration file
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand, name = "init")]
 pub struct InitArgs {}
 

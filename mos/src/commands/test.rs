@@ -10,11 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Runs unit test(s)
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand, name = "test")]
 pub struct TestArgs {}
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct TestOptions {
     pub name: Option<String>,

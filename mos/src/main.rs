@@ -25,7 +25,7 @@ mod test_runner;
 /// Miscellaneous utility methods
 mod utils;
 
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 /// mos - https://mos.datatra.sh
 pub struct Args {
     #[argh(subcommand)]
@@ -41,14 +41,14 @@ pub struct Args {
     error_style: ErrorStyle,
 }
 
-#[derive(PartialEq, Debug, strum::EnumString)]
+#[derive(PartialEq, Eq, Debug, strum::EnumString)]
 pub enum ErrorStyle {
     Short,
     Medium,
     Rich,
 }
 
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand)]
 pub enum Subcommand {
     Init(InitArgs),

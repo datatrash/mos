@@ -3,7 +3,7 @@ use crate::diagnostic_emitter::MosResult;
 use mos_core::formatting::FormattingOptions;
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Config {
     pub build: BuildOptions,

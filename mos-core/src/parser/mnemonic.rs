@@ -4,7 +4,7 @@ use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
 
 /// The available 6502 instructions.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mnemonic {
     Adc,
     And,
