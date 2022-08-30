@@ -3,7 +3,7 @@ use crate::diagnostic_emitter::MosResult;
 use crate::lsp::{LspContext, LspServer};
 
 /// Starts a Language Server
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand, name = "lsp")]
 pub struct LspArgs {
     /// the port on which the debug adapter server should listen

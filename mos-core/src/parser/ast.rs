@@ -155,7 +155,7 @@ pub enum Trivia {
 }
 
 /// Registers used for indexing
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum IndexRegister {
     X,
     Y,
@@ -179,7 +179,7 @@ pub struct Instruction {
 }
 
 /// The addressing mode for the instruction
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressingMode {
     /// Absolute or Zero-Page addressing (e.g. `LDA $34`)
     AbsoluteOrZp,
@@ -211,7 +211,7 @@ pub struct RegisterSuffix {
 }
 
 /// A number, which can be hexadecimal (`$23AB`), decimal (`123`) or binary (`%11011`)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberType {
     Hex,
     Dec,
@@ -229,7 +229,7 @@ impl Display for NumberType {
 }
 
 /// An address modifier which can be used to get the low (`<`) or high (`>`) byte of an address
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AddressModifier {
     HighByte,
     LowByte,
@@ -245,7 +245,7 @@ impl Display for AddressModifier {
 }
 
 /// Any kind of binary operation that can be found in an expression
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
     /// Addition
     Add,
@@ -339,7 +339,7 @@ pub enum ExpressionFactor {
 }
 
 /// A wrapper that stores the original number string and its radix, so that any zero-prefixes are kept
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Number {
     radix: u32,
     data: String,
@@ -422,7 +422,7 @@ impl Expression {
 }
 
 /// User-defined variables
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VariableType {
     Constant,
     Variable,
@@ -438,7 +438,7 @@ impl Display for VariableType {
 }
 
 /// The size of a data directive (e.g. `.byte 1, 2, 3`)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataSize {
     Byte,
     Word,
@@ -475,7 +475,7 @@ impl Display for ImportAs {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TextEncoding {
     Ascii,
     Petscii,
@@ -854,19 +854,19 @@ pub fn format_trivia(trivia: &Option<Box<Located<Vec<Trivia>>>>) -> String {
         .unwrap_or_else(|| "".to_string())
 }
 
-impl<'a, T: Display> Display for Located<T> {
+impl<T: Display> Display for Located<T> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}{}", format_trivia(&self.trivia), &self.data)
     }
 }
 
-impl<'a, T: Display + LowerHex> LowerHex for Located<T> {
+impl<T: Display + LowerHex> LowerHex for Located<T> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}{:x}", format_trivia(&self.trivia), &self.data)
     }
 }
 
-impl<'a, T: Display + Binary> Binary for Located<T> {
+impl<T: Display + Binary> Binary for Located<T> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}{:b}", format_trivia(&self.trivia), &self.data)
     }

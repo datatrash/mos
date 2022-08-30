@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{BufRead, Write};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ViceResponse {
     AdvanceInstructions,
     BanksAvailable(HashMap<u16, String>),
@@ -24,7 +24,7 @@ pub enum ViceResponse {
     Resumed(u16),
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CheckpointResponse {
     pub number: u32,
     pub currently_hit: bool,
@@ -40,7 +40,7 @@ pub struct CheckpointResponse {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ViceRequest {
     AdvanceInstructions(bool, u16),
     BanksAvailable,
@@ -58,7 +58,7 @@ pub enum ViceRequest {
     Quit,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CheckpointSet {
     pub start: u16,
     pub end: u16,
@@ -68,7 +68,7 @@ pub struct CheckpointSet {
     pub temporary: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemoryDescriptor {
     pub cause_side_effects: bool,
     pub start: u16,

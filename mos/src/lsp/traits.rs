@@ -30,7 +30,7 @@ pub trait NotificationHandler<N: Notification> {
 #[macro_export]
 macro_rules! impl_request_handler {
     ($ty:ty) => {
-        impl crate::lsp::traits::UntypedRequestHandler for $ty {
+        impl $crate::lsp::traits::UntypedRequestHandler for $ty {
             fn method(&self) -> &'static str {
                 RequestHandler::method(self)
             }
@@ -49,7 +49,7 @@ macro_rules! impl_request_handler {
 #[macro_export]
 macro_rules! impl_notification_handler {
     ($ty:ty) => {
-        impl crate::lsp::traits::UntypedNotificationHandler for $ty {
+        impl $crate::lsp::traits::UntypedNotificationHandler for $ty {
             fn method(&self) -> &'static str {
                 NotificationHandler::method(self)
             }

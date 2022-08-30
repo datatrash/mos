@@ -59,7 +59,7 @@ impl Machine {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum MachineEvent {
     RunningStateChanged {
         old: MachineRunningState,
@@ -116,14 +116,14 @@ pub trait MachineAdapter: MemoryAccessor {
     fn flags(&self) -> MosResult<u8>;
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MachineBreakpoint {
     pub line: usize,
     pub column: Option<usize>,
     pub range: Range<ProgramCounter>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MachineValidatedBreakpoint {
     pub id: usize,
     pub source_path: String,
@@ -131,7 +131,7 @@ pub struct MachineValidatedBreakpoint {
     pub range: Range<ProgramCounter>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachineRunningState {
     Launching,
     Running,

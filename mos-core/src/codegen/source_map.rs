@@ -8,7 +8,7 @@ pub struct SourceMap {
     offsets: Vec<SourceMapOffset>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SourceMapOffset {
     pub scope: SymbolIndex,
     pub span: Span,

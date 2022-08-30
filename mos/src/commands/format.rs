@@ -9,7 +9,7 @@ use mos_core::LINE_ENDING;
 use std::io::Write;
 
 /// Formats input file(s)
-#[derive(argh::FromArgs, PartialEq, Debug)]
+#[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand, name = "format")]
 pub struct FormatArgs {}
 

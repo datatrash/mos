@@ -38,14 +38,14 @@ pub fn ensure_ram_fn(
                 let len = if self.word { 2 } else { 1 };
                 let bytes = self.memory_accessor.lock().unwrap().read(a as u16, len);
                 if self.word {
-                    let lo = bytes.get(0);
+                    let lo = bytes.first();
                     let hi = bytes.get(1);
                     match (lo, hi) {
                         (Some(lo), Some(hi)) => Some(256 * (*hi as i64) + (*lo as i64)),
                         _ => None,
                     }
                 } else {
-                    bytes.get(0).map(|b| *b as i64)
+                    bytes.first().map(|b| *b as i64)
                 }
             });
             Ok(val.map(SymbolData::Number))
