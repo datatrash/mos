@@ -1,7 +1,7 @@
 # IDE support
 
-MOS provides a language server that can be used by IDEs to provide tooling.
+MOS provides a language server and debug adapter that can be used by IDEs to provide tooling.
 
-For now, this language server is used to provide a Visual Studio Code extension.
+It is used to provide a Visual Studio Code extension, and also [an Emacs package](https://github.com/themkat/mos-mode).
 
 ![Showing debugging in action](./mos-vscode.jpg)
