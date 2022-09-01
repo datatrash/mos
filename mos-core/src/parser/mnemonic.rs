@@ -2,9 +2,11 @@ use super::{IResult, LocatedSpan};
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
+use strum::{EnumIter, EnumString, EnumVariantNames};
 
 /// The available 6502 instructions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumVariantNames, EnumIter, EnumString)]
+#[strum(serialize_all = "lowercase")]
 pub enum Mnemonic {
     Adc,
     And,
