@@ -4,8 +4,9 @@ use crate::lsp::{LspContext, RequestHandler};
 use itertools::Itertools;
 use lsp_types::request::Completion;
 use lsp_types::{CompletionItem, CompletionParams, CompletionResponse};
-use mos_core::parser::IdentifierPath;
+use mos_core::parser::{IdentifierPath, Mnemonic};
 use std::collections::HashMap;
+use strum::IntoEnumIterator;
 
 pub struct CompletionHandler;
 
@@ -31,9 +32,10 @@ impl RequestHandler<Completion> for CompletionHandler {
                 let source_column = params.text_document_position.position.character as usize;
 
                 // Try to determine the previous characters to see if we're trying to auto-complete inside a scope
+                let mut line = "";
                 let mut nested_scope = None;
                 if let Some(source_file) = codegen.tree().files.get(path) {
-                    let line = source_file.file.source_line(source_line);
+                    line = source_file.file.source_line(source_line);
 
                     // Only look at the line until the source_column
                     if source_column <= line.len() && source_column > 0 {
@@ -69,6 +71,16 @@ impl RequestHandler<Completion> for CompletionHandler {
                     );
                 }
 
+                // offsets still empty? probably a global symbol (mnemonic, built-in etc.)
+                let global_symbols: Vec<String> = if offsets.is_empty() {
+                    Mnemonic::iter()
+                        .map(|mnemonic| mnemonic.to_string().to_lowercase())
+                        .filter(|sym| sym.starts_with(line.trim()))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
                 let mut symbols = HashMap::new();
                 offsets.into_iter().for_each(|offset| {
                     let scope_nx = match &nested_scope {
@@ -92,6 +104,10 @@ impl RequestHandler<Completion> for CompletionHandler {
                         label: id.to_string(),
                         ..Default::default()
                     })
+                    .chain(global_symbols.iter().map(|sym| CompletionItem {
+                        label: sym.to_string(),
+                        ..Default::default()
+                    }))
                     .collect_vec();
                 return Ok(Some(CompletionResponse::from(items)));
             }
@@ -154,6 +170,27 @@ mod tests {
         )?;
         let response = server.completion(test_root().join("main.asm"), Position::new(1, 16))?;
         assert_unordered_eq(&unwrap(&response), &["border"]);
+        Ok(())
+    }
+
+    #[test]
+    fn mnemonics_completions_empty_in() -> MosResult<()> {
+        use strum::VariantNames;
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(test_root().join("main.asm"), "")?;
+        let response = server.completion(test_root().join("main.asm"), Position::new(0, 1))?;
+        assert_unordered_eq(&unwrap(&response), &Mnemonic::VARIANTS);
+
+        Ok(())
+    }
+
+    #[test]
+    fn mnemonics_completions_ld() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(test_root().join("main.asm"), "ld")?;
+        let response = server.completion(test_root().join("main.asm"), Position::new(0, 1))?;
+        assert_unordered_eq(&unwrap(&response), &["ldx", "ldy", "lda"]);
+
         Ok(())
     }
 
