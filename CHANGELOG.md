@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1 (2022-09-02)
+
+### New features
+* Autocompletion for mnemonics, thanks again [@themkat](https://github.com/themkat)! ([#196](https://github.com/datatrash/mos/issues/196))
+
+## 0.8.0 (2022-08-31)
+
+### New features
+* There is now also code completion in the debugger, thanks [@themkat](https://github.com/themkat)! ([#166](https://github.com/datatrash/mos/issues/166))
+
 ## 0.7.5 (2021-11-16)
 
 ### Bugfixes
