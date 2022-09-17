@@ -229,6 +229,10 @@ impl MachineAdapter for ViceAdapter {
             .into()),
         }
     }
+
+    fn set_variable(&mut self, name: String, value: i64) -> MosResult<()> {
+        todo!()
+    }
 }
 
 impl ViceAdapter {

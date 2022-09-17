@@ -295,6 +295,19 @@ impl MachineAdapter for TestRunnerAdapter {
     fn flags(&self) -> MosResult<u8> {
         Ok(self.runner.read().unwrap().cpu().get_status_register())
     }
+
+    fn set_variable(&mut self, name: String, value: i64) -> MosResult<()> {
+        let mut write_runner = self.runner.write().unwrap();
+        let cpu_mut = write_runner.cpu_mut();
+        match name.as_str() {
+            "A" => cpu_mut.set_accumulator(value as u8),
+            "X" => cpu_mut.set_x_register(value as u8),
+            "Y" => cpu_mut.set_y_register(value as u8),
+            _ => {}
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -214,6 +214,10 @@ impl TestRunner {
         &self.cpu
     }
 
+    pub fn cpu_mut(&mut self) -> &mut MOS6502 {
+        &mut self.cpu
+    }
+
     pub fn num_cycles(&self) -> usize {
         self.num_cycles
     }
