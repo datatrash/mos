@@ -386,6 +386,47 @@ impl Handler<VariablesRequest> for VariablesRequestHandler {
     }
 }
 
+struct SetVariableRequestHandler {}
+
+impl Handler<SetVariableRequest> for SetVariableRequestHandler {
+    fn handle(
+        &self,
+        conn: &mut DebugSession,
+        args: <SetVariableRequest as Request>::Arguments,
+    ) -> MosResult<SetVariableResponse> {
+        match args.variables_reference {
+            1 => {
+                // convert from assembly number representation to decimal
+                let assembly_number = args.value.trim();
+                let decimal_number = if assembly_number.starts_with("$") {
+                    // extra let seems to be needed to keep the compiler happy
+                    let without_leading_char: String = assembly_number.chars().skip(1).collect();
+                    u8::from_str_radix(&without_leading_char, 16)?
+                } else if assembly_number.starts_with("%") && assembly_number.len() == 9 {
+                    // extra let seems to be needed to keep the compiler happy
+                    let without_leading_char: String = assembly_number.chars().skip(1).collect();
+                    u8::from_str_radix(&without_leading_char, 2)?
+                } else {
+                    assembly_number.parse()?
+                };
+
+                let _result = conn
+                    .machine_adapter_mut()?
+                    .set_variable(args.name, decimal_number as i64)?;
+
+                Ok(SetVariableResponse {
+                    value: decimal_number.to_string(),
+                    ty: None,
+                    variables_reference: 1,
+                    named_variables: None,
+                    indexed_variables: None,
+                })
+            }
+            _ => Err(anyhow::anyhow!("Incompatible variable assignment")),
+        }
+    }
+}
+
 struct SetBreakpointsRequestHandler {}
 
 impl Handler<SetBreakpointsRequest> for SetBreakpointsRequestHandler {
@@ -846,9 +887,9 @@ impl DebugSession {
                     SetBreakpointsRequest::COMMAND => {
                         self.handle(&SetBreakpointsRequestHandler {}, req.arguments)
                     }
-                    /*SetVariableRequest::COMMAND => {
+                    SetVariableRequest::COMMAND => {
                         self.handle(&SetVariableRequestHandler {}, req.arguments)
-                    }*/
+                    }
                     StepInRequest::COMMAND => self.handle(&StepInRequestHandler {}, req.arguments),
                     StepOutRequest::COMMAND => {
                         self.handle(&StepOutRequestHandler {}, req.arguments)
@@ -1195,6 +1236,71 @@ mod tests {
             .targets;
         let response_labels: Vec<&str> = response.iter().map(|item| item.label.as_str()).collect();
         assert_unordered_eq(&response_labels, &["flags"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn set_variable_registers() -> MosResult<()> {
+        // A set to dec(209), will be dec(210) after run if no setvariable request changes it
+        // (spoiler: it will change!)
+        let src = r#".test "a" {
+                         lda #$d0
+                         adc #1
+                         nop
+                     }"#;
+
+        let mut session = launch_session_and_break(
+            src,
+            vec![MachineBreakpoint {
+                line: 3,
+                column: None,
+                range: ProgramCounter::new(0xc002)..ProgramCounter::new(0xc003),
+            }],
+        )?;
+
+        // do a few set variable requests
+        // one that affects the running programs execution
+        let _result = SetVariableRequestHandler {}.handle(
+            &mut session,
+            SetVariableArguments {
+                variables_reference: 1,
+                name: "A".to_string(),
+                value: "63".to_string(),
+                format: None,
+            },
+        );
+        let _result = SetVariableRequestHandler {}.handle(
+            &mut session,
+            SetVariableArguments {
+                variables_reference: 1,
+                name: "X".to_string(),
+                value: "$12".to_string(),
+                format: None,
+            },
+        );
+        let _result = SetVariableRequestHandler {}.handle(
+            &mut session,
+            SetVariableArguments {
+                variables_reference: 1,
+                name: "Y".to_string(),
+                value: "%10000001".to_string(),
+                format: None,
+            },
+        );
+
+        // jump two instructions forward
+        let mut machine_adapter = session.machine_adapter_mut()?;
+
+        let _result = machine_adapter.next()?;
+        let _result = machine_adapter.next()?;
+
+        // assert that the registers is at the correct state
+        // (A is affected by program, X and Y is the values they were set to)
+        let registers_map = machine_adapter.registers()?;
+        assert_eq!(registers_map.get(&"A".to_string()), Some(&64));
+        assert_eq!(registers_map.get(&"X".to_string()), Some(&18));
+        assert_eq!(registers_map.get(&"Y".to_string()), Some(&129));
 
         Ok(())
     }

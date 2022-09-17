@@ -114,6 +114,10 @@ pub trait MachineAdapter: MemoryAccessor {
 
     /// Get the cpu flags
     fn flags(&self) -> MosResult<u8>;
+
+    /// Sets a variable to a new value
+    /// Note: Implementations currently only supports setting registers
+    fn set_variable(&mut self, name: String, value: i64) -> MosResult<()>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
