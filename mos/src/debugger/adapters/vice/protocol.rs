@@ -54,6 +54,7 @@ pub enum ViceRequest {
     MemorySet(MemoryDescriptor, Vec<u8>),
     Ping,
     RegistersGet,
+    RegistersSet(u8, u8),
     RegistersAvailable,
     Quit,
 }
@@ -231,6 +232,15 @@ impl ViceRequest {
                 (0x15, body)
             }
             ViceRequest::RegistersGet => (0x31, vec![0]),
+            ViceRequest::RegistersSet(id, value) => {
+                let mut body = vec![];
+                body.write_u8(0)?;
+                body.write_u16::<LittleEndian>(1)?;
+                body.write_u8(16)?;
+                body.write_u8(*id)?;
+                body.write_u16::<LittleEndian>(*value as u16)?;
+                (0x32, body)
+            }
             ViceRequest::AdvanceInstructions(step_over_subroutines, instructions_to_skip) => {
                 let mut body = vec![];
                 body.write_u8(bool_to_u8(*step_over_subroutines))?;

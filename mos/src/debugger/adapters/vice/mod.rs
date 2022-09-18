@@ -231,7 +231,17 @@ impl MachineAdapter for ViceAdapter {
     }
 
     fn set_variable(&mut self, name: String, value: i64) -> MosResult<()> {
-        todo!()
+        // check if variable is a register
+        let register_id = self
+            .available_registers
+            .iter()
+            .find(|(_, reg_name)| reg_name.as_str() == name.as_str());
+
+        if let Some((id, _)) = register_id {
+            self.send(ViceRequest::RegistersSet(*id, value as u8))?;
+        }
+
+        Ok(())
     }
 }
 
