@@ -241,6 +241,11 @@ impl MachineAdapter for ViceAdapter {
             self.send(ViceRequest::RegistersSet(*id, value as u8))?;
         }
 
+        // from VICE docs (https://vice-emu.sourceforge.io/vice_13.html#SEC312):
+        // "The transmission of any command causes the emulator to stop, similar to the regular monitor."
+        // so resume after setting the variable
+        self.resume()?;
+
         Ok(())
     }
 }
