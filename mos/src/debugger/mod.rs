@@ -414,7 +414,7 @@ impl Handler<SetVariableRequest> for SetVariableRequestHandler {
 
                 let _result = conn
                     .machine_adapter_mut()?
-                    .set_variable(args.name, decimal_number as i64)?;
+                    .set_variable(args.name, decimal_number)?;
 
                 Ok(SetVariableResponse {
                     value: decimal_number.to_string(),

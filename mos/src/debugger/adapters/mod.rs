@@ -117,7 +117,7 @@ pub trait MachineAdapter: MemoryAccessor {
 
     /// Sets a variable to a new value
     /// Note: Implementations currently only supports setting registers
-    fn set_variable(&mut self, name: String, value: i64) -> MosResult<()>;
+    fn set_variable(&mut self, name: String, value: u8) -> MosResult<()>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

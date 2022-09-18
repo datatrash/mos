@@ -230,7 +230,7 @@ impl MachineAdapter for ViceAdapter {
         }
     }
 
-    fn set_variable(&mut self, name: String, value: i64) -> MosResult<()> {
+    fn set_variable(&mut self, name: String, value: u8) -> MosResult<()> {
         // check if variable is a register
         let register_id = self
             .available_registers
@@ -238,7 +238,7 @@ impl MachineAdapter for ViceAdapter {
             .find(|(_, reg_name)| reg_name.as_str() == name.as_str());
 
         if let Some((id, _)) = register_id {
-            self.send(ViceRequest::RegistersSet(*id, value as u8))?;
+            self.send(ViceRequest::RegistersSet(*id, value))?;
         }
 
         // from VICE docs (https://vice-emu.sourceforge.io/vice_13.html#SEC312):
