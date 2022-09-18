@@ -392,10 +392,12 @@ impl Handler<SetVariableRequest> for SetVariableRequestHandler {
     fn handle(
         &self,
         conn: &mut DebugSession,
-        args: <SetVariableRequest as Request>::Arguments,
+        args: SetVariableArguments,
     ) -> MosResult<SetVariableResponse> {
-        match args.variables_reference {
-            1 => {
+        // TODO: the clients (Emacs, VSCode etc.) does not seem to send in variables_reference.
+        //       Would probably be a better way to separate different types of variables for later.
+        match args.name.as_str() {
+            "A" | "X" | "Y" => {
                 // convert from assembly number representation to decimal
                 let assembly_number = args.value.trim();
                 let decimal_number = if assembly_number.starts_with("$") {
@@ -422,7 +424,10 @@ impl Handler<SetVariableRequest> for SetVariableRequestHandler {
                     indexed_variables: None,
                 })
             }
-            _ => Err(anyhow::anyhow!("Incompatible variable assignment")),
+            _ => Err(anyhow::anyhow!(format!(
+                "Incompatible variable assignment, {}",
+                args.name
+            ))),
         }
     }
 }
