@@ -400,11 +400,11 @@ impl Handler<SetVariableRequest> for SetVariableRequestHandler {
             "A" | "X" | "Y" => {
                 // convert from assembly number representation to decimal
                 let assembly_number = args.value.trim();
-                let decimal_number = if assembly_number.starts_with("$") {
+                let decimal_number = if assembly_number.starts_with('$') {
                     // extra let seems to be needed to keep the compiler happy
                     let without_leading_char: String = assembly_number.chars().skip(1).collect();
                     u8::from_str_radix(&without_leading_char, 16)?
-                } else if assembly_number.starts_with("%") && assembly_number.len() == 9 {
+                } else if assembly_number.starts_with('%') && assembly_number.len() == 9 {
                     // extra let seems to be needed to keep the compiler happy
                     let without_leading_char: String = assembly_number.chars().skip(1).collect();
                     u8::from_str_radix(&without_leading_char, 2)?
@@ -412,8 +412,7 @@ impl Handler<SetVariableRequest> for SetVariableRequestHandler {
                     assembly_number.parse()?
                 };
 
-                let _result = conn
-                    .machine_adapter_mut()?
+                conn.machine_adapter_mut()?
                     .set_variable(args.name, decimal_number)?;
 
                 Ok(SetVariableResponse {
