@@ -28,16 +28,10 @@ pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
     let mut test_cases = enumerate_test_cases(src.clone(), &input_path)?;
 
     if let Some(test_name) = &cfg.test.name {
-        test_cases = test_cases
-            .into_iter()
-            .filter(|(_, c)| &c.to_string() == test_name)
-            .collect();
+        test_cases.retain(|(_, c)| &c.to_string() == test_name);
     }
     if let Some(test_filter) = &cfg.test.filter {
-        test_cases = test_cases
-            .into_iter()
-            .filter(|(_, c)| c.to_string().contains(test_filter))
-            .collect();
+        test_cases.retain(|(_, c)| c.to_string().contains(test_filter));
     }
 
     let mut failed = vec![];
