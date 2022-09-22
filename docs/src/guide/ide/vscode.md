@@ -13,7 +13,7 @@ Once you have it installed, the following features will become available:
 * Automatic indentation
 * Show function documentation on hover
 
-The debugger supports breakpoints, local symbols, watches and evaluating expressions.
+The debugger supports breakpoints, local symbols, watches, setting variable values and evaluating expressions.
 
 ::: danger
 The debugger requires VICE 3.5+, which introduces the `-binarymonitor` command line argument.
@@ -80,6 +80,21 @@ You can also access a few extra symbols that allow you to access CPU registers a
 | cpu.flags.negative          | The N flag                                |
 | ram(...)                    | Read a byte from ram, e.g. `ram($d020)`   |
 | ram16(...)                  | Read a word from ram, e.g. `ram16($0314)` |
+
+## Set variable values during debugging
+::: danger
+Currently you are only able to set register values. Other types of variables will give an error!
+:::
+
+You can set the value of variables, either as decimal-, hexadecimal- or binary value. You specify the type or value with a prefix.
+
+| Prefix | Type        | Example   |
+|--------|-------------|-----------|
+| <none> | Decimal     | 123       |
+| $      | Hexadecimal | $d01      |
+| %      | Binary      | %00010010 |
+
+
 
 ## Options
 The following plugin options are available:
