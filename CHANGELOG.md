@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 (2022-10-06)
+
+### New features
+- Allow setting registers when debugging, once again thanks to [@themkat](https://github.com/themkat)! ([#110](https://github.com/datatrash/mos/issues/110))
+
 ## 0.8.1 (2022-09-02)
 
 ### New features
