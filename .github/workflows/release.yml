@@ -149,7 +149,7 @@ jobs:
       - name: Build archive
         shell: bash
         run: |
-          staging="mos-${{ env.RELEASE_VERSION }}-${{ matrix.target }}"
+          staging="mos-${{ matrix.target }}"
           mkdir -p "$staging"
 
           cp {CHANGELOG.md,LICENSE,README.md} "$staging/"
