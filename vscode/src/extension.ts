@@ -1,143 +1,235 @@
-import * as vscode from 'vscode';
-import {existsSync, promises as fs} from "fs";
-import {getMosBinary} from "./auto-update/download-binary";
-import {log} from "./log";
-import {LanguageClient, LanguageClientOptions, ServerOptions} from "vscode-languageclient/node";
-import {BuildTaskProvider} from "./build-task-provider";
+import * as vscode from "vscode";
 import {
-    debug,
-    DebugAdapterDescriptor,
-    DebugAdapterDescriptorFactory,
-    DebugAdapterExecutable, DebugAdapterServer,
-    DebugSession,
-    ProviderResult
-} from "vscode";
-import * as net from "net";
-import {AddressInfo} from "net";
-import {RunAllTestsTaskProvider} from "./run-all-tests-task-provider";
+  ApplicationCodeLensProvider,
+  launchApplication
+} from "./application-codelens.js";
+import {BinaryManager} from "./binary-manager.js";
+import {
+  MosDebugAdapterFactory,
+  MosDebugConfigurationProvider,
+  runSingleTest
+} from "./debug-integration.js";
+import {LanguageRuntime} from "./language-runtime.js";
+import {MosLogger} from "./logging.js";
+import {LANGUAGE_ID} from "./protocol.js";
+import {executeMosTask, MosTaskProvider} from "./tasks.js";
 
-let client: LanguageClient;
+let runtime: LanguageRuntime | undefined;
 
-let disposables: vscode.Disposable[] = [];
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const logger = new MosLogger();
+  const binaries = new BinaryManager(context, logger);
+  const languageRuntime = new LanguageRuntime(binaries, logger);
+  runtime = languageRuntime;
+  const tasks = new MosTaskProvider(binaries);
+  const applicationCodeLens = new ApplicationCodeLensProvider();
+  const projectConfigWatcher =
+    vscode.workspace.createFileSystemWatcher("**/mos.toml");
+  const status = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    50
+  );
+  status.name = "MOS toolchain";
+  status.text = "$(tools) MOS";
+  status.tooltip = "Install or update the MOS toolchain";
+  status.command = "mos.installOrUpdate";
+  status.show();
 
-export class State {
-    workspaceFolder!: vscode.WorkspaceFolder;
-    mosPath!: string;
+  context.subscriptions.push(
+    logger,
+    languageRuntime,
+    applicationCodeLens,
+    projectConfigWatcher,
+    projectConfigWatcher.onDidChange(() => applicationCodeLens.refresh()),
+    projectConfigWatcher.onDidCreate(() => applicationCodeLens.refresh()),
+    projectConfigWatcher.onDidDelete(() => applicationCodeLens.refresh()),
+    status,
+    vscode.tasks.registerTaskProvider("mos", tasks),
+    vscode.languages.registerCodeLensProvider(
+      {language: LANGUAGE_ID, scheme: "file"},
+      applicationCodeLens
+    ),
+    vscode.debug.registerDebugAdapterDescriptorFactory(
+      "mos",
+      new MosDebugAdapterFactory(languageRuntime)
+    ),
+    vscode.debug.registerDebugConfigurationProvider(
+      "mos",
+      new MosDebugConfigurationProvider()
+    ),
+    vscode.commands.registerCommand("mos.installOrUpdate", () =>
+      runCommand(logger, async () => {
+        status.text = "$(sync~spin) MOS";
+        try {
+          const executable = await binaries.getExecutable(true);
+          await languageRuntime.restart();
+          status.tooltip = `MOS: ${executable}`;
+          void vscode.window.showInformationMessage(
+            "MOS is installed and up to date."
+          );
+        } finally {
+          status.text = "$(tools) MOS";
+        }
+      })
+    ),
+    vscode.commands.registerCommand("mos.restartLanguageServer", () =>
+      runCommand(logger, async () => {
+        await languageRuntime.restart();
+      })
+    ),
+    vscode.commands.registerCommand("mos.build", () =>
+      runCommand(logger, async () => executeMosTask(tasks, "build"))
+    ),
+    vscode.commands.registerCommand("mos.test", () =>
+      runCommand(logger, async () => executeMosTask(tasks, "test"))
+    ),
+    vscode.commands.registerCommand(
+      "mos.runApplication",
+      (resource: unknown) =>
+        runCommand(logger, async () => {
+          await launchApplication(requireResource(resource), true);
+        })
+    ),
+    vscode.commands.registerCommand(
+      "mos.debugApplication",
+      (resource: unknown) =>
+        runCommand(logger, async () => {
+          await launchApplication(requireResource(resource), false);
+        })
+    ),
+    vscode.commands.registerCommand(
+      "mos.runSingleTest",
+      (testName: unknown) =>
+        runCommand(logger, async () => {
+          await runSingleTest(requireTestName(testName), true);
+        })
+    ),
+    vscode.commands.registerCommand(
+      "mos.debugSingleTest",
+      (testName: unknown) =>
+        runCommand(logger, async () => {
+          await runSingleTest(requireTestName(testName), false);
+        })
+    ),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      for (const folder of openMosWorkspaceFolders()) {
+        void startRuntime(languageRuntime, logger, status, folder);
+      }
+    }),
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      if (vscode.workspace.isTrusted && document.languageId === LANGUAGE_ID) {
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (folder !== undefined) {
+          void startRuntime(languageRuntime, logger, status, folder);
+        }
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+      for (const folder of event.removed) {
+        void runCommand(logger, async () => {
+          await languageRuntime.stopFolder(folder);
+        });
+      }
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration("mos.executablePath") ||
+        event.affectsConfiguration("mos.path") ||
+        event.affectsConfiguration("mos.trace.server")
+      ) {
+        void runCommand(logger, async () => {
+          await languageRuntime.restart();
+        });
+      }
+      if (
+        event.affectsConfiguration("mos.applicationCodeLens") ||
+        event.affectsConfiguration("mos.launchConfiguration")
+      ) {
+        applicationCodeLens.refresh();
+      }
+    })
+  );
+
+  if (vscode.workspace.isTrusted) {
+    for (const folder of openMosWorkspaceFolders()) {
+      await startRuntime(languageRuntime, logger, status, folder);
+    }
+  }
 }
 
-export async function activate(ctx: vscode.ExtensionContext) {
-    let state = await getState(ctx);
-    if (!state) {
-        return;
-    }
+export async function deactivate(): Promise<void> {
+  await runtime?.stop();
+  runtime = undefined;
+}
 
-    let debugAdapterPort = await findFreePort();
-
-    disposables.push(vscode.tasks.registerTaskProvider("build", new BuildTaskProvider(state)));
-    disposables.push(vscode.tasks.registerTaskProvider("run all tests", new RunAllTestsTaskProvider(state)));
-    disposables.push(vscode.commands.registerCommand("mos.runSingleTest", testRunnerCommandFactory(true)));
-    disposables.push(vscode.commands.registerCommand("mos.debugSingleTest", testRunnerCommandFactory(false)));
-
-    let serverOptions: ServerOptions = {
-        command: state.mosPath, args: ["lsp", "--debug-adapter-port", debugAdapterPort.toString()], options: {}
-    };
-
-    let clientOptions: LanguageClientOptions = {
-        diagnosticCollectionName: "mos",
-        documentSelector: [{scheme: 'file', language: 'asm'}],
-    };
-
-    // Create the language client and start the client.
-    client = new LanguageClient(
-        'mos',
-        'MOS Language Server',
-        serverOptions,
-        clientOptions
+async function startRuntime(
+  languageRuntime: LanguageRuntime,
+  logger: MosLogger,
+  status: vscode.StatusBarItem,
+  folder?: vscode.WorkspaceFolder
+): Promise<void> {
+  status.text = "$(sync~spin) MOS";
+  try {
+    await languageRuntime.ensureStarted(folder);
+    status.text = "$(tools) MOS";
+  } catch (error) {
+    status.text = "$(error) MOS";
+    logger.error("Could not start MOS", error);
+    const selected = await vscode.window.showErrorMessage(
+      `Could not start MOS: ${errorMessage(error)}`,
+      "Show Log"
     );
-
-    client.start();
-
-    log.info(`Trying to start debug adapter on port ${debugAdapterPort}`);
-    ctx.subscriptions.push(debug.registerDebugAdapterDescriptorFactory("mos", new DebuggerAdapter(debugAdapterPort)));
-}
-
-export type Cmd = (...args: any[]) => unknown;
-
-function testRunnerCommandFactory(noDebug: boolean): Cmd {
-    return async (test_name: string) => {
-        const workspaceFolders = vscode.workspace.workspaceFolders!;
-        const workspaceFolder = workspaceFolders[0];
-        await vscode.debug.startDebugging(workspaceFolder, {
-            type: "mos",
-            request: "launch",
-            name: `Test ${test_name}`,
-            workspace: workspaceFolder.uri.path,
-            noDebug,
-            testRunner: {
-                testCaseName: test_name
-            }
-        });
-    };
-}
-
-class DebuggerAdapter implements DebugAdapterDescriptorFactory {
-    constructor(private port: number) {}
-
-    createDebugAdapterDescriptor(session: DebugSession, executable: DebugAdapterExecutable | undefined): ProviderResult<DebugAdapterDescriptor> {
-        return new DebugAdapterServer(this.port);
+    if (selected === "Show Log") {
+      logger.channel.show();
     }
+  }
 }
 
-async function getState(ctx: vscode.ExtensionContext): Promise<State | undefined> {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-        return;
+async function runCommand(
+  logger: MosLogger,
+  command: () => Promise<void>
+): Promise<void> {
+  try {
+    await command();
+  } catch (error) {
+    logger.error("MOS command failed", error);
+    const selected = await vscode.window.showErrorMessage(
+      `MOS: ${errorMessage(error)}`,
+      "Show Log"
+    );
+    if (selected === "Show Log") {
+      logger.channel.show();
     }
+  }
+}
 
-    await fs.mkdir(ctx.globalStorageUri.fsPath, { recursive: true });
-
-    let mosPath;
-    while (true) {
-        mosPath = await getMosBinary(ctx);
-        if (!mosPath) {
-            // User chose not to locate or download a binary, so bail
-            log.info("No MOS binary found or downloaded. Extension will not activate.");
-            return;
-        }
-
-        if (existsSync(mosPath)) {
-            break;
-        }
-
-        await vscode.window.showErrorMessage("Could not find MOS executable. Please configure the mos.path setting or leave it blank to automatically download the latest version.", "Retry");
+function openMosWorkspaceFolders(): vscode.WorkspaceFolder[] {
+  const folders = new Map<string, vscode.WorkspaceFolder>();
+  for (const document of vscode.workspace.textDocuments) {
+    if (document.languageId === LANGUAGE_ID) {
+      const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+      if (folder !== undefined) {
+        folders.set(folder.uri.toString(), folder);
+      }
     }
-    log.info(`Using mos executable: ${mosPath}`);
-
-    let state = new State();
-    state.workspaceFolder = workspaceFolder;
-    state.mosPath = mosPath;
-    return state;
+  }
+  return [...folders.values()];
 }
 
-export function deactivate(): void {
-    (async () => {
-        disposables.forEach(d => d.dispose());
-        disposables = [];
-        if (!client) {
-            return;
-        }
-        await client.stop();
-    })();
+function requireTestName(value: unknown): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("The MOS language server did not provide a test name.");
+  }
+  return value;
 }
 
-function findFreePort(): Promise<number> {
-    return new Promise(resolve => {
-        const srv = net.createServer(sock => {
-            sock.end();
-        });
-        srv.listen(0, () => {
-            let address = <AddressInfo>srv.address()!;
-            resolve(address.port);
-        });
-    });
+function requireResource(value: unknown): vscode.Uri {
+  if (!(value instanceof vscode.Uri)) {
+    throw new Error("The application CodeLens did not provide a source file.");
+  }
+  return value;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -1,27 +1,63 @@
-name: Publish VSCode Extension
+name: Publish VS Code Extension
+
 on:
   workflow_dispatch:
-    inputs:
-      mos_version:
-        description: 'The version of the MOS binary to download'
-        required: true
-      extension_version:
-        description: 'The version of the extension to release'
-        required: true
+  push:
+    tags:
+      - "vscode-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-marketplace
+  cancel-in-progress: false
 
 jobs:
   publish:
+    name: Publish to Marketplace
     runs-on: ubuntu-latest
-
+    environment:
+      name: vscode-marketplace
+      url: https://marketplace.visualstudio.com/items?itemName=datatrash.mos
+    defaults:
+      run:
+        working-directory: vscode
     steps:
-      - uses: actions/checkout@master
-      - uses: actions/setup-node@v2
-      - run: npm install
-        working-directory: vscode
-
-      - name: Publish
-        working-directory: vscode
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify release tag
+        if: github.ref_type == 'tag'
+        run: >-
+          node -e "const p = require('./package.json');
+          const expected = 'vscode-v' + p.version;
+          if (process.env.GITHUB_REF_NAME !== expected) {
+            throw new Error('Expected tag ' + expected + ', got ' + process.env.GITHUB_REF_NAME);
+          }"
+      - name: Validate extension
+        run: npm run check
+      - name: Package extension
+        run: npm run package
+      - name: Upload VSIX package
+        uses: actions/upload-artifact@v7
+        with:
+          name: mos-vscode-marketplace
+          path: target/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish extension
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-          MOS_VERSION: ${{ github.event.inputs.mos_version }}
-        run: npm run publish -- ${{ github.event.inputs.extension_version }}
+        run: |
+          VSIX="../target/mos-$(node -p "require('./package.json').version").vsix"
+          npx --no-install vsce publish --packagePath "$VSIX"

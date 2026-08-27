@@ -1,28 +1,51 @@
-name: Publish on Netlify
+name: Publish documentation
+
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netlify-production
+  cancel-in-progress: false
 
 jobs:
   publish:
+    name: Build and deploy
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch')
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: docs
     steps:
-      - uses: actions/checkout@master
-      - uses: actions/setup-node@v2
-      - run: npm install
-        working-directory: docs
-
-      - name: Build docs
-        working-directory: docs
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build documentation
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
         run: npm run build
-
-      - name: Deploy to netlify
-        uses: netlify/actions/cli@master
+      - name: Deploy to Netlify
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        with:
-          args: deploy --dir=docs/src/.vuepress/dist --prod
+        run: npx --yes netlify-cli@27.4.0 deploy --dir=src/.vuepress/dist --prod

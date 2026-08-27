@@ -1,11 +1,20 @@
 [package]
 name = "mos"
-version = "0.0.0" # unused
+version = "0.8.2"
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
 edition = "2018"
 repository = "https://github.com/datatrash/mos"
 license = "MIT"
 keywords = ["retro", "6502", "assembler"]
+description = "A modern 6502 assembler"
+publish = false
+
+[package.metadata.release]
+publish = false
+tag-name = "{{version}}"
+
+[package.metadata.dist]
+dist = true
 
 [dependencies]
 ansi_term = "0.12"

@@ -432,6 +432,22 @@ impl ViceAdapter {
                     })?;
                 }
             }
+            ViceResponse::Error {
+                response_type,
+                error_code,
+            } => {
+                anyhow::bail!(
+                    "VICE response 0x{:02X} failed with error code 0x{:02X}",
+                    response_type,
+                    error_code
+                );
+            }
+            ViceResponse::Unknown(response_type) => {
+                log::warn!(
+                    "Ignoring unknown VICE response type 0x{:02X}",
+                    response_type
+                );
+            }
             _ => (),
         }
         Ok(())
@@ -474,7 +490,7 @@ fn make_reader(
                     }
                 }
                 Err(e) => {
-                    log::debug!("Could not handle ViceResponse: {:?}", e);
+                    log::error!("VICE protocol error: {:?}", e);
                     break;
                 }
             }

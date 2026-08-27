@@ -2,7 +2,10 @@ use crate::diagnostic_emitter::MosResult;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::collections::HashMap;
 use std::io;
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
+
+const STX: u8 = 2;
+const API_VERSION: u8 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ViceResponse {
@@ -12,6 +15,7 @@ pub enum ViceResponse {
     CheckpointResponse(CheckpointResponse),
     CheckpointList(u32),
     CheckpointToggle,
+    Error { response_type: u8, error_code: u8 },
     Exit,
     ExecuteUntilReturn,
     MemoryGet(Vec<u8>),
@@ -22,6 +26,7 @@ pub enum ViceResponse {
     Registers(HashMap<u8, u16>),
     RegistersAvailable(HashMap<u8, String>),
     Resumed(u16),
+    Unknown(u8),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -93,9 +98,9 @@ impl MemoryDescriptor {
 struct ViceResponseHeader {
     stx: u8,
     api_version: u8,
-    _length: u32,
+    length: u32,
     response_type: u8,
-    _error_code: u8,
+    error_code: u8,
     _request_id: u32,
 }
 
@@ -104,14 +109,38 @@ impl ViceResponse {
         let header = ViceResponseHeader {
             stx: input.read_u8()?,
             api_version: input.read_u8()?,
-            _length: input.read_u32::<LittleEndian>()?,
+            length: input.read_u32::<LittleEndian>()?,
             response_type: input.read_u8()?,
-            _error_code: input.read_u8()?,
+            error_code: input.read_u8()?,
             _request_id: input.read_u32::<LittleEndian>()?,
         };
-        assert_eq!(header.stx, 2);
-        assert_eq!(header.api_version, 1);
+        if header.stx != STX {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid VICE response marker: 0x{:02X}", header.stx),
+            )
+            .into());
+        }
+        if !(1..=API_VERSION).contains(&header.api_version) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Unsupported VICE binary monitor API version: {}",
+                    header.api_version
+                ),
+            )
+            .into());
+        }
 
+        let mut body = vec![0; header.length as usize];
+        input.read_exact(&mut body)?;
+        if header.error_code != 0 {
+            return Ok(ViceResponse::Error {
+                response_type: header.response_type,
+                error_code: header.error_code,
+            });
+        }
+        let input = &mut io::Cursor::new(body);
         let response = match header.response_type {
             0x01 => {
                 let len = input.read_u16::<LittleEndian>()?;
@@ -161,7 +190,7 @@ impl ViceResponse {
                     let name_length = input.read_u8()?;
                     let mut name_buf = vec![0u8; name_length as usize];
                     input.read_exact(&mut name_buf)?;
-                    let name = String::from_utf8(name_buf).expect("Not a valid bank name");
+                    let name = String::from_utf8(name_buf)?;
                     banks.insert(id, name);
                 }
                 ViceResponse::BanksAvailable(banks)
@@ -176,14 +205,14 @@ impl ViceResponse {
                     let name_length = input.read_u8()?;
                     let mut name_buf = vec![0u8; name_length as usize];
                     input.read_exact(&mut name_buf)?;
-                    let name = String::from_utf8(name_buf).expect("Not a valid register name");
+                    let name = String::from_utf8(name_buf)?;
                     regs.insert(id, name);
                 }
                 ViceResponse::RegistersAvailable(regs)
             }
             0xaa => ViceResponse::Exit,
             0xbb => ViceResponse::Quit,
-            _ => panic!("Unknown response type: 0x{:0X}", header.response_type),
+            _ => ViceResponse::Unknown(header.response_type),
         };
         Ok(response)
     }
@@ -255,8 +284,8 @@ impl ViceRequest {
             ViceRequest::Quit => (0xbb, vec![]),
         };
         let mut out = vec![];
-        out.write_u8(2)?; // stx
-        out.write_u8(1)?; // api version
+        out.write_u8(STX)?;
+        out.write_u8(API_VERSION)?;
         out.write_u32::<LittleEndian>(body.len() as u32)?; // body length
         out.write_u32::<LittleEndian>(1)?; // request id
         out.write_u8(command_type)?;
@@ -264,5 +293,110 @@ impl ViceRequest {
         w.write_all(&body)?;
         w.flush()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn reads_api_version_two_response() -> MosResult<()> {
+        let mut input = Cursor::new(response(2, 0x81, 0, &[]));
+
+        assert_eq!(ViceResponse::read(&mut input)?, ViceResponse::Ping);
+        Ok(())
+    }
+
+    #[test]
+    fn remains_compatible_with_api_version_one() -> MosResult<()> {
+        let mut input = Cursor::new(response(1, 0x81, 0, &[]));
+
+        assert_eq!(ViceResponse::read(&mut input)?, ViceResponse::Ping);
+        Ok(())
+    }
+
+    #[test]
+    fn consumes_extended_checkpoint_response_body() -> MosResult<()> {
+        let mut checkpoint = vec![];
+        checkpoint.write_u32::<LittleEndian>(7)?;
+        checkpoint.write_u8(0)?;
+        checkpoint.write_u16::<LittleEndian>(0x1000)?;
+        checkpoint.write_u16::<LittleEndian>(0x1001)?;
+        checkpoint.write_u8(1)?;
+        checkpoint.write_u8(1)?;
+        checkpoint.write_u8(4)?;
+        checkpoint.write_u8(0)?;
+        checkpoint.write_u32::<LittleEndian>(2)?;
+        checkpoint.write_u32::<LittleEndian>(3)?;
+        checkpoint.write_u8(0)?;
+        checkpoint.write_u8(0)?;
+
+        let mut bytes = response(2, 0x11, 0, &checkpoint);
+        bytes.extend(response(2, 0x81, 0, &[]));
+        let mut input = Cursor::new(bytes);
+
+        assert!(matches!(
+            ViceResponse::read(&mut input)?,
+            ViceResponse::CheckpointResponse(_)
+        ));
+        assert_eq!(ViceResponse::read(&mut input)?, ViceResponse::Ping);
+        Ok(())
+    }
+
+    #[test]
+    fn reports_invalid_protocol_data_without_panicking() {
+        let mut invalid_version = Cursor::new(response(3, 0x81, 0, &[]));
+        let error = ViceResponse::read(&mut invalid_version).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Unsupported VICE binary monitor API version"));
+
+        let mut unknown_response = Cursor::new(response(2, 0xff, 0, &[]));
+        assert_eq!(
+            ViceResponse::read(&mut unknown_response).unwrap(),
+            ViceResponse::Unknown(0xff)
+        );
+    }
+
+    #[test]
+    fn preserves_stream_after_command_error() -> MosResult<()> {
+        let mut bytes = response(2, 0x13, 0x01, &[]);
+        bytes.extend(response(2, 0x81, 0, &[]));
+        let mut input = Cursor::new(bytes);
+
+        assert_eq!(
+            ViceResponse::read(&mut input)?,
+            ViceResponse::Error {
+                response_type: 0x13,
+                error_code: 0x01
+            }
+        );
+        assert_eq!(ViceResponse::read(&mut input)?, ViceResponse::Ping);
+        Ok(())
+    }
+
+    #[test]
+    fn writes_api_version_two_requests() -> MosResult<()> {
+        let mut output = vec![];
+
+        ViceRequest::Ping.write(&mut output)?;
+
+        assert_eq!(output[0], STX);
+        assert_eq!(output[1], API_VERSION);
+        Ok(())
+    }
+
+    fn response(api_version: u8, response_type: u8, error_code: u8, body: &[u8]) -> Vec<u8> {
+        let mut output = vec![];
+        output.write_u8(STX).unwrap();
+        output.write_u8(api_version).unwrap();
+        output.write_u32::<LittleEndian>(body.len() as u32).unwrap();
+        output.write_u8(response_type).unwrap();
+        output.write_u8(error_code).unwrap();
+        output.write_u32::<LittleEndian>(1).unwrap();
+        output.extend(body);
+        output
     }
 }

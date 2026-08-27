@@ -1,6 +1,2 @@
-out
-dist
-node_modules
-test-workspace/
-*.vsix
-MOS_VERSION
+dist/
+node_modules/

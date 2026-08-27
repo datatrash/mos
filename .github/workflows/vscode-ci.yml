@@ -1,0 +1,52 @@
+name: VS Code Extension CI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vscode-ci.yml"
+      - "vscode/**"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/vscode-ci.yml"
+      - "vscode/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate and package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate extension
+        run: npm run check
+      - name: Package extension
+        run: npm run package
+      - name: Upload VSIX package
+        uses: actions/upload-artifact@v7
+        with:
+          name: mos-vscode
+          path: target/*.vsix
+          if-no-files-found: error
+          retention-days: 14

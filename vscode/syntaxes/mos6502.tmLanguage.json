@@ -1,0 +1,104 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MOS 6502 Assembly",
+  "scopeName": "source.mos6502",
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#strings"},
+    {"include": "#labels"},
+    {"include": "#directives"},
+    {"include": "#mnemonics"},
+    {"include": "#numbers"}
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.mos6502",
+          "begin": "/\\*\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.block.mos6502",
+          "begin": "/\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.line.documentation.mos6502",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.mos6502",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.mos6502",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.mos6502",
+              "match": "\\\\."
+            },
+            {
+              "name": "variable.other.interpolation.mos6502",
+              "match": "\\{[A-Za-z_][A-Za-z0-9_.]*\\}"
+            }
+          ]
+        }
+      ]
+    },
+    "labels": {
+      "patterns": [
+        {
+          "name": "entity.name.label.mos6502",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+        }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "name": "keyword.control.directive.mos6502",
+          "match": "(?<![A-Za-z0-9_])\\.(?:align|assert|byte|const|define|dword|file|if|import|loop|macro|segment|test|text|trace|var|word)\\b"
+        },
+        {
+          "name": "keyword.control.mos6502",
+          "match": "\\b(?:as|else|from)\\b"
+        },
+        {
+          "name": "storage.type.encoding.mos6502",
+          "match": "\\b(?:ascii|petscii|petscreen)\\b"
+        }
+      ]
+    },
+    "mnemonics": {
+      "patterns": [
+        {
+          "name": "keyword.mnemonic.mos6502",
+          "match": "(?i)\\b(?:adc|and|asl|bcc|bcs|beq|bit|bmi|bne|bpl|brk|bvc|bvs|clc|cld|cli|clv|cmp|cpx|cpy|dec|dex|dey|eor|inc|inx|iny|jmp|jsr|lda|ldx|ldy|lsr|nop|ora|pha|php|pla|plp|rol|ror|rti|rts|sbc|sec|sed|sei|sta|stx|sty|tax|tay|tsx|txa|txs|tya)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.mos6502",
+          "match": "#?\\$[0-9A-Fa-f]+\\b"
+        },
+        {
+          "name": "constant.numeric.binary.mos6502",
+          "match": "#?%[01]+\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.mos6502",
+          "match": "#?\\b[0-9]+\\b"
+        }
+      ]
+    }
+  }
+}

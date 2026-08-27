@@ -6,6 +6,6 @@ use crate::diagnostic_emitter::MosResult;
 pub struct VersionArgs {}
 
 pub fn version_command() -> MosResult<()> {
-    log::info!("{}", option_env!("RELEASE_VERSION").unwrap_or("unknown"));
+    log::info!("{}", env!("CARGO_PKG_VERSION"));
     Ok(())
 }

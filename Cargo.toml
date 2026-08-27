@@ -7,3 +7,8 @@ members = [
 
 [profile.dev]
 split-debuginfo = "unpacked"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

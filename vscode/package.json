@@ -1,46 +1,134 @@
 {
   "name": "mos",
+  "displayName": "MOS 6502",
+  "description": "Language, build, test, and debugging support for the MOS 6502 assembler.",
+  "version": "0.0.20",
   "publisher": "datatrash",
-  "displayName": "mos",
-  "description": "An extension for the MOS 6502 assembler.",
-  "categories": [
-    "Programming Languages",
-    "Formatters"
-  ],
-  "version": "0.0.1",
-  "preview": true,
   "license": "MIT",
-  "homepage": "README.md",
+  "preview": true,
+  "icon": "icon.png",
   "galleryBanner": {
     "color": "#668",
     "theme": "dark"
   },
-  "icon": "icon.png",
+  "categories": [
+    "Programming Languages",
+    "Debuggers",
+    "Formatters"
+  ],
+  "keywords": [
+    "6502",
+    "assembly",
+    "assembler",
+    "c64",
+    "commodore",
+    "mos"
+  ],
+  "homepage": "https://github.com/datatrash/mos/tree/master/vscode#readme",
   "bugs": {
     "url": "https://github.com/datatrash/mos/issues"
   },
   "repository": {
+    "type": "git",
     "url": "https://github.com/datatrash/mos.git",
-    "type": "git"
+    "directory": "vscode"
   },
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.91.0"
   },
-  "activationEvents": [
-    "workspaceContains:**/mos.toml"
+  "extensionKind": [
+    "workspace"
   ],
-  "main": "./out/extension.js",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onDebugResolve:mos",
+    "onDebugInitialConfigurations"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "MOS requires a local or remote filesystem and native executable."
+    },
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting is available, but MOS processes are not downloaded or executed until the workspace is trusted.",
+      "restrictedConfigurations": [
+        "mos.executablePath",
+        "mos.path"
+      ]
+    }
+  },
   "contributes": {
+    "languages": [
+      {
+        "id": "mos6502",
+        "aliases": [
+          "MOS 6502 Assembly",
+          "MOS Assembly"
+        ],
+        "extensions": [
+          ".asm"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
     "grammars": [
       {
-        "language": "asm",
-        "scopeName": "source.asm",
-        "path": "./syntaxes/asm.tmLanguage.json"
+        "language": "mos6502",
+        "scopeName": "source.mos6502",
+        "path": "./syntaxes/mos6502.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mos.installOrUpdate",
+        "title": "MOS: Install or Update Toolchain",
+        "category": "MOS"
+      },
+      {
+        "command": "mos.restartLanguageServer",
+        "title": "MOS: Restart Language Server",
+        "category": "MOS"
+      },
+      {
+        "command": "mos.build",
+        "title": "MOS: Build",
+        "category": "MOS"
+      },
+      {
+        "command": "mos.test",
+        "title": "MOS: Run All Tests",
+        "category": "MOS"
+      },
+      {
+        "command": "mos.runApplication",
+        "title": "MOS: Run Application",
+        "category": "MOS",
+        "enablement": "resourceLangId == mos6502"
+      },
+      {
+        "command": "mos.debugApplication",
+        "title": "MOS: Debug Application",
+        "category": "MOS",
+        "enablement": "resourceLangId == mos6502"
       }
     ],
     "taskDefinitions": [
       {
-        "type": "build"
+        "type": "mos",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "build",
+              "test"
+            ],
+            "description": "The MOS command to execute."
+          }
+        }
       }
     ],
     "problemMatchers": [
@@ -53,7 +141,7 @@
           "${workspaceFolder}"
         ],
         "pattern": {
-          "regexp": "^(.*?):(\\d+):(\\d*):?\\s+?(warning|error):\\s+(.*)$",
+          "regexp": "^(.*?):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
           "file": 1,
           "line": 2,
           "column": 3,
@@ -62,53 +150,42 @@
         }
       }
     ],
-    "languages": [
-      {
-        "id": "asm",
-        "extensions": [
-          ".asm"
-        ],
-        "aliases": [
-          "6502 Assembly"
-        ],
-        "configuration": "language-configuration.json"
-      }
-    ],
-    "configuration": {
-      "title": "MOS",
-      "properties": {
-        "mos.path": {
-          "type": "string",
-          "description": "Path to the mos executable",
-          "markdownDescription": "Path to the `mos` executable"
-        }
-      }
-    },
     "breakpoints": [
       {
-        "language": "asm"
+        "language": "mos6502"
       }
     ],
     "debuggers": [
       {
         "type": "mos",
-        "label": "MOS Debug with VICE",
+        "label": "MOS Debug Adapter",
+        "languages": [
+          "mos6502"
+        ],
         "configurationAttributes": {
           "launch": {
+            "required": [
+              "workspace"
+            ],
             "properties": {
               "workspace": {
                 "type": "string",
-                "description": "Absolute path to workspace containing mos.toml",
+                "description": "Absolute path to the workspace containing mos.toml.",
                 "default": "${workspaceFolder}"
               },
               "vicePath": {
                 "type": "string",
-                "description": "Absolute path to a VICE binary"
+                "description": "Absolute path to a VICE 3.5 or newer executable."
               },
               "trace": {
                 "type": "boolean",
-                "description": "Enable logging of the Debug Adapter Protocol.",
-                "default": true
+                "description": "Log Debug Adapter Protocol messages.",
+                "default": false
+              },
+              "noDebug": {
+                "type": "boolean",
+                "description": "Run without stopping at breakpoints.",
+                "default": false
               }
             }
           }
@@ -117,44 +194,104 @@
           {
             "type": "mos",
             "request": "launch",
-            "name": "Launch",
+            "name": "Launch with MOS",
             "workspace": "${workspaceFolder}",
             "preLaunchTask": "mos: Build"
           }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "MOS: Launch with VICE",
+            "description": "Build and launch the current MOS workspace.",
+            "body": {
+              "type": "mos",
+              "request": "launch",
+              "name": "${2:Launch with MOS}",
+              "workspace": "^\"\\${workspaceFolder}\"",
+              "preLaunchTask": "mos: Build",
+              "vicePath": "${1:path/to/vice}"
+            }
+          }
         ]
       }
-    ]
+    ],
+    "configuration": {
+      "title": "MOS",
+      "properties": {
+        "mos.executablePath": {
+          "type": "string",
+          "scope": "machine-overridable",
+          "default": "",
+          "description": "Path to a MOS executable. Leave empty to use the managed installation.",
+          "markdownDescription": "Path to a `mos` executable. Supports `~` and `${workspaceFolder}`. Leave empty to securely download the latest GitHub release."
+        },
+        "mos.path": {
+          "type": "string",
+          "scope": "machine-overridable",
+          "default": "",
+          "description": "Legacy path to a MOS executable.",
+          "deprecationMessage": "Use mos.executablePath instead."
+        },
+        "mos.checkForUpdates": {
+          "type": "boolean",
+          "scope": "window",
+          "default": true,
+          "description": "Check for a newer MOS release when the extension starts and ask before installing it."
+        },
+        "mos.applicationCodeLens": {
+          "type": "boolean",
+          "scope": "resource",
+          "default": true,
+          "description": "Show Run MOS and Debug MOS CodeLens actions at application start positions in the build entry file."
+        },
+        "mos.launchConfiguration": {
+          "type": "string",
+          "scope": "resource",
+          "default": "Launch with MOS",
+          "description": "Name of the launch.json configuration used by application CodeLens actions."
+        },
+        "mos.trace.server": {
+          "type": "string",
+          "scope": "window",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication with the MOS language server."
+        }
+      }
+    }
   },
   "scripts": {
-    "check-unix": "code --disable-extensions --extensionDevelopmentPath=$INIT_CWD $INIT_CWD/test-workspace",
-    "check-win": "code --disable-extensions --extensionDevelopmentPath=%INIT_CWD% %INIT_CWD%/test-workspace",
-    "compile": "node bundle",
-    "publish": "vsce publish",
-    "mos-version": "node mos-version",
-    "vscode:prepublish": "npm run mos-version && node bundle"
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "check": "npm run lint && npm run typecheck && npm run test",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test dist/test/**/*.test.js",
+    "package": "node -e \"require('fs').mkdirSync('../target', { recursive: true })\" && vsce package --no-dependencies --out ../target",
+    "publish": "vsce publish --no-dependencies",
+    "vscode:prepublish": "npm run check && npm run build"
   },
   "dependencies": {
-    "decompress": "^4.2.1",
-    "https-proxy-agent": "^5.0.0",
-    "node-fetch": "^3.0.0",
-    "rimraf": "^3.0.2",
-    "semver": "^7.3.4",
-    "smart-buffer": "^4.2.0",
-    "unquote": "^1.1.1",
-    "vscode-debugadapter": "^1.49.0",
-    "vscode-debugprotocol": "^1.49.0",
-    "vscode-languageclient": "^7.0.0"
+    "https-proxy-agent": "^7.0.6",
+    "tar": "^7.5.22",
+    "vscode-languageclient": "^10.1.0",
+    "yauzl": "^3.4.0"
   },
   "devDependencies": {
-    "@types/decompress": "^4.2.4",
-    "@types/glob": "^7.1.4",
-    "@types/node": "^16.9.4",
-    "@types/rimraf": "^3.0.2",
-    "@types/semver": "^7.3.8",
-    "@types/vscode": "^1.60.0",
-    "esbuild": "^0.12.28",
-    "glob": "^7.1.6",
-    "typescript": "^4.4.3",
-    "vsce": "^1.99.0"
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.91.0",
+    "@types/yazl": "^3.3.1",
+    "@types/yauzl": "^3.4.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.0.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.68.0",
+    "yazl": "^3.3.1"
   }
 }
