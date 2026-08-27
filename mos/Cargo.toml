@@ -1,6 +1,6 @@
 [package]
 name = "mos"
-version = "0.8.2"
+version = "0.8.3"
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
 edition = "2018"
 repository = "https://github.com/datatrash/mos"
