@@ -48,4 +48,8 @@ jobs:
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: npx --yes netlify-cli@27.4.0 deploy --dir=src/.vuepress/dist --prod
+        run: >-
+          npx --yes netlify-cli@27.4.0 deploy
+          --dir=src/.vuepress/dist
+          --prod
+          --no-build
