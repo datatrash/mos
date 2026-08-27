@@ -22,32 +22,44 @@ export function platformPackage(
   platform: NodeJS.Platform,
   architecture: string
 ): PlatformPackage | undefined {
-  if (architecture !== "x64") {
-    return undefined;
-  }
-
   switch (platform) {
     case "win32":
-      return {
-        archiveExtension: "zip",
-        executableName: "mos.exe",
-        target: "x86_64-pc-windows-msvc"
-      };
+      if (architecture === "x64") {
+        return {
+          archiveExtension: "zip",
+          executableName: "mos.exe",
+          target: "x86_64-pc-windows-msvc"
+        };
+      }
+      break;
     case "linux":
-      return {
-        archiveExtension: "tar.gz",
-        executableName: "mos",
-        target: "x86_64-unknown-linux-musl"
-      };
+      if (architecture === "x64" || architecture === "arm64") {
+        return {
+          archiveExtension: "tar.gz",
+          executableName: "mos",
+          target:
+            architecture === "x64"
+              ? "x86_64-unknown-linux-musl"
+              : "aarch64-unknown-linux-musl"
+        };
+      }
+      break;
     case "darwin":
-      return {
-        archiveExtension: "tar.gz",
-        executableName: "mos",
-        target: "x86_64-apple-darwin"
-      };
+      if (architecture === "x64" || architecture === "arm64") {
+        return {
+          archiveExtension: "tar.gz",
+          executableName: "mos",
+          target:
+            architecture === "x64"
+              ? "x86_64-apple-darwin"
+              : "aarch64-apple-darwin"
+        };
+      }
+      break;
     default:
-      return undefined;
+      break;
   }
+  return undefined;
 }
 
 export function selectReleaseAsset(

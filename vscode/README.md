@@ -17,7 +17,7 @@ Version 0.0.20 replaces the original `datatrash.mos` implementation while preser
 - Inline **Run MOS** and **Debug MOS** actions at `basic_start` target labels and `* = ...` program-counter assignments in the build entry file
 - Restricted Mode support: highlighting remains available, but binaries are not downloaded or executed
 
-Managed downloads are available for x64 Windows, Linux, and macOS. Other platforms can use `mos.executablePath`.
+Managed downloads are available for x64 Windows and for x64 or ARM64 Linux and macOS. Other platforms can use `mos.executablePath`.
 
 ## Commands
 
