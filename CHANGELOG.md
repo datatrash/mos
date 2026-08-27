@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.0 (2026-8-27)
+## 0.8.3 (2026-8-27)
 
 ### New features
 - Added support for VICE binary monitor API version 2, used by VICE 3.10.
