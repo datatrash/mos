@@ -354,6 +354,23 @@ impl CodegenContext {
         id: I,
         symbol: Symbol,
     ) -> CoreResult<SymbolIndex> {
+        self.add_symbol_inner(id, symbol, true)
+    }
+
+    fn add_symbol_without_definition_location<I: Into<IdentifierPath>>(
+        &mut self,
+        id: I,
+        symbol: Symbol,
+    ) -> CoreResult<SymbolIndex> {
+        self.add_symbol_inner(id, symbol, false)
+    }
+
+    fn add_symbol_inner<I: Into<IdentifierPath>>(
+        &mut self,
+        id: I,
+        symbol: Symbol,
+        record_definition_location: bool,
+    ) -> CoreResult<SymbolIndex> {
         let span = symbol.span;
         let ty = symbol.ty.clone();
         let id = id.into();
@@ -430,15 +447,17 @@ impl CodegenContext {
             });
         }
 
-        if let Some(span) = span {
-            log::trace!(
-                "Setting location for definition '{}' ({:?})",
-                &path,
-                symbol_nx
-            );
-            let parent_scope = self.current_scope_nx;
-            self.symbol_definition(symbol_nx)
-                .set_location(DefinitionLocation { parent_scope, span });
+        if record_definition_location {
+            if let Some(span) = span {
+                log::trace!(
+                    "Setting location for definition '{}' ({:?})",
+                    &path,
+                    symbol_nx
+                );
+                let parent_scope = self.current_scope_nx;
+                self.symbol_definition(symbol_nx)
+                    .set_location(DefinitionLocation { parent_scope, span });
+            }
         }
 
         Ok(symbol_nx)
@@ -1228,7 +1247,10 @@ impl CodegenContext {
             .ensure_index(self.symbols.root, &self.current_scope);
         if let Some(span) = add_symbols_for_block.map(|b| b.lparen.span) {
             self.try_current_target_pc().map(|pc| {
-                self.add_symbol("-", self.symbol(span, pc.as_i64(), SymbolType::Constant))
+                self.add_symbol_without_definition_location(
+                    "-",
+                    self.symbol(span, pc.as_i64(), SymbolType::Constant),
+                )
             });
         }
         log::trace!(
@@ -1244,7 +1266,10 @@ impl CodegenContext {
         );
         if let Some(span) = add_symbols_for_block.map(|b| b.rparen.span) {
             self.try_current_target_pc().map(|pc| {
-                self.add_symbol("+", self.symbol(span, pc.as_i64(), SymbolType::Constant))
+                self.add_symbol_without_definition_location(
+                    "+",
+                    self.symbol(span, pc.as_i64(), SymbolType::Constant),
+                )
             });
         }
         self.current_scope_nx = old_scope_nx;

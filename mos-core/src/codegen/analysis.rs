@@ -201,6 +201,17 @@ mod tests {
     use crate::parser::source::InMemoryParsingSource;
 
     #[test]
+    fn anonymous_labels_have_no_definition_location() -> CoreResult<()> {
+        let ctx = test_codegen("{\nnop\nbne -\n}")?;
+        // The '-' is a usage but has no textual definition (it maps to the block start),
+        // so it should not expose a definition location pointing at the '{'.
+        let defs = ctx.analysis().find("test.asm", line_col(2, 4));
+        assert_eq!(defs.len(), 1);
+        assert!(defs.first().unwrap().1.location.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn can_find_basic_token() -> CoreResult<()> {
         let ctx = test_codegen("lda foo\nfoo: nop")?;
         let defs = ctx.analysis().find("test.asm", line_col(0, 4));
