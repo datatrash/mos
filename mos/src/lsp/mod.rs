@@ -323,11 +323,10 @@ impl LspContext {
         Ok(())
     }
 
-    fn join(self) -> MosResult<()> {
-        if let Some(io) = self.connection.unwrap().1 {
-            io.join()?;
-        }
-        Ok(())
+    fn take_io_threads(&mut self) -> Option<IoThreads> {
+        self.connection
+            .take()
+            .and_then(|(_, io_threads)| io_threads)
     }
 
     fn find_definitions<'a>(
@@ -427,12 +426,10 @@ impl LspServer {
             .unwrap()
             .initialize(server_capabilities)?;
         self.main_loop(initialization_params)?;
-        Arc::try_unwrap(self.context)
-            .ok()
-            .unwrap()
-            .into_inner()
-            .unwrap()
-            .join()?;
+        let io_threads = self.lock_context().take_io_threads();
+        if let Some(io_threads) = io_threads {
+            io_threads.join()?;
+        }
 
         log::info!("Shutting down MOS language server");
         Ok(())

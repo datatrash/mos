@@ -51,7 +51,7 @@ impl DebugServer {
         self.thread = Some(std::thread::spawn(move || {
             while !thread_shutdown.load(Ordering::Relaxed) {
                 let mut dbg = DebugSession::new(lsp.clone(), port);
-                match dbg.start() {
+                match dbg.start(&thread_shutdown) {
                     Ok(_) => (),
                     Err(e) => {
                         log::debug!("Could not start DebugSession: {:?}", e);
@@ -100,6 +100,23 @@ impl MemoryAccessor for MachineAdapterMemoryAccessor {
 
 trait Handler<R: Request> {
     fn handle(&self, conn: &mut DebugSession, args: R::Arguments) -> MosResult<R::Response>;
+}
+
+/// Deserializes the `arguments` of a request.
+///
+/// Requests such as `configurationDone` and `threads` take no arguments, but clients built on
+/// lsp4j (such as the IntelliJ debug adapter client) still send an empty object for them, which
+/// does not deserialize into a unit type. Treat an empty object as "no arguments".
+fn deserialize_arguments<T: DeserializeOwned>(args: serde_json::Value) -> serde_json::Result<T> {
+    match serde_json::from_value::<T>(args.clone()) {
+        Ok(value) => Ok(value),
+        Err(error) => match args.as_object() {
+            Some(object) if object.is_empty() => {
+                serde_json::from_value::<T>(serde_json::Value::Null)
+            }
+            _ => Err(error),
+        },
+    }
 }
 
 struct InitializeRequestHandler {}
@@ -252,10 +269,15 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
         let mut stack_frames = vec![];
         let state = conn.machine_adapter()?.running_state()?;
         if let MachineRunningState::Stopped(pc) = state {
-            if let Some(codegen) = conn.codegen() {
-                if let Some(offset) = codegen.source_map().address_to_offset(pc) {
-                    let sl = codegen.tree().code_map.look_up_span(offset.span);
+            let source_location = conn.codegen().and_then(|codegen| {
+                codegen
+                    .source_map()
+                    .address_to_offset(pc)
+                    .map(|offset| codegen.tree().code_map.look_up_span(offset.span))
+            });
 
+            match source_location {
+                Some(sl) => {
                     let mut frame = StackFrame::new(1, "Stack frame");
                     frame.line = conn.line(sl.begin.line);
                     frame.column = conn.column(sl.begin.column);
@@ -265,6 +287,17 @@ impl Handler<StackTraceRequest> for StackTraceRequestHandler {
                         path: Some(sl.file.name().into()),
                         ..Default::default()
                     });
+                    stack_frames.push(frame);
+                }
+                None => {
+                    // The program counter is outside of any assembled source, for example inside a
+                    // KERNAL routine or an interrupt handler. Returning no frames at all leaves
+                    // clients unable to continue: the IntelliJ debug adapter client ignores a
+                    // `stopped` event with an empty stack trace, which makes its suspend context
+                    // (and therefore stepping) stop working entirely. Describe the raw address
+                    // instead so the session stays usable.
+                    let mut frame = StackFrame::new(1, format!("${:04X}", pc));
+                    frame.instruction_pointer_reference = Some(format!("{}", pc.as_u16()));
                     stack_frames.push(frame);
                 }
             }
@@ -800,10 +833,14 @@ impl DebugSession {
         self.conn.as_ref().cloned()
     }
 
-    pub fn start(&mut self) -> MosResult<()> {
+    pub fn start(&mut self, shutdown: &AtomicBool) -> MosResult<()> {
         log::info!("DebugSession listening on port {}...", self.port);
-        let (debug_connection, _) = DebugConnection::tcp(&format!("127.0.0.1:{}", self.port))
-            .unwrap_or_else(|e| panic!("Couldn't listen on port {}: {}", self.port, e));
+        let Some((debug_connection, _)) =
+            DebugConnection::tcp(&format!("127.0.0.1:{}", self.port), shutdown)
+                .unwrap_or_else(|e| panic!("Couldn't listen on port {}: {}", self.port, e))
+        else {
+            return Ok(());
+        };
         self.conn = Some(Arc::new(debug_connection));
         let lsp_shutdown_receiver = self.lsp.lock().unwrap().add_shutdown_handler();
 
@@ -977,7 +1014,7 @@ impl DebugSession {
         handler: &dyn Handler<R>,
         args: serde_json::Value,
     ) -> MosResult<serde_json::Value> {
-        let args: R::Arguments = serde_json::from_value(args)?;
+        let args: R::Arguments = deserialize_arguments(args)?;
         let result: R::Response = handler.handle(self, args)?;
         let result = serde_json::to_value(result)?;
         Ok(result)
@@ -1052,6 +1089,72 @@ mod tests {
     use crate::lsp::testing::test_root;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    /// A request such as `configurationDone` takes no arguments. VS Code omits `arguments`
+    /// entirely, but lsp4j-based clients (the IntelliJ debug adapter client) always send an empty
+    /// object, so both shapes have to deserialize into the unit type.
+    #[test]
+    fn omitted_and_empty_arguments_both_deserialize_to_unit() {
+        for wire in [
+            r#"{"type":"request","seq":1,"command":"configurationDone"}"#,
+            r#"{"type":"request","seq":1,"command":"configurationDone","arguments":null}"#,
+            r#"{"type":"request","seq":1,"command":"configurationDone","arguments":{}}"#,
+        ] {
+            let message: ProtocolMessage = serde_json::from_str(wire).unwrap();
+            let ProtocolMessage::Request(request) = message else {
+                panic!("expected a request");
+            };
+            deserialize_arguments::<()>(request.arguments)
+                .unwrap_or_else(|e| panic!("could not deserialize {}: {:?}", wire, e));
+        }
+    }
+
+    #[test]
+    fn malformed_arguments_are_still_rejected() {
+        assert!(deserialize_arguments::<()>(serde_json::json!({"line": 1})).is_err());
+        assert!(deserialize_arguments::<LaunchRequestArguments>(serde_json::json!({})).is_err());
+    }
+
+    /// A stopped machine must always report a frame. The IntelliJ debug adapter client drops a
+    /// `stopped` event whose stack trace is empty, which leaves its suspend context unset and
+    /// silently breaks every subsequent step. This happens in practice when an interrupt lands the
+    /// program counter in ROM.
+    #[test]
+    fn a_stopped_machine_always_reports_a_stack_frame() -> MosResult<()> {
+        let src = r#".test "a" {
+                         ldx #123
+                         nop
+                         brk
+                     }"#;
+        let mut session = launch_session_and_break(
+            src,
+            vec![MachineBreakpoint {
+                line: 2,
+                column: None,
+                range: ProgramCounter::new(0xc002)..ProgramCounter::new(0xc003),
+            }],
+        )?;
+        let arguments = StackTraceArguments {
+            thread_id: 1,
+            start_frame: None,
+            levels: None,
+            format: None,
+        };
+
+        let mapped = StackTraceRequestHandler {}.handle(&mut session, arguments.clone())?;
+        assert_eq!(mapped.stack_frames.len(), 1);
+        assert!(mapped.stack_frames[0].source.is_some());
+
+        // Simulate a program counter that cannot be resolved back to any assembled source.
+        session.codegen = None;
+
+        let unmapped = StackTraceRequestHandler {}.handle(&mut session, arguments)?;
+        assert_eq!(unmapped.stack_frames.len(), 1);
+        assert!(unmapped.stack_frames[0].source.is_none());
+        assert!(unmapped.stack_frames[0].name.starts_with('$'));
+
+        Ok(())
+    }
 
     #[test]
     fn evaluate() -> MosResult<()> {

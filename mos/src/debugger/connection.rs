@@ -3,6 +3,8 @@ use crate::diagnostic_emitter::MosResult;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use std::{io, thread};
 
 pub struct DebugConnection {
@@ -11,19 +13,37 @@ pub struct DebugConnection {
 }
 
 impl DebugConnection {
-    pub fn tcp(address: &str) -> MosResult<(DebugConnection, DebugIoThreads)> {
+    pub fn tcp(
+        address: &str,
+        shutdown: &AtomicBool,
+    ) -> MosResult<Option<(DebugConnection, DebugIoThreads)>> {
         let listener = TcpListener::bind(address)?;
-        let (stream, _) = listener.accept()?;
+        listener.set_nonblocking(true)?;
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if shutdown.load(Ordering::Relaxed) {
+                        return Ok(None);
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        // On Windows an accepted socket inherits the listener's non-blocking mode, which would make
+        // the reader thread give up with `WouldBlock` as soon as the socket buffer runs dry.
+        stream.set_nonblocking(false)?;
         let (reader_receiver, reader) = make_reader(stream.try_clone().unwrap());
         let (writer_sender, writer) = make_write(stream.try_clone().unwrap());
         let io_threads = DebugIoThreads { reader, writer };
-        Ok((
+        Ok(Some((
             DebugConnection {
                 sender: writer_sender,
                 receiver: reader_receiver,
             },
             io_threads,
-        ))
+        )))
     }
 }
 
@@ -108,7 +128,18 @@ fn make_reader(
     let (reader_sender, reader_receiver) = bounded::<ProtocolMessage>(0);
     let reader = thread::spawn(move || {
         let mut buf_read = BufReader::new(stream);
-        while let Ok(Some(msg)) = ProtocolMessage::read(&mut buf_read) {
+        loop {
+            let msg = match ProtocolMessage::read(&mut buf_read) {
+                Ok(Some(msg)) => msg,
+                Ok(None) => {
+                    log::debug!("Debug adapter connection closed by the client.");
+                    break;
+                }
+                Err(e) => {
+                    log::debug!("Could not read protocol message: {:?}", e);
+                    break;
+                }
+            };
             let is_exit = match &msg {
                 ProtocolMessage::Request(req) => req.command == "disconnect",
                 _ => false,

@@ -79,7 +79,7 @@ impl TokenType {
                 .into_iter()
                 .find_position(|available_mod| available_mod == &modifier)
                 .unwrap();
-            result += val as u32;
+            result |= 1 << val;
         }
         result
     }

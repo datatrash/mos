@@ -29,11 +29,13 @@ pub fn lsp_command(args: &LspArgs) -> MosResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debugger::DebugServer;
     use crate::lsp::LspContext;
     use crossbeam_channel::{Receiver, Sender};
     use lsp_server::{Message, Notification, Request};
     use lsp_types::InitializeParams;
     use serde::Serialize;
+    use std::net::TcpListener;
     use std::thread;
 
     #[test]
@@ -52,10 +54,19 @@ mod tests {
             log::info!("Received shutdown callback!");
         });
 
-        thread::spawn(move || {
+        let (context_sender, context_receiver) = crossbeam_channel::bounded(1);
+        let server_thread = thread::spawn(move || {
             let lsp = LspServer::new(ctx);
-            lsp.start().unwrap();
+            context_sender.send(lsp.context()).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            let mut debug_server = DebugServer::new(lsp.context());
+            debug_server.start(port)?;
+            lsp.start()?;
+            debug_server.join()
         });
+        let shared_context = context_receiver.recv().unwrap();
 
         // Hey LSP, get ready to initialize
         let params = serde_json::from_str::<InitializeParams>(r#"{ "capabilities": {} }"#).unwrap();
@@ -69,8 +80,12 @@ mod tests {
         send_req(&sender, "shutdown", ());
         // Receive shutdown response
         expect_msg(&receiver, |_| true);
+        send_empty_not(&sender, "exit");
+        drop(sender);
 
         some_other_thread.join().unwrap();
+        server_thread.join().unwrap()?;
+        drop(shared_context);
         Ok(())
     }
 

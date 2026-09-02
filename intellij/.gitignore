@@ -1,0 +1,12 @@
+# Gradle
+.gradle
+build
+
+# IntelliJ Platform Gradle Plugin
+.ij_extract
+.intellijPlatform
+
+# Plugin signing material - never commit these
+*.crt
+*.p12
+*.pem

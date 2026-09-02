@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4 (2026-9-2)
+
+### Bugfixes
+* Some LSP bugfixes in order to get IntelliJ support up and running.
+
 ## 0.8.3 (2026-8-27)
 
 ### New features

@@ -1,0 +1,123 @@
+<idea-plugin>
+    <id>sh.datatra.mos</id>
+    <name>MOS 6502</name>
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <resource-bundle>messages.MosBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+                name="MOS 6502 Assembly"
+                language="MOS6502"
+                implementationClass="sh.datatra.mos.intellij.lang.MosFileType"
+                fieldName="INSTANCE"
+                extensions="asm"/>
+        <lang.syntaxHighlighterFactory
+                language="MOS6502"
+                implementationClass="sh.datatra.mos.intellij.lang.MosSyntaxHighlighterFactory"/>
+        <lang.parserDefinition
+                language="MOS6502"
+                implementationClass="sh.datatra.mos.intellij.lang.MosParserDefinition"/>
+        <lang.commenter
+                language="MOS6502"
+                implementationClass="sh.datatra.mos.intellij.lang.MosCommenter"/>
+
+        <!--
+          LSP4IJ registers these language-bound extension points only for the "TEXT" and "textmate"
+          languages. Plugins that contribute their own Language must declare them explicitly.
+
+          The file view provider is what lets LSP4IJ resolve Ctrl+hover targets from semantic tokens.
+          Without it LSP4IJ falls back to a synthetic LSPPsiElement, which loses the reference
+          underline and shows a generic element description in the Ctrl+hover popup.
+        -->
+        <lang.fileViewProviderFactory
+                language="MOS6502"
+                implementationClass="com.redhat.devtools.lsp4ij.features.semanticTokens.viewProvider.LSPSemanticTokensFileViewProviderFactory"/>
+        <lang.psiStructureViewFactory
+                language="MOS6502"
+                implementationClass="com.redhat.devtools.lsp4ij.features.documentSymbol.LSPDocumentSymbolStructureViewFactory"/>
+        <colorSettingsPage implementation="sh.datatra.mos.intellij.lang.MosColorSettingsPage"/>
+        <applicationConfigurable
+                id="sh.datatra.mos.settings"
+                parentId="language"
+                displayName="MOS"
+                instance="sh.datatra.mos.intellij.settings.MosSettingsConfigurable"/>
+        <configurationType implementation="sh.datatra.mos.intellij.debug.MosConfigurationType"/>
+        <xdebugger.breakpointType implementation="sh.datatra.mos.intellij.debug.MosBreakpointType"/>
+        <codeInsight.codeVisionProvider
+                id="MosRunApplicationCodeVisionProvider"
+                implementation="sh.datatra.mos.intellij.codelens.MosRunApplicationCodeVisionProvider"/>
+        <codeInsight.codeVisionProvider
+                id="MosDebugApplicationCodeVisionProvider"
+                implementation="sh.datatra.mos.intellij.codelens.MosDebugApplicationCodeVisionProvider"/>
+        <notificationGroup id="MOS" displayType="BALLOON"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <server
+                id="mos"
+                name="MOS Language Server"
+                factoryClass="sh.datatra.mos.intellij.lsp.MosLanguageServerFactory">
+            <description>Language support provided by the MOS toolchain.</description>
+        </server>
+        <languageMapping language="MOS6502" serverId="mos" languageId="mos6502"/>
+        <debugAdapterServer
+                id="mos"
+                name="MOS Debug Adapter"
+                factoryClass="sh.datatra.mos.intellij.debug.MosDebugAdapterDescriptorFactory"/>
+    </extensions>
+
+    <actions>
+        <action
+                id="mos.runSingleTest"
+                class="sh.datatra.mos.intellij.actions.MosRunSingleTestCodeLensAction"/>
+        <action
+                id="mos.debugSingleTest"
+                class="sh.datatra.mos.intellij.actions.MosDebugSingleTestCodeLensAction"/>
+        <action
+                id="mos.runApplication"
+                class="sh.datatra.mos.intellij.actions.MosRunApplicationAction"
+                text="Run MOS Application"
+                description="Build and run the current MOS application">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action
+                id="mos.debugApplication"
+                class="sh.datatra.mos.intellij.actions.MosDebugApplicationAction"
+                text="Debug MOS Application"
+                description="Build and debug the current MOS application">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action
+                id="mos.build"
+                class="sh.datatra.mos.intellij.actions.MosBuildAction"
+                text="Build MOS Project"
+                description="Build the current MOS project">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+                id="mos.test"
+                class="sh.datatra.mos.intellij.actions.MosTestAction"
+                text="Run All MOS Tests"
+                description="Run all tests in the current MOS project">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+                id="mos.installOrUpdate"
+                class="sh.datatra.mos.intellij.actions.MosInstallOrUpdateAction"
+                text="Install or Update MOS Toolchain"
+                description="Download the latest MOS release">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+        <action
+                id="mos.restartLanguageServer"
+                class="sh.datatra.mos.intellij.actions.MosRestartLanguageServerAction"
+                text="Restart MOS Language Server"
+                description="Restart the MOS language server">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+    </actions>
+</idea-plugin>

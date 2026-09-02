@@ -1,6 +1,6 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler, to_line_col, to_range, uri_to_path};
 use lsp_types::request::HoverRequest;
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind};
 
@@ -20,20 +20,46 @@ impl RequestHandler<HoverRequest> for HoverRequestHandler {
         let defs = ctx.find_definitions(analysis, &params.text_document_position_params);
         if let Some((_, def)) = defs.first() {
             if let Some(location) = def.location.as_ref() {
+                let hover_path =
+                    uri_to_path(&params.text_document_position_params.text_document.uri);
+                let hover_position = to_line_col(&params.text_document_position_params.position);
+                // The span being hovered over, so the client can highlight just that symbol.
+                let hover_range = def
+                    .definition_and_usages()
+                    .into_iter()
+                    .map(|location| analysis.look_up(location.span))
+                    .find(|source| {
+                        source.file.name() == hover_path.to_string_lossy()
+                            && hover_position.line >= source.begin.line
+                            && hover_position.line <= source.end.line
+                            && hover_position.column >= source.begin.column
+                            && hover_position.column <= source.end.column
+                    })
+                    .map(to_range);
+
                 let mut comments = vec![];
                 let sl = analysis.look_up(location.span);
                 let mut line = sl.begin.line;
                 while line > 0 {
                     line -= 1;
                     let source_line = sl.file.source_line(line).trim();
-                    if source_line.starts_with("///") {
-                        let (_prefix, rest) = source_line.split_at(3);
-                        comments.push(rest.trim());
+                    // Any comment style counts, not just `///`.
+                    if source_line.starts_with("//") {
+                        comments.push(source_line.trim_start_matches('/').trim());
                     } else {
                         break;
                     }
                 }
                 comments.reverse();
+
+                // A trailing comment on the definition itself also documents it.
+                let definition_line = sl.file.source_line(sl.begin.line);
+                if let Some((_, comment)) = definition_line.split_once("//") {
+                    let comment = comment.trim();
+                    if !comment.is_empty() {
+                        comments.push(comment);
+                    }
+                }
 
                 return if comments.is_empty() {
                     Ok(None)
@@ -45,7 +71,7 @@ impl RequestHandler<HoverRequest> for HoverRequestHandler {
                             kind: MarkupKind::Markdown,
                             value,
                         }),
-                        range: None,
+                        range: hover_range,
                     }))
                 };
             }
@@ -77,7 +103,34 @@ mod tests {
                     kind: MarkupKind::Markdown,
                     value: "hello\nfoo".to_string()
                 }),
-                range: None
+                range: Some(lsp_types::Range::new(
+                    Position::new(6, 4),
+                    Position::new(6, 9)
+                ))
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn get_hover_comment_on_definition_line() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            ".const border = $d020 // Border color\nlda border",
+        )?;
+        let response = server.hover(test_root().join("main.asm"), Position::new(1, 4))?;
+        assert_eq!(
+            response,
+            Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: "Border color".to_string()
+                }),
+                range: Some(lsp_types::Range::new(
+                    Position::new(1, 4),
+                    Position::new(1, 10)
+                ))
             })
         );
         Ok(())

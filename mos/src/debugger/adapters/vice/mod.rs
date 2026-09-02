@@ -4,13 +4,14 @@ use crate::debugger::adapters::vice::protocol::*;
 use crate::debugger::adapters::*;
 use crate::memory_accessor::MemoryAccessor;
 use codespan_reporting::diagnostic::Diagnostic;
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use itertools::Itertools;
 use mos_core::errors::Diagnostics;
 use std::collections::HashMap;
 use std::io::Read;
 use std::net::TcpListener;
 use std::process::{Child, Stdio};
+use std::time::{Duration, Instant};
 
 struct ViceConnection {
     sender: Sender<ViceRequest>,
@@ -30,6 +31,7 @@ pub struct ViceAdapter {
     event_sender: Sender<MachineEvent>,
     event_receiver: Receiver<MachineEvent>,
     received_memory: Vec<u8>,
+    stop_count: u64,
 }
 
 #[derive(Clone)]
@@ -110,30 +112,15 @@ impl MachineAdapter for ViceAdapter {
     }
 
     fn next(&mut self) -> MosResult<()> {
-        if matches!(self.running_state, MachineRunningState::Stopped(_)) {
-            self.toggle_breakpoints(false)?;
-            self.send(ViceRequest::AdvanceInstructions(true, 1))?;
-            self.toggle_breakpoints(true)?;
-        }
-        Ok(())
+        self.step(ViceRequest::AdvanceInstructions(true, 1))
     }
 
     fn step_in(&mut self) -> MosResult<()> {
-        if matches!(self.running_state, MachineRunningState::Stopped(_)) {
-            self.toggle_breakpoints(false)?;
-            self.send(ViceRequest::AdvanceInstructions(false, 1))?;
-            self.toggle_breakpoints(true)?;
-        }
-        Ok(())
+        self.step(ViceRequest::AdvanceInstructions(false, 1))
     }
 
     fn step_out(&mut self) -> MosResult<()> {
-        if matches!(self.running_state, MachineRunningState::Stopped(_)) {
-            self.toggle_breakpoints(false)?;
-            self.send(ViceRequest::ExecuteUntilReturn)?;
-            self.toggle_breakpoints(true)?;
-        }
-        Ok(())
+        self.step(ViceRequest::ExecuteUntilReturn)
     }
 
     fn set_breakpoints(
@@ -267,6 +254,7 @@ impl ViceAdapter {
             event_sender,
             event_receiver,
             received_memory: vec![],
+            stop_count: 0,
         };
 
         Box::new(adapter)
@@ -424,6 +412,7 @@ impl ViceAdapter {
             ViceResponse::Stopped(pc) => {
                 let old = self.running_state;
                 self.running_state = MachineRunningState::Stopped(ProgramCounter::new(pc as usize));
+                self.stop_count += 1;
 
                 if self.has_received_start {
                     self.event_sender.send(MachineEvent::RunningStateChanged {
@@ -449,6 +438,47 @@ impl ViceAdapter {
                 );
             }
             _ => (),
+        }
+        Ok(())
+    }
+
+    /// Performs a single stepping request, keeping the user's breakpoints out of the way.
+    ///
+    /// VICE re-enters its monitor as soon as it receives *any* command, so re-enabling the
+    /// breakpoints has to wait until the step has actually finished. A single instruction completes
+    /// almost immediately, but stepping over a `jsr` runs the whole subroutine, and toggling too
+    /// early used to strand the program counter somewhere inside it (typically in KERNAL or
+    /// interrupt code) instead of on the next line.
+    fn step(&mut self, request: ViceRequest) -> MosResult<()> {
+        if !matches!(self.running_state, MachineRunningState::Stopped(_)) {
+            return Ok(());
+        }
+        self.toggle_breakpoints(false)?;
+        let stops_before = self.stop_count;
+        self.send(request)?;
+        self.wait_for_stop(stops_before)?;
+        self.toggle_breakpoints(true)?;
+        Ok(())
+    }
+
+    /// Waits until VICE reports that the machine has halted again.
+    fn wait_for_stop(&mut self, stops_before: u64) -> MosResult<()> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.stop_count == stops_before {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                log::debug!("Timed out waiting for VICE to finish stepping.");
+                break;
+            }
+            match self.connection.receiver.recv_timeout(remaining) {
+                Ok(response) => self.handle_response(response)?,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.is_connected = false;
+                    self.event_sender.send(MachineEvent::Disconnected)?;
+                    break;
+                }
+            }
         }
         Ok(())
     }
@@ -564,6 +594,7 @@ mod tests {
 
     struct MockVice {
         expectations: Arc<Mutex<VecDeque<(ViceRequest, Vec<ViceResponse>)>>>,
+        responses: Sender<ViceResponse>,
         thread: JoinHandle<()>,
         done: Arc<AtomicBool>,
     }
@@ -574,6 +605,7 @@ mod tests {
             let exp = expectations.clone();
             let done = Arc::new(AtomicBool::new(false));
             let thread_done = done.clone();
+            let responses = sender.clone();
             let thread = thread::spawn(move || {
                 while !thread_done.load(Ordering::Relaxed) {
                     if let Ok(req) = receiver.recv_timeout(Duration::from_millis(10)) {
@@ -591,9 +623,19 @@ mod tests {
             });
             Self {
                 expectations,
+                responses,
                 thread,
                 done,
             }
+        }
+
+        /// Sends a response that was not triggered by a request, after a short delay.
+        fn send_unsolicited_after(&self, delay: Duration, response: ViceResponse) {
+            let responses = self.responses.clone();
+            thread::spawn(move || {
+                thread::sleep(delay);
+                let _ = responses.send(response);
+            });
         }
 
         fn disconnect(self) {
@@ -660,6 +702,42 @@ mod tests {
 
         adapter.resume()?;
         assert_eq!(adapter.running_state()?, MachineRunningState::Running);
+
+        Ok(())
+    }
+
+    /// Stepping must not report completion until VICE says the machine has halted again. Any
+    /// command sent while the program is still running pulls VICE back into its monitor, which used
+    /// to strand the program counter inside the subroutine being stepped over.
+    #[test]
+    fn stepping_waits_for_the_machine_to_halt() -> MosResult<()> {
+        let (mut adapter, mock) = launch()?;
+
+        mock.enqueue(
+            ViceRequest::AdvanceInstructions(false, 1),
+            &[
+                ViceResponse::AdvanceInstructions,
+                ViceResponse::Stopped(0x1234),
+            ],
+        );
+        adapter.pause()?;
+
+        mock.enqueue(
+            ViceRequest::AdvanceInstructions(true, 1),
+            &[
+                ViceResponse::AdvanceInstructions,
+                ViceResponse::Resumed(0x1234),
+            ],
+        );
+        // The machine keeps running for a while, exactly like a `jsr` being stepped over.
+        mock.send_unsolicited_after(Duration::from_millis(250), ViceResponse::Stopped(0x2000));
+
+        adapter.next()?;
+
+        assert_eq!(
+            adapter.running_state()?,
+            MachineRunningState::Stopped(0x2000.into())
+        );
 
         Ok(())
     }
