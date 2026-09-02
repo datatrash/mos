@@ -109,8 +109,8 @@ fn run(args: &Args) -> MosResult<()> {
         Subcommand::Format(_) => format_command(&cfg),
         Subcommand::Init(_) => init_command(&root, &cfg),
         Subcommand::Lsp(subargs) => lsp_command(subargs),
-        Subcommand::Test(_) => {
-            let exit_code = test_command(args, &root, &cfg)?;
+        Subcommand::Test(subargs) => {
+            let exit_code = test_command(args, subargs, &root, &cfg)?;
             if exit_code > 0 {
                 std::process::exit(exit_code);
             } else {

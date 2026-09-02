@@ -60,6 +60,7 @@ public final class MosSyntaxHighlighter extends SyntaxHighlighterBase {
             entry(MosTokenTypes.CONSTANT_DEFINITION, CONSTANT_DEFINITION),
             entry(MosTokenTypes.VARIABLE_DEFINITION, VARIABLE_DEFINITION),
             entry(MosTokenTypes.MACRO_DEFINITION, MACRO_DEFINITION),
+            entry(MosTokenTypes.TEST_DEFINITION, DIRECTIVE),
             entry(MosTokenTypes.DIRECTIVE, DIRECTIVE),
             entry(MosTokenTypes.KEYWORD, KEYWORD),
             entry(MosTokenTypes.ENCODING, ENCODING),

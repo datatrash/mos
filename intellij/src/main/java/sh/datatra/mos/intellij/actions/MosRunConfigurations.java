@@ -16,6 +16,9 @@ import sh.datatra.mos.intellij.debug.MosConfigurationFactory;
 import sh.datatra.mos.intellij.debug.MosConfigurationType;
 import sh.datatra.mos.intellij.debug.MosRunConfiguration;
 import sh.datatra.mos.intellij.settings.MosSettings;
+import sh.datatra.mos.intellij.test.MosTestConfigurationFactory;
+import sh.datatra.mos.intellij.test.MosTestConfigurationType;
+import sh.datatra.mos.intellij.test.MosTestRunConfiguration;
 
 public final class MosRunConfigurations {
     private MosRunConfigurations() {
@@ -46,6 +49,28 @@ public final class MosRunConfigurations {
                     debug
                             ? DefaultDebugExecutor.getDebugExecutorInstance()
                             : DefaultRunExecutor.getRunExecutorInstance()
+            );
+        });
+    }
+
+    /**
+     * Runs the whole test suite in the SM test runner when {@code testName} is null, or a single
+     * test when it names one. Unlike {@link #execute}, this does not need VICE because MOS executes
+     * {@code .test} blocks on its own embedded emulator.
+     */
+    public static void runTests(@NotNull Project project, @Nullable String testName) {
+        ApplicationManager.getApplication().invokeLater(() -> {
+            MosTestConfigurationFactory factory =
+                    (MosTestConfigurationFactory) MosTestConfigurationType.getInstance().getConfigurationFactories()[0];
+            String name = testName == null ? "MOS Tests" : "Run " + testName;
+            RunnerAndConfigurationSettings settings =
+                    RunManager.getInstance(project).createConfiguration(name, factory);
+            MosTestRunConfiguration configuration = (MosTestRunConfiguration) settings.getConfiguration();
+            configuration.getOptions().setFilter(testName == null ? "" : testName);
+            RunManager.getInstance(project).setTemporaryConfiguration(settings);
+            ProgramRunnerUtil.executeConfiguration(
+                    settings,
+                    DefaultRunExecutor.getRunExecutorInstance()
             );
         });
     }

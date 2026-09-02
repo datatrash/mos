@@ -10,6 +10,7 @@ const API_VERSION: u8 = 2;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ViceResponse {
     AdvanceInstructions,
+    Autostart,
     BanksAvailable(HashMap<u16, String>),
     CheckpointDelete,
     CheckpointResponse(CheckpointResponse),
@@ -48,6 +49,7 @@ pub struct CheckpointResponse {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ViceRequest {
     AdvanceInstructions(bool, u16),
+    Autostart(Autostart),
     BanksAvailable,
     CheckpointList,
     CheckpointDelete(u32),
@@ -72,6 +74,13 @@ pub struct CheckpointSet {
     pub enabled: bool,
     pub cpu_operation: u8,
     pub temporary: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Autostart {
+    pub run_after_loading: bool,
+    pub file_index: u16,
+    pub filename: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -212,6 +221,7 @@ impl ViceResponse {
             }
             0xaa => ViceResponse::Exit,
             0xbb => ViceResponse::Quit,
+            0xdd => ViceResponse::Autostart,
             _ => ViceResponse::Unknown(header.response_type),
         };
         Ok(response)
@@ -274,6 +284,15 @@ impl ViceRequest {
             }
             ViceRequest::ExecuteUntilReturn => (0x73, vec![]),
             ViceRequest::Ping => (0x81, vec![]),
+            ViceRequest::Autostart(a) => {
+                let mut body = vec![];
+                body.write_u8(bool_to_u8(a.run_after_loading))?;
+                body.write_u16::<LittleEndian>(a.file_index)?;
+                let filename = a.filename.as_bytes();
+                body.write_u8(filename.len() as u8)?;
+                body.extend_from_slice(filename);
+                (0xdd, body)
+            }
             ViceRequest::BanksAvailable => (0x82, vec![]),
             ViceRequest::RegistersAvailable => (0x83, vec![0]),
             ViceRequest::Exit => (0xaa, vec![]),
@@ -383,6 +402,39 @@ mod tests {
 
         assert_eq!(output[0], STX);
         assert_eq!(output[1], API_VERSION);
+        Ok(())
+    }
+
+    #[test]
+    fn writes_autostart_request() -> MosResult<()> {
+        let mut output = vec![];
+
+        ViceRequest::Autostart(Autostart {
+            run_after_loading: true,
+            file_index: 0,
+            filename: "example.prg".into(),
+        })
+        .write(&mut output)?;
+
+        // Header
+        assert_eq!(output[0], STX);
+        assert_eq!(output[1], API_VERSION);
+        // body length: RL(1) + FI(2) + FL(1) + filename(11)
+        assert_eq!(u32::from_le_bytes(output[2..6].try_into().unwrap()), 15);
+        // command type 0xdd
+        assert_eq!(output[10], 0xdd);
+        // Body
+        assert_eq!(output[11], 1); // run_after_loading
+        assert_eq!(&output[12..14], &[0, 0]); // file_index
+        assert_eq!(output[14], 11); // filename length
+        assert_eq!(&output[15..], b"example.prg");
+        Ok(())
+    }
+
+    #[test]
+    fn reads_autostart_response() -> MosResult<()> {
+        let mut input = Cursor::new(response(2, 0xdd, 0, &[]));
+        assert_eq!(ViceResponse::read(&mut input)?, ViceResponse::Autostart);
         Ok(())
     }
 

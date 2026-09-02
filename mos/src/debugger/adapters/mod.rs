@@ -1,18 +1,14 @@
 pub mod test_runner;
 pub mod vice;
 
-use crate::debugger::types::LaunchRequestArguments;
 use crate::diagnostic_emitter::MosResult;
 use crate::memory_accessor::MemoryAccessor;
 use crossbeam_channel::{Receiver, TryRecvError, bounded};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
 use mos_core::parser::code_map::SpanLoc;
 use std::collections::HashMap;
-use std::io::{BufReader, ErrorKind};
-use std::net::TcpStream;
+use std::io::BufReader;
 use std::ops::Range;
-use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 use std::thread::JoinHandle;
@@ -86,6 +82,11 @@ pub trait MachineAdapter: MemoryAccessor {
     fn start(&mut self) -> MosResult<()>;
     /// Stops the underlying machine and kills any associated processes
     fn stop(&mut self) -> MosResult<()>;
+    /// Aborts the active session without necessarily killing the underlying machine (e.g. keeps a
+    /// reusable emulator alive). Defaults to {@link #stop()}.
+    fn terminate(&mut self) -> MosResult<()> {
+        self.stop()
+    }
     /// Is the underlying machine still connected?
     fn is_connected(&self) -> MosResult<bool>;
     /// What is the current running state?

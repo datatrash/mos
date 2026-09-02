@@ -6,6 +6,6 @@ import org.jetbrains.annotations.NotNull;
 public final class MosTestAction extends MosProjectAction {
     @Override
     public void actionPerformed(@NotNull AnActionEvent event) {
-        MosToolchainActions.runCommand(event.getProject(), "test");
+        MosRunConfigurations.runTests(event.getProject(), null);
     }
 }

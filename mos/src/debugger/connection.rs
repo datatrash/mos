@@ -1,10 +1,7 @@
 use crate::debugger::protocol::ProtocolMessage;
-use crate::diagnostic_emitter::MosResult;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::net::TcpStream;
 use std::{io, thread};
 
 pub struct DebugConnection {
@@ -13,37 +10,17 @@ pub struct DebugConnection {
 }
 
 impl DebugConnection {
-    pub fn tcp(
-        address: &str,
-        shutdown: &AtomicBool,
-    ) -> MosResult<Option<(DebugConnection, DebugIoThreads)>> {
-        let listener = TcpListener::bind(address)?;
-        listener.set_nonblocking(true)?;
-        let stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if shutdown.load(Ordering::Relaxed) {
-                        return Ok(None);
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        // On Windows an accepted socket inherits the listener's non-blocking mode, which would make
-        // the reader thread give up with `WouldBlock` as soon as the socket buffer runs dry.
-        stream.set_nonblocking(false)?;
+    pub fn from_stream(stream: TcpStream) -> (DebugConnection, DebugIoThreads) {
         let (reader_receiver, reader) = make_reader(stream.try_clone().unwrap());
         let (writer_sender, writer) = make_write(stream.try_clone().unwrap());
         let io_threads = DebugIoThreads { reader, writer };
-        Ok(Some((
+        (
             DebugConnection {
                 sender: writer_sender,
                 receiver: reader_receiver,
             },
             io_threads,
-        )))
+        )
     }
 }
 

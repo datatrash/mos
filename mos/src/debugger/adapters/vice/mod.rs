@@ -8,19 +8,173 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use itertools::Itertools;
 use mos_core::errors::Diagnostics;
 use std::collections::HashMap;
-use std::io::Read;
-use std::net::TcpListener;
-use std::process::{Child, Stdio};
+use std::io::{ErrorKind, Read};
+use std::net::{TcpListener, TcpStream};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-struct ViceConnection {
+/// A single long-lived binary-monitor connection shared by every debug session that uses the same
+/// VICE instance. The emulator's binary monitor does not reliably re-serve a *new* TCP connection
+/// after a client disconnects, so this socket stays open for the whole lifetime of the VICE process
+/// and is reused (via the Autostart 0xdd command) rather than being closed and reconnected.
+struct SharedConnection {
     sender: Sender<ViceRequest>,
     receiver: Receiver<ViceResponse>,
 }
 
+/// A running VICE emulator process plus the monitor address it listens on. The emulator and its
+/// connection are intentionally kept separate from any individual debug session ({@link
+/// ViceAdapter}) so they can be reused for later sessions (Autostart) instead of being relaunched
+/// or reconnected each time.
+pub struct ViceProcess {
+    _process: Option<Child>,
+    port: u16,
+    stderr: Arc<Mutex<Vec<u8>>>,
+}
+
+impl ViceProcess {
+    /// Launches a fresh VICE with `-binarymonitor` and the given binary loaded, returning the
+    /// process handle plus the monitor address to connect to.
+    pub fn spawn<P: AsRef<Path>>(vice_path: &str, binary_path: P) -> MosResult<ViceProcess> {
+        let binary_path = binary_path.as_ref();
+        let port = find_available_port();
+        let monitor_address = format!("ip4://127.0.0.1:{}", port);
+        let args = vec![
+            "-binarymonitor",
+            "-binarymonitoraddress",
+            &monitor_address,
+            binary_path.to_str().unwrap(),
+        ];
+        log::debug!("Launching VICE with arguments: {:?}", args);
+
+        // Launch VICE but make sure it doesn't inherit any stdout/stderr stuff from our main LSP, since that will cause the LSP
+        // communication to break once VICE exits.
+        let mut process = Command::new(vice_path)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        let stderr = child_stream_to_vec(process.stderr.take().expect("!stderr"));
+
+        Ok(ViceProcess {
+            _process: Some(process),
+            port,
+            stderr,
+        })
+    }
+
+    /// Blocks until VICE accepts a TCP connection to its binary monitor, returning the stream.
+    fn connect(&self) -> MosResult<TcpStream> {
+        let mut attempts = 50;
+        loop {
+            if let Ok(s) = std::str::from_utf8(&self.stderr.lock().unwrap())
+                && s.contains("Unknown option")
+            {
+                return Err(Diagnostics::from(
+                    Diagnostic::error().with_message(
+                        "Your version of VICE does not support the '-binarymonitor' flag. Please update to VICE 3.5 or newer.",
+                    ),
+                )
+                .into());
+            }
+
+            let stream = TcpStream::connect_timeout(
+                &format!("127.0.0.1:{}", self.port).parse().unwrap(),
+                Duration::from_secs(1),
+            );
+            match stream {
+                Ok(s) => return Ok(s),
+                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
+                    log::debug!("VICE refused connection...");
+                    thread::sleep(Duration::from_millis(300));
+                }
+                Err(e) if e.kind() == ErrorKind::TimedOut => {
+                    log::debug!("VICE connection timed out...");
+                    thread::sleep(Duration::from_millis(300));
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
+
+            attempts -= 1;
+            if attempts == 0 {
+                log::error!("Unable to connect to VICE.");
+                return Err(Diagnostics::from(
+                    Diagnostic::error().with_message("Unable to connect to VICE"),
+                )
+                .into());
+            }
+        }
+    }
+
+    /// Force-quits the emulator process. Returns whether a process was actually terminated.
+    fn quit(&mut self) -> bool {
+        match self._process.take() {
+            Some(mut child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Owns the single reusable VICE emulator instance for the whole debug server. Keeps one VICE
+/// process (and one open binary-monitor connection) alive across debug-session restarts so the
+/// emulator is not relaunched each time; the current binary is reloaded via the binary-monitor
+/// Autostart (0xdd) command over the same connection.
+pub struct VicePool {
+    default_process: Option<ViceProcess>,
+    connection: Option<Arc<Mutex<SharedConnection>>>,
+}
+
+impl VicePool {
+    pub fn new() -> Self {
+        Self {
+            default_process: None,
+            connection: None,
+        }
+    }
+
+    /// Returns an adapter shared with the pooled VICE instance, launching one if none is running
+    /// yet, or autostarting {@code prg_path} into the existing instance over the same connection.
+    pub fn obtain(
+        &mut self,
+        vice_path: &str,
+        prg_path: &Path,
+    ) -> MosResult<Box<dyn MachineAdapter + Send + Sync>> {
+        if let Some(connection) = &self.connection {
+            log::debug!("Reusing existing VICE instance via Autostart.");
+            let mut adapter = ViceAdapter::from_shared(connection.clone());
+            adapter.autostart(prg_path)?;
+            return Ok(adapter);
+        }
+        log::debug!("Launching a new VICE instance.");
+        let process = ViceProcess::spawn(vice_path, prg_path)?;
+        let connection = Arc::new(Mutex::new(SharedConnection::connect(process.connect()?)));
+        self.default_process = Some(process);
+        self.connection = Some(connection.clone());
+        Ok(ViceAdapter::from_shared(connection))
+    }
+
+    /// Quits any running VICE instance (used when the user stops debugging or on server shutdown).
+    pub fn clear(&mut self) {
+        self.connection = None;
+        if let Some(mut process) = self.default_process.take() {
+            let _ = process.quit();
+        }
+    }
+}
+
 pub struct ViceAdapter {
     _process: Option<Child>,
-    connection: ViceConnection,
+    connection: Arc<Mutex<SharedConnection>>,
     has_received_start: bool,
     is_connected: bool,
     running_state: MachineRunningState,
@@ -85,7 +239,20 @@ impl MachineAdapter for ViceAdapter {
 
     fn stop(&mut self) -> MosResult<()> {
         // Quit VICE and don't wait for the response
-        self.connection.sender.send(ViceRequest::Quit)?;
+        self.connection
+            .lock()
+            .unwrap()
+            .sender
+            .send(ViceRequest::Quit)?;
+        self.is_connected = false;
+        Ok(())
+    }
+
+    /// Stops this adapter from using the shared connection, but deliberately leaves the socket and
+    /// the VICE process intact so a subsequent debug session can reuse them (Autostart) instead of
+    /// being relaunched. Called when a session is preempted by a new debug run.
+    fn terminate(&mut self) -> MosResult<()> {
+        self.is_connected = false;
         Ok(())
     }
 
@@ -238,11 +405,11 @@ impl MachineAdapter for ViceAdapter {
 }
 
 impl ViceAdapter {
-    fn from_connection(process: Option<Child>, connection: ViceConnection) -> Box<ViceAdapter> {
+    fn from_connection(connection: Arc<Mutex<SharedConnection>>) -> Box<ViceAdapter> {
         let (event_sender, event_receiver) = unbounded();
 
         let adapter = Self {
-            _process: process,
+            _process: None,
             connection,
             has_received_start: false,
             is_connected: true,
@@ -260,105 +427,49 @@ impl ViceAdapter {
         Box::new(adapter)
     }
 
-    pub fn launch<P: Into<PathBuf>>(
-        launch_args: &LaunchRequestArguments,
-        binary_path: P,
-    ) -> MosResult<Box<dyn MachineAdapter + Send + Sync>> {
-        let binary_path = binary_path.into();
-        let port = find_available_port();
-        let monitor_address = format!("ip4://127.0.0.1:{}", port);
-        let args = vec![
-            "-binarymonitor",
-            "-binarymonitoraddress",
-            &monitor_address,
-            binary_path.to_str().unwrap(),
-        ];
-        log::debug!("Launching VICE with arguments: {:?}", args);
+    /// Builds a fresh adapter sharing the pooled VICE instance's long-lived connection. The
+    /// connection (and the underlying VICE process) is owned by {@link VicePool}, so it survives
+    /// across debug-session restarts instead of being relaunched or reconnected each time.
+    fn from_shared(connection: Arc<Mutex<SharedConnection>>) -> Box<ViceAdapter> {
+        Self::from_connection(connection)
+    }
 
-        // Launch VICE but make sure it doesn't inherit any stdout/stderr stuff from our main LSP, since that will cause the LSp
-        // communication to break once VICE exits.
-        let mut process = Command::new(launch_args.vice_path.as_ref().unwrap())
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
-
-        let stderr = child_stream_to_vec(process.stderr.take().expect("!stderr"));
-
-        let mut attempts = 50;
-        let stream = loop {
-            if let Ok(s) = std::str::from_utf8(&stderr.lock().unwrap()) {
-                if s.contains("Unknown option") {
-                    return Err(Diagnostics::from(
-                            Diagnostic::error().with_message("Your version of VICE does not support the '-binarymonitor' flag. Please update to VICE 3.5 or newer."),
-                        )
-                            .into());
-                }
-            }
-
-            let stream = TcpStream::connect_timeout(
-                &format!("127.0.0.1:{}", port).parse().unwrap(),
-                Duration::from_secs(1),
-            );
-            match stream {
-                Ok(s) => break s,
-                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                    log::debug!("VICE refused connection...");
-                    thread::sleep(Duration::from_millis(300));
-                }
-                Err(e) if e.kind() == ErrorKind::TimedOut => {
-                    log::debug!("VICE connection timed out...");
-                    thread::sleep(Duration::from_millis(300));
-                }
-                Err(e) => {
-                    return Err(e.into());
-                }
-            }
-
-            attempts -= 1;
-            if attempts == 0 {
-                log::error!("Unable to connect to VICE.");
-                return Err(Diagnostics::from(
-                    Diagnostic::error().with_message("Unable to connect to VICE"),
-                )
-                .into());
-            }
-        };
-        log::debug!("VICE is connected.");
-
-        let (reader_receiver, _) = make_reader(stream.try_clone().unwrap());
-        let (writer_sender, _) = make_writer(stream.try_clone().unwrap());
-
-        let connection = ViceConnection {
-            receiver: reader_receiver,
-            sender: writer_sender,
-        };
-
-        Ok(Self::from_connection(Some(process), connection))
+    /// Autoloads and runs {@code binary} into an already-running VICE via the binary-monitor
+    /// Autostart (0xdd) command, so the emulator process does not need to be relaunched.
+    fn autostart<P: AsRef<Path>>(&mut self, binary_path: P) -> MosResult<()> {
+        let filename = binary_path.as_ref().to_string_lossy().into_owned();
+        log::debug!("VICE: Autostarting {:?} into existing instance", filename);
+        self.send(ViceRequest::Autostart(Autostart {
+            run_after_loading: true,
+            file_index: 0,
+            filename,
+        }))?;
+        Ok(())
     }
 
     fn send(&mut self, req: ViceRequest) -> MosResult<()> {
         log::trace!("VICE: Sending request: {:?}", req);
-        self.connection.sender.send(req)?;
+        self.connection.lock().unwrap().sender.send(req)?;
         self.handle_responses(true)?;
         Ok(())
     }
 
     fn handle_responses(&mut self, block: bool) -> MosResult<()> {
+        let connection = self.connection.clone();
+        let connection = connection.lock().unwrap();
         let mut recv = if block {
-            self.connection
+            connection
                 .receiver
                 .recv()
                 .map_err(|_| TryRecvError::Disconnected)
         } else {
-            self.connection.receiver.try_recv()
+            connection.receiver.try_recv()
         };
 
         while recv.is_ok() {
             let response = recv.ok().unwrap();
             self.handle_response(response)?;
-            recv = self.connection.receiver.try_recv();
+            recv = connection.receiver.try_recv();
         }
 
         match recv.err().unwrap() {
@@ -464,13 +575,15 @@ impl ViceAdapter {
     /// Waits until VICE reports that the machine has halted again.
     fn wait_for_stop(&mut self, stops_before: u64) -> MosResult<()> {
         let deadline = Instant::now() + Duration::from_secs(10);
+        let connection = self.connection.clone();
+        let connection = connection.lock().unwrap();
         while self.stop_count == stops_before {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 log::debug!("Timed out waiting for VICE to finish stepping.");
                 break;
             }
-            match self.connection.receiver.recv_timeout(remaining) {
+            match connection.receiver.recv_timeout(remaining) {
                 Ok(response) => self.handle_response(response)?,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
@@ -500,6 +613,19 @@ fn find_available_port() -> u16 {
     }
 
     panic!("No available port")
+}
+
+impl SharedConnection {
+    /// Wraps an established monitor stream, spawning the single reader/writer thread pair that
+    /// will serve it for the whole lifetime of the shared connection.
+    fn connect(stream: TcpStream) -> SharedConnection {
+        let (reader_receiver, _) = make_reader(stream.try_clone().unwrap());
+        let (writer_sender, _) = make_writer(stream.try_clone().unwrap());
+        SharedConnection {
+            sender: writer_sender,
+            receiver: reader_receiver,
+        }
+    }
 }
 
 fn make_reader(
@@ -674,9 +800,9 @@ mod tests {
         fn launch_in_memory() -> (Box<ViceAdapter>, MockVice) {
             let (response_sender, receiver) = bounded(100);
             let (sender, request_receiver) = bounded(100);
-            let connection = ViceConnection { receiver, sender };
+            let connection = Arc::new(Mutex::new(SharedConnection { receiver, sender }));
             let mock = MockVice::new(response_sender, request_receiver);
-            (Self::from_connection(None, connection), mock)
+            (Self::from_connection(connection), mock)
         }
     }
 

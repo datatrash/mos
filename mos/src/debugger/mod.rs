@@ -4,7 +4,7 @@ pub mod protocol;
 pub mod types;
 
 use crate::debugger::adapters::test_runner::TestRunnerAdapter;
-use crate::debugger::adapters::vice::ViceAdapter;
+use crate::debugger::adapters::vice::VicePool;
 use crate::debugger::adapters::{
     Machine, MachineAdapter, MachineBreakpoint, MachineEvent, MachineRunningState,
 };
@@ -15,7 +15,7 @@ use crate::diagnostic_emitter::MosResult;
 use crate::lsp::LspContext;
 use crate::memory_accessor::{MemoryAccessor, ensure_ram_fn};
 use codespan_reporting::diagnostic::Diagnostic;
-use crossbeam_channel::Select;
+use crossbeam_channel::{Receiver, Select, Sender, bounded, unbounded};
 use itertools::Itertools;
 use mos_core::codegen::{CodegenContext, ProgramCounter, SymbolIndex};
 use mos_core::errors::Diagnostics;
@@ -23,10 +23,12 @@ use mos_core::parser::parse_expression;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::HashMap;
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 pub struct DebugServer {
     lsp: Arc<Mutex<LspContext>>,
@@ -48,16 +50,80 @@ impl DebugServer {
     pub fn start(&mut self, port: u16) -> MosResult<()> {
         let thread_shutdown = self.shutdown.clone();
         let lsp = self.lsp.clone();
+
+        // A VICE pool owned by the server so the single emulator instance survives across multiple
+        // debug sessions (reconnected + Autostart via 0xdd) rather than being relaunched each time.
+        let pool = Arc::new(Mutex::new(VicePool::new()));
+
         self.thread = Some(std::thread::spawn(move || {
-            while !thread_shutdown.load(Ordering::Relaxed) {
-                let mut dbg = DebugSession::new(lsp.clone(), port);
-                match dbg.start(&thread_shutdown) {
-                    Ok(_) => (),
+            let (incoming_sender, incoming_receiver) = unbounded::<TcpStream>();
+
+            // A separate thread continuously accepts debugger connections so we can notice (and
+            // preempt) a new debug run while the previous session is still active (preventing a hang).
+            let accept_shutdown = thread_shutdown.clone();
+            let acceptor = std::thread::spawn(move || {
+                let listener = match TcpListener::bind(format!("127.0.0.1:{}", port)) {
+                    Ok(l) => l,
                     Err(e) => {
-                        log::debug!("Could not start DebugSession: {:?}", e);
+                        log::error!("Couldn't bind debug adapter port {}: {}", port, e);
+                        return;
+                    }
+                };
+                listener
+                    .set_nonblocking(true)
+                    .expect("Could not set listener non-blocking");
+                loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            // On Windows an accepted socket inherits the listener's non-blocking mode,
+                            // which would make the reader thread give up on an empty buffer.
+                            let _ = stream.set_nonblocking(false);
+                            let _ = incoming_sender.send(stream);
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            if accept_shutdown.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(_) => break,
                     }
                 }
+            });
+
+            let mut current: Option<(Sender<()>, JoinHandle<()>)> = None;
+
+            loop {
+                // Wait for the next debugger connection. The acceptor thread drops the sender on
+                // shutdown, which makes this recv return Err(Disconnected) and break the loop.
+                let stream = match incoming_receiver.recv() {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+
+                // A new debugger connected - preempt any currently-active session.
+                if let Some((preempt, handle)) = current.take() {
+                    let _ = preempt.send(());
+                    let _ = handle.join();
+                }
+
+                let session_pool = pool.clone();
+                let session_shutdown = thread_shutdown.clone();
+                let (preempt_sender, preempt_receiver) = bounded::<()>(1);
+                let mut dbg = DebugSession::new(lsp.clone(), session_pool);
+                let handle = std::thread::spawn(move || {
+                    let _ = dbg.serve(stream, preempt_receiver, &session_shutdown);
+                });
+                current = Some((preempt_sender, handle));
             }
+
+            // Final teardown: stop the active session and quit any running VICE instance.
+            if let Some((preempt, handle)) = current.take() {
+                let _ = preempt.send(());
+                let _ = handle.join();
+            }
+            pool.lock().unwrap().clear();
+            let _ = acceptor.join();
         }));
         Ok(())
     }
@@ -76,7 +142,7 @@ pub struct DebugSession {
     lsp: Arc<Mutex<LspContext>>,
     machine: Option<Machine>,
     codegen: Option<Arc<Mutex<CodegenContext>>>,
-    port: u16,
+    pool: Arc<Mutex<VicePool>>,
     conn: Option<Arc<DebugConnection>>,
     pending_events: Vec<ProtocolMessage>,
     no_debug: bool,
@@ -184,8 +250,9 @@ impl Handler<LaunchRequest> for LaunchRequestHandler {
                     Err(e)
                 }
             }
-        } else if args.vice_path.is_some() {
-            match ViceAdapter::launch(&args, prg_path) {
+        } else if let Some(vice_path) = &args.vice_path {
+            let adapter = conn.pool.lock().unwrap().obtain(vice_path, &prg_path);
+            match adapter {
                 Ok(adapter) => {
                     conn.create_machine(adapter);
                     Ok(())
@@ -224,6 +291,8 @@ impl Handler<DisconnectRequest> for DisconnectRequestHandler {
         log::debug!("Machine adapter is STOPPED");
         let machine = std::mem::replace(&mut conn.machine, None);
         machine.unwrap().join();
+        // The user explicitly stopped, so close the reusable VICE instance.
+        conn.pool.lock().unwrap().clear();
         log::debug!("Machine is STOPPED");
         Ok(())
     }
@@ -747,12 +816,12 @@ fn current_scope(
 }
 
 impl DebugSession {
-    pub fn new(lsp: Arc<Mutex<LspContext>>, port: u16) -> Self {
+    pub fn new(lsp: Arc<Mutex<LspContext>>, pool: Arc<Mutex<VicePool>>) -> Self {
         Self {
             lsp,
             codegen: None,
             machine: None,
-            port,
+            pool,
             conn: None,
             pending_events: vec![],
             no_debug: false,
@@ -833,14 +902,15 @@ impl DebugSession {
         self.conn.as_ref().cloned()
     }
 
-    pub fn start(&mut self, shutdown: &AtomicBool) -> MosResult<()> {
-        log::info!("DebugSession listening on port {}...", self.port);
-        let Some((debug_connection, _)) =
-            DebugConnection::tcp(&format!("127.0.0.1:{}", self.port), shutdown)
-                .unwrap_or_else(|e| panic!("Couldn't listen on port {}: {}", self.port, e))
-        else {
-            return Ok(());
-        };
+    /// Serves a debug session over an already-accepted connection. Returns when the client
+    /// disconnects, the LSP shuts down, or the session is preempted by a new debug run.
+    pub fn serve(
+        &mut self,
+        stream: TcpStream,
+        preempt: Receiver<()>,
+        _shutdown: &AtomicBool,
+    ) -> MosResult<()> {
+        let (debug_connection, _) = DebugConnection::from_stream(stream);
         self.conn = Some(Arc::new(debug_connection));
         let lsp_shutdown_receiver = self.lsp.lock().unwrap().add_shutdown_handler();
 
@@ -853,6 +923,9 @@ impl DebugSession {
 
             // ...or from the LSP telling us we should be shutting down...
             sel.recv(lsp_shutdown_receiver.receiver());
+
+            // ...or that the session has been preempted by a new debug run...
+            sel.recv(&preempt);
 
             // ...or from the machine...
             let machine_receiver = self
@@ -874,6 +947,10 @@ impl DebugSession {
                     break;
                 }
                 2 => {
+                    log::debug!("Debug session preempted by a new debug run.");
+                    break;
+                }
+                3 => {
                     match oper.recv(machine_receiver.as_ref().unwrap()) {
                         Ok(m) => self.handle_machine_event(m)?,
                         Err(_) => {
@@ -889,6 +966,16 @@ impl DebugSession {
         }
 
         log::debug!("DebugSession shutting down.");
+
+        // Tear down any running machine. Unless the user explicitly stopped (which both sets the
+        // machine to None and clears the VICE pool in DisconnectRequestHandler), terminate the
+        // machine so a reusable VICE stays alive for a subsequent debug session instead of dying.
+        if let Some(machine) = self.machine.take() {
+            if let Err(e) = machine.adapter_mut().terminate() {
+                log::debug!("Error terminating machine: {:?}", e);
+            }
+            machine.join();
+        }
         Ok(())
     }
 
@@ -1418,7 +1505,8 @@ mod tests {
         breakpoints: Vec<MachineBreakpoint>,
     ) -> MosResult<DebugSession> {
         let server = get_lsp(source)?;
-        let mut session = DebugSession::new(server.context(), 0);
+        let mut session =
+            DebugSession::new(server.context(), Arc::new(Mutex::new(VicePool::new())));
 
         LaunchRequestHandler {}.handle(
             &mut session,

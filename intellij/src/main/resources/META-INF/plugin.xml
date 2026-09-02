@@ -37,6 +37,9 @@
         <lang.psiStructureViewFactory
                 language="MOS6502"
                 implementationClass="com.redhat.devtools.lsp4ij.features.documentSymbol.LSPDocumentSymbolStructureViewFactory"/>
+        <runLineMarkerContributor
+                language="MOS6502"
+                implementationClass="sh.datatra.mos.intellij.lang.MosTestLineMarkerContributor"/>
         <colorSettingsPage implementation="sh.datatra.mos.intellij.lang.MosColorSettingsPage"/>
         <applicationConfigurable
                 id="sh.datatra.mos.settings"
@@ -44,13 +47,11 @@
                 displayName="MOS"
                 instance="sh.datatra.mos.intellij.settings.MosSettingsConfigurable"/>
         <configurationType implementation="sh.datatra.mos.intellij.debug.MosConfigurationType"/>
+        <configurationType implementation="sh.datatra.mos.intellij.test.MosTestConfigurationType"/>
         <xdebugger.breakpointType implementation="sh.datatra.mos.intellij.debug.MosBreakpointType"/>
-        <codeInsight.codeVisionProvider
-                id="MosRunApplicationCodeVisionProvider"
-                implementation="sh.datatra.mos.intellij.codelens.MosRunApplicationCodeVisionProvider"/>
-        <codeInsight.codeVisionProvider
-                id="MosDebugApplicationCodeVisionProvider"
-                implementation="sh.datatra.mos.intellij.codelens.MosDebugApplicationCodeVisionProvider"/>
+        <runLineMarkerContributor
+                language="MOS6502"
+                implementationClass="sh.datatra.mos.intellij.codelens.MosApplicationEntryLineMarkerContributor"/>
         <notificationGroup id="MOS" displayType="BALLOON"/>
     </extensions>
 
@@ -69,12 +70,6 @@
     </extensions>
 
     <actions>
-        <action
-                id="mos.runSingleTest"
-                class="sh.datatra.mos.intellij.actions.MosRunSingleTestCodeLensAction"/>
-        <action
-                id="mos.debugSingleTest"
-                class="sh.datatra.mos.intellij.actions.MosDebugSingleTestCodeLensAction"/>
         <action
                 id="mos.runApplication"
                 class="sh.datatra.mos.intellij.actions.MosRunApplicationAction"

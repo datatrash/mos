@@ -7,6 +7,7 @@ final class MosTokenTypes {
     static final IElementType STRING = token("STRING");
     static final IElementType LABEL = token("LABEL");
     static final IElementType SYMBOL_DEFINITION = token("SYMBOL_DEFINITION");
+    static final IElementType TEST_DEFINITION = token("TEST_DEFINITION");
     static final IElementType CONSTANT_DEFINITION = token("CONSTANT_DEFINITION");
     static final IElementType VARIABLE_DEFINITION = token("VARIABLE_DEFINITION");
     static final IElementType MACRO_DEFINITION = token("MACRO_DEFINITION");

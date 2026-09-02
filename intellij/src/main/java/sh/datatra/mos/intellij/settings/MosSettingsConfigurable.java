@@ -52,7 +52,7 @@ public final class MosSettingsConfigurable implements Configurable {
                         )
         ));
         checkForUpdates = new JBCheckBox("Check for MOS updates when the language server starts");
-        applicationCodeLens = new JBCheckBox("Show Run MOS and Debug MOS CodeLens actions");
+        applicationCodeLens = new JBCheckBox("Show Run MOS and Debug MOS gutter actions");
         panel = FormBuilder.createFormBuilder()
                 .addLabeledComponent("MOS executable:", executablePath)
                 .addComponentToRightColumn(checkForUpdates)

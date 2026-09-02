@@ -4,7 +4,9 @@ use crate::diagnostic_emitter::{DiagnosticEmitter, MosResult};
 use crate::test_runner::{ExecuteResult, TestRunner, enumerate_test_cases, format_cpu_details};
 use crate::utils::paint;
 use ansi_term::Colour;
+use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
+use mos_core::parser::IdentifierPath;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -12,7 +14,17 @@ use std::sync::{Arc, Mutex};
 /// Runs unit test(s)
 #[derive(argh::FromArgs, PartialEq, Eq, Debug)]
 #[argh(subcommand, name = "test")]
-pub struct TestArgs {}
+pub struct TestArgs {
+    /// run only the test with this exact name (overrides the [test] name in mos.toml)
+    #[argh(option)]
+    pub name: Option<String>,
+    /// run only tests whose name contains this substring (overrides the [test] filter in mos.toml)
+    #[argh(option)]
+    pub filter: Option<String>,
+    /// list the available tests without running them
+    #[argh(switch)]
+    pub list: bool,
+}
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
@@ -21,17 +33,39 @@ pub struct TestOptions {
     pub filter: Option<String>,
 }
 
-pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
+pub fn test_command(
+    args: &Args,
+    test_args: &TestArgs,
+    root: &Path,
+    cfg: &Config,
+) -> MosResult<i32> {
     let use_color = !args.no_color;
     let src: Arc<Mutex<dyn ParsingSource>> = FileSystemParsingSource::new().into();
     let input_path = root.join(PathBuf::from(&cfg.build.entry));
-    let mut test_cases = enumerate_test_cases(src.clone(), &input_path)?;
+    let test_cases = enumerate_test_cases(src.clone(), &input_path)?;
 
-    if let Some(test_name) = &cfg.test.name {
-        test_cases.retain(|(_, c)| &c.to_string() == test_name);
-    }
-    if let Some(test_filter) = &cfg.test.filter {
-        test_cases.retain(|(_, c)| c.to_string().contains(test_filter));
+    // Command-line flags take precedence over the [test] section of mos.toml.
+    let test_name = test_args.name.clone().or_else(|| cfg.test.name.clone());
+    let test_filter = test_args
+        .filter
+        .clone()
+        .or_else(|| cfg.test.filter.clone());
+
+    let test_cases = filter_test_cases(test_cases, test_name.as_deref(), test_filter.as_deref());
+
+    if test_args.list {
+        // Emit one test per line as "name<TAB>relative-path:line" so clients (e.g. the IntelliJ
+        // plugin) can enumerate tests and map them back to their source locations.
+        for (location, test_case) in &test_cases {
+            log::info!("{}\t{}\t{}", test_case, location.file.name(), location.begin.line + 1);
+        }
+        log::info!(
+            "test result: {}. {} passed; {} failed",
+            "ok",
+            test_cases.len(),
+            0
+        );
+        return Ok(0);
     }
 
     let mut failed = vec![];
@@ -105,6 +139,21 @@ pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
     if !failed.is_empty() { Ok(1) } else { Ok(0) }
 }
 
+fn filter_test_cases(
+    test_cases: Vec<(SpanLoc, IdentifierPath)>,
+    name: Option<&str>,
+    filter: Option<&str>,
+) -> Vec<(SpanLoc, IdentifierPath)> {
+    let mut test_cases = test_cases;
+    if let Some(name) = name {
+        test_cases.retain(|(_, c)| c.to_string() == name);
+    }
+    if let Some(filter) = filter {
+        test_cases.retain(|(_, c)| c.to_string().contains(filter));
+    }
+    test_cases
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,7 +177,10 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(test_command(&test_args(), root().as_path(), &cfg)?, 0);
+        assert_eq!(
+            test_command(&test_args(), &TestArgs { name: None, filter: None, list: false }, root().as_path(), &cfg)?,
+            0
+        );
         Ok(())
     }
 
@@ -147,13 +199,20 @@ mod tests {
             },
             ..Default::default()
         };
-        assert_eq!(test_command(&test_args(), root().as_path(), &cfg)?, 1);
+        assert_eq!(
+            test_command(&test_args(), &TestArgs { name: None, filter: None, list: false }, root().as_path(), &cfg)?,
+            1
+        );
         Ok(())
     }
 
     fn test_args() -> Args {
         Args {
-            subcommand: Subcommand::Test(TestArgs {}),
+            subcommand: Subcommand::Test(TestArgs {
+                name: None,
+                filter: None,
+                list: false,
+            }),
             no_color: false,
             verbosity: 0,
             error_style: ErrorStyle::Short,

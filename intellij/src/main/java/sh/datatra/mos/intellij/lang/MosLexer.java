@@ -130,6 +130,11 @@ final class MosLexer extends LexerBase {
                 String directive = buffer.subSequence(tokenStart + 1, wordEnd)
                         .toString()
                         .toLowerCase(Locale.ROOT);
+                if (directive.equals("test")) {
+                    tokenEnd = wordEnd;
+                    tokenType = MosTokenTypes.TEST_DEFINITION;
+                    return;
+                }
                 if (DIRECTIVES.contains(directive)) {
                     tokenEnd = wordEnd;
                     tokenType = MosTokenTypes.DIRECTIVE;
