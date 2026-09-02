@@ -1,10 +1,10 @@
 use crate::codegen::{Symbol, SymbolType};
 use crate::parser::{Identifier, IdentifierPath};
 use itertools::Itertools;
+use petgraph::Direction;
 use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::stable_graph::{NodeIndices, StableGraph};
-use petgraph::Direction;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -45,7 +45,7 @@ impl<S: Clone + Debug> Default for SymbolTable<S> {
 }
 
 impl<S: Clone + Debug> SymbolTable<S> {
-    pub fn indices(&self) -> SymbolIndices<S> {
+    pub fn indices(&self) -> SymbolIndices<'_, S> {
         self.graph.node_indices()
     }
 

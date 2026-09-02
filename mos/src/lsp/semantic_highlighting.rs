@@ -1,6 +1,6 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler, uri_to_path};
 use itertools::Itertools;
 use lsp_types::request::SemanticTokensFullRequest;
 use lsp_types::{
@@ -116,7 +116,7 @@ impl RequestHandler<SemanticTokensFullRequest> for SemanticTokensFullRequestHand
         params: SemanticTokensParams,
     ) -> MosResult<Option<SemanticTokensResult>> {
         if let Some(tree) = &ctx.tree {
-            let path = params.text_document.uri.to_file_path().unwrap();
+            let path = uri_to_path(&params.text_document.uri);
             if let Some(file) = tree.try_get_file(&path) {
                 let semtoks = emit_semantic_ast(&file.tokens);
                 let data = to_deltas(&tree.code_map, semtoks);
@@ -433,8 +433,8 @@ fn emit_expression_semantic(expression: &Expression) -> SemTokBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
+    use crate::lsp::testing::test_root;
 
     #[test]
     fn provide_tokens() -> MosResult<()> {

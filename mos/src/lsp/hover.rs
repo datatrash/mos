@@ -58,8 +58,8 @@ impl RequestHandler<HoverRequest> for HoverRequestHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
+    use crate::lsp::testing::test_root;
     use lsp_types::Position;
 
     #[test]

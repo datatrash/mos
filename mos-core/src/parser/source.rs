@@ -1,4 +1,4 @@
-use crate::errors::{map_io_error, CoreResult};
+use crate::errors::{CoreResult, map_io_error};
 use codespan_reporting::diagnostic::Diagnostic;
 use std::collections::HashMap;
 use std::io::Read;

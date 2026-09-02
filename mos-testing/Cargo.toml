@@ -2,7 +2,7 @@
 name = "mos-testing"
 version = "0.0.0" # unused
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
-edition = "2018"
+edition = "2024"
 repository = "https://github.com/datatrash/mos"
 license = "MIT"
 keywords = ["retro", "6502", "assembler"]
@@ -11,4 +11,4 @@ keywords = ["retro", "6502", "assembler"]
 
 [dependencies]
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
-simple_logger = "1"
+simple_logger = "5"

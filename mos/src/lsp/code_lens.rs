@@ -1,6 +1,6 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{to_range, LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler, to_range, uri_to_path};
 use crate::test_runner::enumerate_test_cases;
 use lsp_types::request::CodeLensRequest;
 use lsp_types::{CodeLens, CodeLensParams, Command};
@@ -17,7 +17,7 @@ impl RequestHandler<CodeLensRequest> for CodeLensRequestHandler {
     ) -> MosResult<Option<Vec<CodeLens>>> {
         let tests = enumerate_test_cases(
             ctx.parsing_source(),
-            &params.text_document.uri.to_file_path().unwrap(),
+            &uri_to_path(&params.text_document.uri),
         )
         .unwrap_or_default();
 

@@ -1,11 +1,12 @@
 use super::{IResult, LocatedSpan};
+use nom::Parser;
 use nom::branch::alt;
 use nom::bytes::complete::tag_no_case;
 use nom::combinator::map;
-use strum::{EnumIter, EnumString, EnumVariantNames};
+use strum::{EnumIter, EnumString, VariantNames};
 
 /// The available 6502 instructions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumVariantNames, EnumIter, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, VariantNames, EnumIter, EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum Mnemonic {
     Adc,
@@ -67,7 +68,7 @@ pub enum Mnemonic {
 }
 
 macro_rules! parse_mnemonic {
-    ( $ input : expr , $ expected : expr ) => {
+    ( $ input : expr_2021 , $ expected : expr_2021 ) => {
         map(tag_no_case($input), |_| $expected)
     };
 }
@@ -107,7 +108,8 @@ pub(super) fn implied_mnemonic(input: LocatedSpan) -> IResult<Mnemonic> {
             parse_mnemonic!("txs", Mnemonic::Txs),
             parse_mnemonic!("tya", Mnemonic::Tya),
         )),
-    ))(input)
+    ))
+    .parse(input)
 }
 
 /// Tries to parse a 6502 mnemonic
@@ -148,5 +150,6 @@ pub(super) fn mnemonic(input: LocatedSpan) -> IResult<Mnemonic> {
             parse_mnemonic!("stx", Mnemonic::Stx),
             parse_mnemonic!("sty", Mnemonic::Sty),
         )),
-    ))(input)
+    ))
+    .parse(input)
 }

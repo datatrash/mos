@@ -1,5 +1,5 @@
-use crate::parser::code_map::{CodeMap, Span};
 use crate::LINE_ENDING;
+use crate::parser::code_map::{CodeMap, Span};
 use itertools::Itertools;
 
 pub fn empty_span() -> Span {

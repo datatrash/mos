@@ -13,15 +13,15 @@ use crate::debugger::protocol::{Event, EventMessage, ProtocolMessage, Request, R
 use crate::debugger::types::*;
 use crate::diagnostic_emitter::MosResult;
 use crate::lsp::LspContext;
-use crate::memory_accessor::{ensure_ram_fn, MemoryAccessor};
+use crate::memory_accessor::{MemoryAccessor, ensure_ram_fn};
 use codespan_reporting::diagnostic::Diagnostic;
 use crossbeam_channel::Select;
 use itertools::Itertools;
 use mos_core::codegen::{CodegenContext, ProgramCounter, SymbolIndex};
 use mos_core::errors::Diagnostics;
 use mos_core::parser::parse_expression;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -729,11 +729,10 @@ impl DebugSession {
     }
 
     fn create_machine(&mut self, adapter: Box<dyn MachineAdapter + Send + Sync>) {
-        if let Some(cg) = adapter.codegen() {
-            self.codegen = Some(cg);
-        } else {
-            self.codegen = self.lsp.lock().unwrap().codegen();
-        }
+        self.codegen = match adapter.codegen() {
+            Some(codegen) => Some(codegen),
+            None => self.lsp.lock().unwrap().codegen(),
+        };
         let adapter = Arc::new(RwLock::new(adapter));
 
         if let Some(codegen) = &self.codegen {
@@ -765,15 +764,17 @@ impl DebugSession {
         }
     }
 
-    fn lock_lsp(&self) -> MutexGuard<LspContext> {
+    fn lock_lsp(&self) -> MutexGuard<'_, LspContext> {
         self.lsp.lock().unwrap()
     }
 
-    fn codegen(&self) -> Option<MutexGuard<CodegenContext>> {
+    fn codegen(&self) -> Option<MutexGuard<'_, CodegenContext>> {
         self.codegen.as_ref().map(|cg| cg.lock().unwrap())
     }
 
-    fn machine_adapter(&self) -> MosResult<RwLockReadGuard<Box<dyn MachineAdapter + Send + Sync>>> {
+    fn machine_adapter(
+        &self,
+    ) -> MosResult<RwLockReadGuard<'_, Box<dyn MachineAdapter + Send + Sync>>> {
         match self.machine.as_ref() {
             Some(m) => Ok(m.adapter()),
             None => Err(Diagnostics::from(
@@ -785,7 +786,7 @@ impl DebugSession {
 
     fn machine_adapter_mut(
         &self,
-    ) -> MosResult<RwLockWriteGuard<Box<dyn MachineAdapter + Send + Sync>>> {
+    ) -> MosResult<RwLockWriteGuard<'_, Box<dyn MachineAdapter + Send + Sync>>> {
         match self.machine.as_ref() {
             Some(m) => Ok(m.adapter_mut()),
             None => Err(Diagnostics::from(
@@ -1047,8 +1048,8 @@ impl DebugSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
+    use crate::lsp::testing::test_root;
     use std::thread;
     use std::time::{Duration, Instant};
 

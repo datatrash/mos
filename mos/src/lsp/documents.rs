@@ -1,13 +1,13 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_notification_handler;
-use crate::lsp::{LspContext, NotificationHandler};
+use crate::lsp::{LspContext, NotificationHandler, path_to_uri, uri_to_path};
 use itertools::Itertools;
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, PublishDiagnostics,
 };
 use lsp_types::{
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    Position, PublishDiagnosticsParams, Range, Url,
+    Position, PublishDiagnosticsParams, Range, Uri,
 };
 use mos_core::errors::Diagnostics;
 use std::collections::HashMap;
@@ -42,13 +42,13 @@ impl NotificationHandler<DidCloseTextDocument> for DidCloseTextDocumentHandler {
         ctx.parsing_source()
             .lock()
             .unwrap()
-            .remove(&params.text_document.uri.to_file_path().unwrap());
+            .remove(&uri_to_path(&params.text_document.uri));
         Ok(())
     }
 }
 
-fn register_document(ctx: &mut LspContext, uri: &Url, source: &str) {
-    let path = uri.to_file_path().unwrap();
+fn register_document(ctx: &mut LspContext, uri: &Uri, source: &str) {
+    let path = uri_to_path(uri);
     ctx.parsing_source().lock().unwrap().insert(&path, source);
     ctx.perform_codegen();
 }
@@ -72,7 +72,7 @@ fn publish_diagnostics(ctx: &LspContext) -> MosResult<()> {
         for filename in filenames {
             let diags = result.remove(filename.as_str()).unwrap_or_default();
             let params = PublishDiagnosticsParams::new(
-                Url::from_file_path(filename).unwrap(),
+                path_to_uri(filename),
                 diags,
                 None, // todo: handle document version
             );
@@ -113,8 +113,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn can_parse_windows_uris() {
-        use lsp_types::Url;
-        let url = Url::parse("file:///g%3A/code/mos/vscode/test-workspace/main.asm").unwrap();
-        let _ = url.to_file_path().unwrap();
+        use crate::lsp::uri_to_path;
+        use lsp_types::Uri;
+        let uri: Uri = "file:///g%3A/code/mos/vscode/test-workspace/main.asm"
+            .parse()
+            .unwrap();
+        let _ = uri_to_path(&uri);
     }
 }

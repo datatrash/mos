@@ -75,7 +75,7 @@ impl ParserInstance {
         }
     }
 
-    pub fn shared_state(&self) -> MutexGuard<State> {
+    pub fn shared_state(&self) -> MutexGuard<'_, State> {
         self.shared_state.lock().unwrap()
     }
 }
@@ -375,6 +375,7 @@ impl Number {
 
 bitflags::bitflags! {
     /// Flags that can be used to modify the [ExpressionFactor] the flags belong to
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct ExpressionFactorFlags: u8 {
         const NOT = 0b00000001;
         const NEG = 0b00000010;

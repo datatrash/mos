@@ -1,4 +1,6 @@
 /**/target
 /**/.vscode
 /.idea
+/intellij/.gradle
+/intellij/build
 .DS_Store

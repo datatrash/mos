@@ -1,6 +1,6 @@
 use crate::debugger::protocol::ProtocolMessage;
 use crate::diagnostic_emitter::MosResult;
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::{io, thread};

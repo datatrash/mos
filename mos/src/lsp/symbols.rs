@@ -1,10 +1,10 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{to_range, LspContext, RequestHandler};
-use lsp_types::request::{DocumentSymbolRequest, WorkspaceSymbol};
+use crate::lsp::{LspContext, RequestHandler, path_to_uri, to_range, uri_to_path};
+use lsp_types::request::{DocumentSymbolRequest, WorkspaceSymbolRequest};
 use lsp_types::{
     DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Location, SymbolInformation,
-    SymbolKind, Url, WorkspaceSymbolParams,
+    SymbolKind, Uri, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use mos_core::codegen::CodegenContext;
 use mos_core::parser::code_map::Span;
@@ -24,7 +24,7 @@ impl RequestHandler<DocumentSymbolRequest> for DocumentSymbolRequestHandler {
         params: DocumentSymbolParams,
     ) -> MosResult<Option<DocumentSymbolResponse>> {
         if let Some(tree) = &ctx.tree {
-            let path = params.text_document.uri.to_file_path().unwrap();
+            let path = uri_to_path(&params.text_document.uri);
             if let Some(file) = tree.try_get_file(&path) {
                 if let Some(codegen) = ctx.codegen() {
                     let emitter = DocSymEmitter {
@@ -46,12 +46,12 @@ impl RequestHandler<DocumentSymbolRequest> for DocumentSymbolRequestHandler {
     }
 }
 
-impl RequestHandler<WorkspaceSymbol> for WorkspaceSymbolHandler {
+impl RequestHandler<WorkspaceSymbolRequest> for WorkspaceSymbolHandler {
     fn handle(
         &self,
         ctx: &mut LspContext,
         params: WorkspaceSymbolParams,
-    ) -> MosResult<Option<Vec<SymbolInformation>>> {
+    ) -> MosResult<Option<WorkspaceSymbolResponse>> {
         if let Some(tree) = &ctx.tree {
             if let Some(file) = tree.try_get_file(&tree.main_file) {
                 if let Some(codegen) = ctx.codegen() {
@@ -70,7 +70,7 @@ impl RequestHandler<WorkspaceSymbol> for WorkspaceSymbolHandler {
                         })
                         .map(|ds| ds.into_workspace_symbol(tree))
                         .collect();
-                    return Ok(Some(workspace_symbols));
+                    return Ok(Some(WorkspaceSymbolResponse::Flat(workspace_symbols)));
                 }
             }
         }
@@ -79,7 +79,7 @@ impl RequestHandler<WorkspaceSymbol> for WorkspaceSymbolHandler {
 }
 
 struct DocSym {
-    uri: Url,
+    uri: Uri,
     name: Identifier,
     parent: Option<Identifier>,
     span: Span,
@@ -181,11 +181,11 @@ impl<'a> DocSymEmitter<'a> {
             }
             Token::Label { id, block, .. } => {
                 vec![DocSym {
-                    uri: Url::from_file_path(self.filename).unwrap(),
+                    uri: path_to_uri(self.filename),
                     name: id.data.clone(),
                     parent: parent.cloned(),
                     span: id.span,
-                    kind: SymbolKind::Class,
+                    kind: SymbolKind::CLASS,
                     children: block
                         .as_ref()
                         .map(|b| self.emit_document_symbols(&b.inner, Some(&id.data)))

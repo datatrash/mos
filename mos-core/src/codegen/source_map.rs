@@ -1,5 +1,5 @@
-use crate::codegen::symbols::SymbolIndex;
 use crate::codegen::ProgramCounter;
+use crate::codegen::symbols::SymbolIndex;
 use crate::parser::code_map::{CodeMap, Span};
 use std::ops::Range;
 

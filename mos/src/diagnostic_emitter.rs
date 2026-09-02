@@ -73,8 +73,13 @@ impl DiagnosticEmitter {
             let mut diag = diag.clone();
             diag.labels = labels;
 
-            codespan_reporting::term::emit(&mut self.writer, &self.config, &code_map, &diag)
-                .unwrap();
+            codespan_reporting::term::emit_to_write_style(
+                &mut self.writer,
+                &self.config,
+                &code_map,
+                &diag,
+            )
+            .unwrap();
         }
     }
 }
@@ -112,7 +117,7 @@ impl WriteColor for TestLogStream {
 #[cfg(test)]
 mod tests {
     use crate::diagnostic_emitter::{DiagnosticEmitter, TestLogStream};
-    use mos_core::codegen::{codegen, CodegenContext, CodegenOptions};
+    use mos_core::codegen::{CodegenContext, CodegenOptions, codegen};
     use mos_core::errors::CoreResult;
     use mos_core::parser::parse_or_err;
     use mos_core::parser::source::{InMemoryParsingSource, ParsingSource};

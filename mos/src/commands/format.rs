@@ -1,11 +1,11 @@
 use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
 use fs_err::OpenOptions;
+use mos_core::LINE_ENDING;
 use mos_core::errors::map_io_error;
 use mos_core::formatting::format;
 use mos_core::parser::parse_or_err;
 use mos_core::parser::source::FileSystemParsingSource;
-use mos_core::LINE_ENDING;
 use std::io::Write;
 
 /// Formats input file(s)

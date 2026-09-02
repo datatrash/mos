@@ -2,7 +2,7 @@
 name = "mos-core"
 version = "0.0.0" # unused
 authors = ["Roy Jacobs <roy.jacobs@gmail.com>"]
-edition = "2018"
+edition = "2024"
 repository = "https://github.com/datatrash/mos"
 license = "MIT"
 keywords = ["retro", "6502", "assembler"]
@@ -10,27 +10,22 @@ keywords = ["retro", "6502", "assembler"]
 [lib]
 
 [dependencies]
-ansi_term = "0.12"
-bitflags = "1"
-codespan-reporting = "0.11"
-derive_more = "0.99"
-fs-err = "2"
-indexmap = "1.7"
-itertools = "0.10"
+bitflags = "2"
+codespan-reporting = "0.13"
+fs-err = "3"
+indexmap = "2.14"
+itertools = "0.15"
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
-loggerv = "0.7"
-nom = "7"
-nom_locate = "4"
-once_cell = "1.8"
-path-absolutize = "3"
-path-dedot = "3"
+nom = "8"
+nom_locate = "5"
+once_cell = "1.21"
+path-absolutize = "4"
+path-dedot = "4"
 pathdiff = "0.2"
-petgraph = "0.6"
+petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 smallvec = "1"
-strum = { version = "0.23", features = ["derive"] }
-toml = "0.5"
+strum = { version = "0.28", features = ["derive"] }
 
 [dev-dependencies]
 mos-testing = { path = "../mos-testing" }

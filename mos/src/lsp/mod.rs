@@ -32,17 +32,17 @@ use lsp_types::notification::Notification;
 use lsp_types::{
     CodeLensOptions, CompletionOptions, DocumentOnTypeFormattingOptions, HoverProviderCapability,
     InitializeParams, OneOf, RenameOptions, ServerCapabilities, TextDocumentPositionParams,
-    TextDocumentSyncKind, Url,
+    TextDocumentSyncKind, Uri,
 };
 use mos_core::codegen::{
-    codegen, Analysis, CodegenContext, CodegenOptions, Definition, DefinitionType,
+    Analysis, CodegenContext, CodegenOptions, Definition, DefinitionType, codegen,
 };
-use mos_core::errors::{map_io_error, CoreResult, Diagnostics};
+use mos_core::errors::{CoreResult, Diagnostics, map_io_error};
 use mos_core::parser::code_map::{LineCol, SpanLoc};
 use mos_core::parser::source::ParsingSource;
-use mos_core::parser::{parse, ParseTree};
-use serde::de::DeserializeOwned;
+use mos_core::parser::{ParseTree, parse};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -71,9 +71,26 @@ fn to_range(s: SpanLoc) -> lsp_types::Range {
 
 fn to_location(s: SpanLoc) -> lsp_types::Location {
     lsp_types::Location {
-        uri: Url::from_file_path(s.file.name()).unwrap(),
+        uri: path_to_uri(s.file.name()),
         range: to_range(s),
     }
+}
+
+fn path_to_uri(path: impl AsRef<Path>) -> Uri {
+    let url = url::Url::from_file_path(path.as_ref()).unwrap_or_else(|_| {
+        panic!(
+            "expected an absolute file path: {}",
+            path.as_ref().display()
+        )
+    });
+    url.as_str().parse().expect("URL should be a valid LSP URI")
+}
+
+fn uri_to_path(uri: &Uri) -> PathBuf {
+    url::Url::parse(uri.as_str())
+        .expect("LSP URI should be a valid URL")
+        .to_file_path()
+        .unwrap_or_else(|_| panic!("expected a file URI: {}", uri.as_str()))
 }
 
 pub struct LspContext {
@@ -294,12 +311,7 @@ impl LspContext {
         id: RequestId,
         result: R,
     ) -> MosResult<()> {
-        let result = serde_json::to_value(&result).unwrap();
-        let response = lsp_server::Response {
-            id,
-            result: Some(result),
-            error: None,
-        };
+        let response = lsp_server::Response::new_ok(id, result);
 
         #[cfg(test)]
         {
@@ -324,7 +336,7 @@ impl LspContext {
         pos: &'a TextDocumentPositionParams,
     ) -> Vec<(&'a DefinitionType, &'a Definition)> {
         analysis.find(
-            pos.text_document.uri.to_file_path().unwrap(),
+            uri_to_path(&pos.text_document.uri),
             to_line_col(&pos.position),
         )
     }
@@ -374,7 +386,7 @@ impl LspServer {
         self.context.clone()
     }
 
-    pub fn lock_context(&self) -> MutexGuard<LspContext> {
+    pub fn lock_context(&self) -> MutexGuard<'_, LspContext> {
         self.context.lock().unwrap()
     }
 
@@ -383,7 +395,7 @@ impl LspServer {
 
         let caps = ServerCapabilities {
             semantic_tokens_provider: Some(semantic_highlighting::caps().into()),
-            text_document_sync: Some(TextDocumentSyncKind::Full.into()),
+            text_document_sync: Some(TextDocumentSyncKind::FULL.into()),
             references_provider: Some(OneOf::Left(true)),
             document_formatting_provider: Some(OneOf::Left(true)),
             document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {

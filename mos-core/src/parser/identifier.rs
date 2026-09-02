@@ -3,14 +3,14 @@ use std::fmt::{Debug, Display, Formatter};
 
 #[macro_export]
 macro_rules! id {
-    ($s:expr) => {
+    ($s:expr_2021) => {
         $crate::parser::identifier::Identifier::from($s)
     };
 }
 
 #[macro_export]
 macro_rules! idpath {
-    ($s:expr) => {
+    ($s:expr_2021) => {
         $crate::parser::identifier::IdentifierPath::from($s)
     };
 }

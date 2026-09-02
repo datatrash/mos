@@ -18,7 +18,6 @@ pub use symbols::*;
 
 use crate::codegen::config_validator::ConfigValidator;
 use crate::codegen::opcodes::get_opcode_bytes;
-use crate::codegen::source_map::SourceMap;
 use crate::codegen::text_encoding::encode_text;
 use crate::errors::{CoreResult, Diagnostics};
 use crate::io::BankOptions;
@@ -453,11 +452,11 @@ impl CodegenContext {
         }
     }
 
-    pub fn get_evaluator(&self) -> Evaluator {
+    pub fn get_evaluator(&self) -> Evaluator<'_> {
         self.get_evaluator_for_scope(self.current_scope_nx)
     }
 
-    pub fn get_evaluator_for_scope(&self, scope_nx: SymbolIndex) -> Evaluator {
+    pub fn get_evaluator_for_scope(&self, scope_nx: SymbolIndex) -> Evaluator<'_> {
         Evaluator::new(
             scope_nx,
             &self.symbols,
@@ -1211,7 +1210,7 @@ impl CodegenContext {
             .insert("$dummy".into(), Segment::new(SegmentOptions::default()));
         self.current_segment = Some(Identifier::new("$dummy"));
         let result = f(self);
-        self.segments.remove(&Identifier::new("$dummy"));
+        self.segments.swap_remove(&Identifier::new("$dummy"));
         self.current_segment = prev_segment;
         result
     }
@@ -1450,12 +1449,12 @@ pub fn codegen(
 
 #[cfg(test)]
 pub mod tests {
-    use super::{codegen, CodegenContext, CodegenOptions};
+    use super::{CodegenContext, CodegenOptions, codegen};
     use crate::codegen::{DefinitionType, Segment, SymbolIndex};
     use crate::errors::CoreResult;
     use crate::parser::code_map::LineCol;
     use crate::parser::source::{InMemoryParsingSource, ParsingSource};
-    use crate::parser::{parse_or_err, Identifier};
+    use crate::parser::{Identifier, parse_or_err};
     use itertools::Itertools;
     use mos_testing::enable_default_tracing;
     use std::path::Path;
@@ -2031,7 +2030,10 @@ pub mod tests {
     #[test]
     fn error_unknown_identifiers() {
         let err = test_codegen(".byte foo\n.byte foo2").err().unwrap();
-        assert_eq!(err.to_string(), "test.asm:1:7: error: unknown identifier: foo\ntest.asm:2:7: error: unknown identifier: foo2");
+        assert_eq!(
+            err.to_string(),
+            "test.asm:1:7: error: unknown identifier: foo\ntest.asm:2:7: error: unknown identifier: foo2"
+        );
     }
 
     #[test]
@@ -2206,10 +2208,11 @@ pub mod tests {
             },
         )?;
         assert_eq!(ctx.current_segment().range_data(), vec![]);
-        assert!(!ctx
-            .source_map()
-            .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, None)
-            .is_empty());
+        assert!(
+            !ctx.source_map()
+                .line_col_to_offsets(&ctx.tree.code_map, "test.asm", 1, None)
+                .is_empty()
+        );
         Ok(())
     }
 

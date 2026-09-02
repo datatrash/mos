@@ -1,6 +1,6 @@
+use crate::LINE_ENDING;
 use crate::codegen::CodegenContext;
 use crate::errors::CoreResult;
-use crate::LINE_ENDING;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -85,8 +85,8 @@ pub fn to_listing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::tests::{test_codegen, test_codegen_with_options};
     use crate::codegen::CodegenOptions;
+    use crate::codegen::tests::{test_codegen, test_codegen_with_options};
 
     #[test]
     fn create_listing() -> CoreResult<()> {

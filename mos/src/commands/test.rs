@@ -1,8 +1,8 @@
+use crate::Args;
 use crate::config::Config;
 use crate::diagnostic_emitter::{DiagnosticEmitter, MosResult};
-use crate::test_runner::{enumerate_test_cases, format_cpu_details, ExecuteResult, TestRunner};
+use crate::test_runner::{ExecuteResult, TestRunner, enumerate_test_cases, format_cpu_details};
 use crate::utils::paint;
-use crate::Args;
 use ansi_term::Colour;
 use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
 use serde::Deserialize;
@@ -102,11 +102,7 @@ pub fn test_command(args: &Args, root: &Path, cfg: &Config) -> MosResult<i32> {
         failed.len()
     );
 
-    if !failed.is_empty() {
-        Ok(1)
-    } else {
-        Ok(0)
-    }
+    if !failed.is_empty() { Ok(1) } else { Ok(0) }
 }
 
 #[cfg(test)]

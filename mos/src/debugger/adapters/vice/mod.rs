@@ -4,7 +4,7 @@ use crate::debugger::adapters::vice::protocol::*;
 use crate::debugger::adapters::*;
 use crate::memory_accessor::MemoryAccessor;
 use codespan_reporting::diagnostic::Diagnostic;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use itertools::Itertools;
 use mos_core::errors::Diagnostics;
 use std::collections::HashMap;
@@ -529,21 +529,23 @@ where
     let vec = out.clone();
     thread::Builder::new()
         .name("child_stream_to_vec".into())
-        .spawn(move || loop {
-            let mut buf = [0];
-            match stream.read(&mut buf) {
-                Err(err) => {
-                    println!("{}] Error reading from stream: {}", line!(), err);
-                    break;
-                }
-                Ok(got) => {
-                    if got == 0 {
+        .spawn(move || {
+            loop {
+                let mut buf = [0];
+                match stream.read(&mut buf) {
+                    Err(err) => {
+                        println!("{}] Error reading from stream: {}", line!(), err);
                         break;
-                    } else if got == 1 {
-                        vec.lock().expect("!lock").push(buf[0])
-                    } else {
-                        println!("{}] Unexpected number of bytes: {}", line!(), got);
-                        break;
+                    }
+                    Ok(got) => {
+                        if got == 0 {
+                            break;
+                        } else if got == 1 {
+                            vec.lock().expect("!lock").push(buf[0])
+                        } else {
+                            println!("{}] Unexpected number of bytes: {}", line!(), got);
+                            break;
+                        }
                     }
                 }
             }

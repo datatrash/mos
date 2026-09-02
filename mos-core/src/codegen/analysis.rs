@@ -194,8 +194,8 @@ impl Analysis {
 
 #[cfg(test)]
 mod tests {
-    use crate::codegen::tests::{test_codegen, test_codegen_parsing_source};
     use crate::codegen::CodegenOptions;
+    use crate::codegen::tests::{test_codegen, test_codegen_parsing_source};
     use crate::errors::CoreResult;
     use crate::parser::code_map::LineCol;
     use crate::parser::source::InMemoryParsingSource;

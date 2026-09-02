@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
-use mos_core::errors::{map_io_error, Diagnostics};
+use mos_core::errors::{Diagnostics, map_io_error};
 use std::path::Path;
 
 /// Creates a new MOS project configuration file

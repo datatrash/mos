@@ -1,6 +1,6 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler, uri_to_path};
 use itertools::Itertools;
 use lsp_types::request::Completion;
 use lsp_types::{CompletionItem, CompletionParams, CompletionResponse};
@@ -21,12 +21,7 @@ impl RequestHandler<Completion> for CompletionHandler {
         if let Some(codegen) = &ctx.codegen {
             let codegen = codegen.lock().unwrap();
             if let Some(tree) = &ctx.tree {
-                let path = &params
-                    .text_document_position
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    .unwrap();
+                let path = &uri_to_path(&params.text_document_position.text_document.uri);
 
                 let source_line = params.text_document_position.position.line as usize;
                 let source_column = params.text_document_position.position.character as usize;
@@ -120,8 +115,8 @@ impl RequestHandler<Completion> for CompletionHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::testing::test_root;
     use crate::lsp::LspServer;
+    use crate::lsp::testing::test_root;
     use lsp_types::Position;
     use mos_testing::assert_unordered_eq;
 

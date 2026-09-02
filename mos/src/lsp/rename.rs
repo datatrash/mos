@@ -1,6 +1,6 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{to_location, LspContext, RequestHandler};
+use crate::lsp::{LspContext, RequestHandler, to_location, uri_to_path};
 use itertools::Itertools;
 use lsp_types::request::{PrepareRenameRequest, Rename};
 use lsp_types::{
@@ -27,7 +27,7 @@ impl RequestHandler<PrepareRenameRequest> for PrepareRenameRequestHandler {
     ) -> MosResult<Option<PrepareRenameResponse>> {
         if let Some(codegen) = &ctx.codegen {
             let codegen = codegen.lock().unwrap();
-            let file_path = &params.text_document.uri.to_file_path().unwrap();
+            let file_path = &uri_to_path(&params.text_document.uri);
 
             let source_line = params.position.line as usize;
             let source_column = params.position.character as usize;
@@ -199,9 +199,9 @@ impl RequestHandler<Rename> for RenameHandler {
 mod tests {
     use crate::diagnostic_emitter::MosResult;
     use crate::lsp::testing::{response, test_root};
-    use crate::lsp::{LspContext, LspServer};
+    use crate::lsp::{LspContext, LspServer, path_to_uri};
     use lsp_types::request::{PrepareRenameRequest, Rename};
-    use lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Url, WorkspaceEdit};
+    use lsp_types::{Position, PrepareRenameResponse, Range, TextEdit, Uri, WorkspaceEdit};
     use std::collections::HashMap;
 
     #[test]
@@ -271,9 +271,9 @@ mod tests {
         assert_can_rename(&server, true, 2, 8..11);
         server.rename(test_root().join("main.asm"), Position::new(2, 8), "baz")?;
 
-        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        let mut expected_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm")).unwrap(),
+            path_to_uri(test_root().join("main.asm")),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 14), Position::new(0, 17)),
@@ -287,13 +287,20 @@ mod tests {
         );
 
         assert_eq!(
-            server.lock_context().responses().pop().unwrap().result,
+            server
+                .lock_context()
+                .responses()
+                .pop()
+                .unwrap()
+                .response_result
+                .unwrap(),
             response::<Rename>(Some(WorkspaceEdit {
                 changes: Some(expected_changes),
                 document_changes: None,
                 change_annotations: None
             }))
-            .result
+            .response_result
+            .unwrap()
         );
 
         Ok(())
@@ -310,9 +317,9 @@ mod tests {
         assert_can_rename(&server, true, 2, 4..7);
         server.rename(test_root().join("main.asm"), Position::new(2, 4), "foz")?;
 
-        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        let mut expected_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm")).unwrap(),
+            path_to_uri(test_root().join("main.asm")),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 0), Position::new(0, 3)),
@@ -326,13 +333,20 @@ mod tests {
         );
 
         assert_eq!(
-            server.lock_context().responses().pop().unwrap().result,
+            server
+                .lock_context()
+                .responses()
+                .pop()
+                .unwrap()
+                .response_result
+                .unwrap(),
             response::<Rename>(Some(WorkspaceEdit {
                 changes: Some(expected_changes),
                 document_changes: None,
                 change_annotations: None
             }))
-            .result
+            .response_result
+            .unwrap()
         );
 
         Ok(())
@@ -350,16 +364,16 @@ mod tests {
         assert_can_rename(&server, true, 2, 4..7);
         server.rename(test_root().join("main.asm"), Position::new(2, 4), "foz")?;
 
-        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        let mut expected_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm")).unwrap(),
+            path_to_uri(test_root().join("main.asm")),
             vec![TextEdit {
                 range: Range::new(Position::new(2, 4), Position::new(2, 7)),
                 new_text: "foz".to_string(),
             }],
         );
         expected_changes.insert(
-            Url::from_file_path(test_root().join("other.asm")).unwrap(),
+            path_to_uri(test_root().join("other.asm")),
             vec![TextEdit {
                 range: Range::new(Position::new(0, 0), Position::new(0, 3)),
                 new_text: "foz".to_string(),
@@ -367,13 +381,20 @@ mod tests {
         );
 
         assert_eq!(
-            server.lock_context().responses().pop().unwrap().result,
+            server
+                .lock_context()
+                .responses()
+                .pop()
+                .unwrap()
+                .response_result
+                .unwrap(),
             response::<Rename>(Some(WorkspaceEdit {
                 changes: Some(expected_changes),
                 document_changes: None,
                 change_annotations: None
             }))
-            .result
+            .response_result
+            .unwrap()
         );
 
         Ok(())
@@ -390,9 +411,9 @@ mod tests {
         assert_can_rename(&server, true, 0, 0..3);
         server.rename(test_root().join("main.asm"), Position::new(0, 0), "foz")?;
 
-        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        let mut expected_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm")).unwrap(),
+            path_to_uri(test_root().join("main.asm")),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 0), Position::new(0, 3)),
@@ -406,13 +427,20 @@ mod tests {
         );
 
         assert_eq!(
-            server.lock_context().responses().pop().unwrap().result,
+            server
+                .lock_context()
+                .responses()
+                .pop()
+                .unwrap()
+                .response_result
+                .unwrap(),
             response::<Rename>(Some(WorkspaceEdit {
                 changes: Some(expected_changes),
                 document_changes: None,
                 change_annotations: None
             }))
-            .result
+            .response_result
+            .unwrap()
         );
 
         Ok(())
@@ -434,9 +462,9 @@ macro("hi")"#,
         // Rename 'bank_name' to 'foz'
         server.rename(test_root().join("main.asm"), Position::new(0, 14), "foz")?;
 
-        let mut expected_changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+        let mut expected_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
         expected_changes.insert(
-            Url::from_file_path(test_root().join("main.asm")).unwrap(),
+            path_to_uri(test_root().join("main.asm")),
             vec![
                 TextEdit {
                     range: Range::new(Position::new(0, 13), Position::new(0, 22)),
@@ -450,13 +478,20 @@ macro("hi")"#,
         );
 
         assert_eq!(
-            server.lock_context().responses().pop().unwrap().result,
+            server
+                .lock_context()
+                .responses()
+                .pop()
+                .unwrap()
+                .response_result
+                .unwrap(),
             response::<Rename>(Some(WorkspaceEdit {
                 changes: Some(expected_changes),
                 document_changes: None,
                 change_annotations: None
             }))
-            .result
+            .response_result
+            .unwrap()
         );
 
         Ok(())
@@ -480,13 +515,23 @@ macro("hi")"#,
             },
         };
         let expected = if can_rename {
-            response::<PrepareRenameRequest>(Some(PrepareRenameResponse::Range(range))).result
+            response::<PrepareRenameRequest>(Some(PrepareRenameResponse::Range(range)))
+                .response_result
+                .unwrap()
         } else {
-            response::<PrepareRenameRequest>(None).result
+            response::<PrepareRenameRequest>(None)
+                .response_result
+                .unwrap()
         };
 
         assert_eq!(
-            server.lock_context().responses().pop().unwrap().result,
+            server
+                .lock_context()
+                .responses()
+                .pop()
+                .unwrap()
+                .response_result
+                .unwrap(),
             expected
         );
     }

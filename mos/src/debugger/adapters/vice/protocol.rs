@@ -219,11 +219,7 @@ impl ViceResponse {
 }
 
 fn bool_to_u8(val: bool) -> u8 {
-    if val {
-        1
-    } else {
-        0
-    }
+    if val { 1 } else { 0 }
 }
 
 impl ViceRequest {
@@ -349,9 +345,11 @@ mod tests {
     fn reports_invalid_protocol_data_without_panicking() {
         let mut invalid_version = Cursor::new(response(3, 0x81, 0, &[]));
         let error = ViceResponse::read(&mut invalid_version).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("Unsupported VICE binary monitor API version"));
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported VICE binary monitor API version")
+        );
 
         let mut unknown_response = Cursor::new(response(2, 0xff, 0, &[]));
         assert_eq!(

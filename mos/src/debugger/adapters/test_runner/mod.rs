@@ -5,13 +5,13 @@ use crate::debugger::adapters::{
 use crate::debugger::types::LaunchRequestArguments;
 use crate::diagnostic_emitter::MosResult;
 use crate::memory_accessor::MemoryAccessor;
-use crate::test_runner::{format_cpu_details, ExecuteResult, TestRunner, TestRunnerMemoryAccessor};
+use crate::test_runner::{ExecuteResult, TestRunner, TestRunnerMemoryAccessor, format_cpu_details};
 use crate::utils::paint;
 use ansi_term::Colour;
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
-use mos_core::parser::source::ParsingSource;
 use mos_core::parser::IdentifierPath;
+use mos_core::parser::source::ParsingSource;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

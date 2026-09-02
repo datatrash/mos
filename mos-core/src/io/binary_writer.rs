@@ -1,11 +1,11 @@
 use crate::codegen::{CodegenContext, Segment};
-use crate::errors::{map_io_error, CoreResult};
+use crate::errors::{CoreResult, map_io_error};
 use crate::parser::Identifier;
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
 use indexmap::map::{Entry, IndexMap};
 use itertools::Itertools;
-use std::cmp::{max, min, Ordering};
+use std::cmp::{Ordering, max, min};
 use std::collections::HashMap;
 use std::io::Write;
 use std::ops::Range;
@@ -222,8 +222,8 @@ impl BinaryWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codegen::tests::test_codegen;
     use crate::codegen::SegmentOptions;
+    use crate::codegen::tests::test_codegen;
     use crate::errors::CoreResult;
     use tempfile::tempdir;
 

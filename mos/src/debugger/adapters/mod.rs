@@ -4,7 +4,7 @@ pub mod vice;
 use crate::debugger::types::LaunchRequestArguments;
 use crate::diagnostic_emitter::MosResult;
 use crate::memory_accessor::MemoryAccessor;
-use crossbeam_channel::{bounded, Receiver, TryRecvError};
+use crossbeam_channel::{Receiver, TryRecvError, bounded};
 use mos_core::codegen::{CodegenContext, ProgramCounter};
 use mos_core::parser::code_map::SpanLoc;
 use std::collections::HashMap;
@@ -46,11 +46,11 @@ impl Machine {
         Self { adapter, poller }
     }
 
-    pub fn adapter(&self) -> RwLockReadGuard<Box<dyn MachineAdapter + Send + Sync>> {
+    pub fn adapter(&self) -> RwLockReadGuard<'_, Box<dyn MachineAdapter + Send + Sync>> {
         self.adapter.read().unwrap()
     }
 
-    pub fn adapter_mut(&self) -> RwLockWriteGuard<Box<dyn MachineAdapter + Send + Sync>> {
+    pub fn adapter_mut(&self) -> RwLockWriteGuard<'_, Box<dyn MachineAdapter + Send + Sync>> {
         self.adapter.write().unwrap()
     }
 

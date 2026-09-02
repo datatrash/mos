@@ -1,11 +1,13 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{to_line_col, to_location, to_range, LspContext, RequestHandler};
+use crate::lsp::{
+    LspContext, RequestHandler, path_to_uri, to_line_col, to_location, to_range, uri_to_path,
+};
 use itertools::Itertools;
 use lsp_types::request::{DocumentHighlightRequest, GotoDefinition, References};
 use lsp_types::{
     DocumentHighlight, DocumentHighlightParams, GotoDefinitionParams, GotoDefinitionResponse,
-    Location, LocationLink, ReferenceParams, Url,
+    Location, LocationLink, ReferenceParams,
 };
 use mos_core::codegen::DefinitionType;
 
@@ -35,12 +37,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                 let tree = ctx.tree.as_ref().unwrap();
                 let origin = def.try_get_usage_containing(
                     tree,
-                    &params
-                        .text_document_position_params
-                        .text_document
-                        .uri
-                        .to_file_path()
-                        .unwrap(),
+                    &uri_to_path(&params.text_document_position_params.text_document.uri),
                     to_line_col(&params.text_document_position_params.position),
                 );
                 let origin = origin.map(|dl| tree.code_map.look_up_span(dl.span));
@@ -48,7 +45,7 @@ impl RequestHandler<GotoDefinition> for GoToDefinitionHandler {
                 let l = analysis.look_up(location.span);
                 let link = LocationLink {
                     origin_selection_range: origin.map(to_range),
-                    target_uri: Url::from_file_path(l.file.name()).unwrap(),
+                    target_uri: path_to_uri(l.file.name()),
                     target_range: to_range(tree.code_map.look_up_span(location.span)),
                     target_selection_range: to_range(tree.code_map.look_up_span(location.span)),
                 };
@@ -73,12 +70,7 @@ impl RequestHandler<References> for FindReferencesHandler {
         let codegen = codegen.lock().unwrap();
         let analysis = codegen.analysis();
         let defs = analysis.find_filter(
-            params
-                .text_document_position
-                .text_document
-                .uri
-                .to_file_path()
-                .unwrap(),
+            uri_to_path(&params.text_document_position.text_document.uri),
             to_line_col(&params.text_document_position.position),
             |ty| matches!(ty, DefinitionType::Symbol(_)),
         );
@@ -137,9 +129,9 @@ impl RequestHandler<DocumentHighlightRequest> for DocumentHighlightRequestHandle
 mod tests {
     use crate::diagnostic_emitter::MosResult;
     use crate::lsp::testing::{range, test_root};
-    use crate::lsp::{LspContext, LspServer};
+    use crate::lsp::{LspContext, LspServer, path_to_uri, uri_to_path};
     use itertools::Itertools;
-    use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
+    use lsp_types::{GotoDefinitionResponse, Location, Position};
 
     #[test]
     fn can_go_to_const_reference() -> MosResult<()> {
@@ -156,11 +148,7 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(
-            location
-                .target_uri
-                .to_file_path()
-                .unwrap()
-                .to_string_lossy(),
+            uri_to_path(&location.target_uri).to_string_lossy(),
             test_root().join("main.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 14, 0, 20));
@@ -184,11 +172,7 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(
-            location
-                .target_uri
-                .to_file_path()
-                .unwrap()
-                .to_string_lossy(),
+            uri_to_path(&location.target_uri).to_string_lossy(),
             test_root().join("main.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 7, 0, 10));
@@ -216,11 +200,7 @@ mod tests {
             _ => panic!(),
         };
         assert_eq!(
-            location
-                .target_uri
-                .to_file_path()
-                .unwrap()
-                .to_string_lossy(),
+            uri_to_path(&location.target_uri).to_string_lossy(),
             test_root().join("bar.asm").to_string_lossy()
         );
         assert_eq!(location.target_range, range(0, 14, 0, 20));
@@ -245,11 +225,11 @@ mod tests {
             response,
             vec![
                 Location {
-                    uri: Url::from_file_path(test_root().join("main.asm")).unwrap(),
+                    uri: path_to_uri(test_root().join("main.asm")),
                     range: range(0, 4, 0, 6)
                 },
                 Location {
-                    uri: Url::from_file_path(test_root().join("main.asm")).unwrap(),
+                    uri: path_to_uri(test_root().join("main.asm")),
                     range: range(2, 8, 2, 17)
                 },
             ]

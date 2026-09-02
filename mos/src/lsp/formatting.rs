@@ -1,9 +1,9 @@
 use crate::diagnostic_emitter::MosResult;
 use crate::impl_request_handler;
-use crate::lsp::{LspContext, RequestHandler};
-use dissimilar::{diff, Chunk};
-use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit, Url};
-use mos_core::formatting::{format, FormattingOptions};
+use crate::lsp::{LspContext, RequestHandler, uri_to_path};
+use dissimilar::{Chunk, diff};
+use lsp_types::{DocumentFormattingParams, DocumentOnTypeFormattingParams, TextEdit, Uri};
+use mos_core::formatting::{FormattingOptions, format};
 
 pub struct FormattingRequestHandler;
 pub struct OnTypeFormattingRequestHandler;
@@ -34,8 +34,8 @@ impl RequestHandler<lsp_types::request::OnTypeFormatting> for OnTypeFormattingRe
     }
 }
 
-fn do_formatting(ctx: &mut LspContext, uri: &Url) -> Option<Vec<TextEdit>> {
-    let path = uri.to_file_path().unwrap();
+fn do_formatting(ctx: &mut LspContext, uri: &Uri) -> Option<Vec<TextEdit>> {
+    let path = uri_to_path(uri);
     if ctx.error.is_empty() {
         ctx.codegen().map(|codegen| {
             let codegen = codegen.lock().unwrap();
@@ -169,7 +169,7 @@ fn rng(start_line: u32, start_column: u32, end_line: u32, end_column: u32) -> ls
 
 #[cfg(test)]
 mod tests {
-    use crate::lsp::formatting::{get_text_edits, rng, RangeKeeper};
+    use crate::lsp::formatting::{RangeKeeper, get_text_edits, rng};
     use lsp_types::TextEdit;
 
     #[test]

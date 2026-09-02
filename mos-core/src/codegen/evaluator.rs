@@ -162,11 +162,7 @@ impl<'a> Evaluator<'a> {
                     Some(value) => match value {
                         SymbolData::Number(mut number) => {
                             if flags.contains(ExpressionFactorFlags::NOT) {
-                                if number == 0 {
-                                    number = 1
-                                } else {
-                                    number = 0
-                                }
+                                if number == 0 { number = 1 } else { number = 0 }
                             }
                             if flags.contains(ExpressionFactorFlags::NEG) {
                                 number = -number;
@@ -284,7 +280,10 @@ impl<'a> Evaluator<'a> {
                         } else {
                             return Err(EvaluationError {
                                 span: path.span,
-                                message: format!("could not interpolate '{}' because '{}' does not resolve to a string", i, path)
+                                message: format!(
+                                    "could not interpolate '{}' because '{}' does not resolve to a string",
+                                    i, path
+                                ),
                             });
                         }
                     }

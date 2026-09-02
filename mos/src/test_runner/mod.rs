@@ -1,12 +1,12 @@
 use crate::diagnostic_emitter::MosResult;
-use crate::memory_accessor::{ensure_ram_fn, MemoryAccessor};
+use crate::memory_accessor::{MemoryAccessor, ensure_ram_fn};
 use crate::utils::paint;
 use ansi_term::Colour;
 use codespan_reporting::diagnostic::Diagnostic;
 use emulator_6502::{Interface6502, MOS6502};
 use itertools::Itertools;
 use mos_core::codegen::{
-    codegen, Assertion, CodegenContext, CodegenOptions, SymbolData, SymbolType, TestElement, Trace,
+    Assertion, CodegenContext, CodegenOptions, SymbolData, SymbolType, TestElement, Trace, codegen,
 };
 use mos_core::errors::Diagnostics;
 use mos_core::io::BinaryWriter;

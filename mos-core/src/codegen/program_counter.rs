@@ -1,11 +1,8 @@
-use derive_more::{Add, From, Into, Sub, UpperHex};
-use std::fmt::{Display, Formatter};
-use std::ops::{Add, Deref, Range};
+use std::fmt::{Display, Formatter, UpperHex};
+use std::ops::{Add, Deref, Range, Sub};
 
 /// A simple newtype that wraps a program counter
-#[derive(
-    Debug, Default, PartialEq, Eq, Hash, Clone, Copy, PartialOrd, From, Add, Sub, Into, UpperHex,
-)]
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone, Copy, PartialOrd)]
 pub struct ProgramCounter(usize);
 
 impl ProgramCounter {
@@ -42,6 +39,22 @@ impl Add<usize> for ProgramCounter {
     }
 }
 
+impl Add for ProgramCounter {
+    type Output = ProgramCounter;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
+impl Sub for ProgramCounter {
+    type Output = ProgramCounter;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
 impl Deref for ProgramCounter {
     type Target = usize;
 
@@ -53,6 +66,24 @@ impl Deref for ProgramCounter {
 impl Display for ProgramCounter {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "${:04x}", self.0)
+    }
+}
+
+impl UpperHex for ProgramCounter {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl From<usize> for ProgramCounter {
+    fn from(val: usize) -> Self {
+        Self(val)
+    }
+}
+
+impl From<ProgramCounter> for usize {
+    fn from(val: ProgramCounter) -> Self {
+        val.0
     }
 }
 

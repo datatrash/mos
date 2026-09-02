@@ -2,10 +2,10 @@ use crate::config::Config;
 use crate::diagnostic_emitter::MosResult;
 use codespan_reporting::diagnostic::Diagnostic;
 use fs_err as fs;
-use mos_core::codegen::{codegen, CodegenContext, CodegenOptions};
-use mos_core::errors::map_io_error;
+use mos_core::codegen::{CodegenContext, CodegenOptions, codegen};
 use mos_core::errors::Diagnostics;
-use mos_core::io::{to_listing, to_vice_symbols, Bank, BinaryWriter};
+use mos_core::errors::map_io_error;
+use mos_core::io::{Bank, BinaryWriter, to_listing, to_vice_symbols};
 use mos_core::parser;
 use mos_core::parser::source::FileSystemParsingSource;
 use serde::Deserialize;
@@ -166,7 +166,7 @@ pub fn build_command(root: &Path, cfg: &Config) -> MosResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::{build_command, BuildOptions, OutputFormat, SymbolType};
+    use crate::commands::{BuildOptions, OutputFormat, SymbolType, build_command};
     use crate::config::Config;
     use anyhow::Result;
     use itertools::Itertools;

@@ -1,5 +1,5 @@
 use crate::diagnostic_emitter::MosResult;
-use crate::lsp::{LspContext, LspServer};
+use crate::lsp::{LspContext, LspServer, path_to_uri};
 use lsp_types::notification::{DidOpenTextDocument, Notification};
 use lsp_types::request::{
     Completion, GotoDefinition, HoverRequest, PrepareRenameRequest, References, Rename, Request,
@@ -9,7 +9,7 @@ use lsp_types::{
     CompletionParams, CompletionResponse, DidOpenTextDocumentParams, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverParams, Position, ReferenceContext, ReferenceParams,
     RenameParams, SemanticTokensParams, SemanticTokensResult, TextDocumentIdentifier,
-    TextDocumentItem, TextDocumentPositionParams, Url,
+    TextDocumentItem, TextDocumentPositionParams,
 };
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,7 @@ impl LspContext {
             .unwrap()
             .pop()
             .unwrap()
-            .result
+            .response_result
             .unwrap();
         serde_json::from_value(response).unwrap()
     }
@@ -37,7 +37,7 @@ impl LspServer {
         self.handle_message(notification::<DidOpenTextDocument>(
             DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                     language_id: "".to_string(),
                     version: 0,
                     text: source.to_string(),
@@ -50,7 +50,7 @@ impl LspServer {
         self.handle_message(request::<PrepareRenameRequest>(
             TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
@@ -66,7 +66,7 @@ impl LspServer {
         self.handle_message(request::<Rename>(RenameParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
@@ -83,7 +83,7 @@ impl LspServer {
         self.handle_message(request::<GotoDefinition>(GotoDefinitionParams {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
@@ -102,7 +102,7 @@ impl LspServer {
         self.handle_message(request::<References>(ReferenceParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
@@ -123,7 +123,7 @@ impl LspServer {
         self.handle_message(request::<HoverRequest>(HoverParams {
             text_document_position_params: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
@@ -140,7 +140,7 @@ impl LspServer {
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
             text_document: TextDocumentIdentifier {
-                uri: Url::from_file_path(path).unwrap(),
+                uri: path_to_uri(path),
             },
         }))?;
         Ok(self.lock_context().pop_response())
@@ -154,7 +154,7 @@ impl LspServer {
         self.handle_message(request::<Completion>(CompletionParams {
             text_document_position: TextDocumentPositionParams {
                 text_document: TextDocumentIdentifier {
-                    uri: Url::from_file_path(path).unwrap(),
+                    uri: path_to_uri(path),
                 },
                 position,
             },
@@ -177,12 +177,7 @@ fn request<T: Request>(params: T::Params) -> lsp_server::Message {
 }
 
 pub fn response<T: Request>(result: T::Result) -> lsp_server::Response {
-    let result = serde_json::to_value(&result).unwrap();
-    lsp_server::Response {
-        id: 1.into(),
-        result: Some(result),
-        error: None,
-    }
+    lsp_server::Response::new_ok(1.into(), result)
 }
 
 fn notification<T: Notification>(params: T::Params) -> lsp_server::Message {

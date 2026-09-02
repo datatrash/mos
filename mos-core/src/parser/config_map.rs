@@ -5,11 +5,11 @@ use nom::multi::many0;
 /// Tries to parse a single key-value pair within the map
 fn kvp(input: LocatedSpan) -> IResult<Token> {
     let value = alt((config_map, |input| {
-        map(expression, |expr| Token::Expression(expr.data))(input)
+        map(expression, |expr| Token::Expression(expr.data)).parse(input)
     }));
 
     map_once(
-        tuple((mws(config_key), mws(char('=')), mws(value))),
+        (mws(config_key), mws(char('=')), mws(value)),
         move |(key, eq, value)| {
             let key = key.map(|k| k.as_str().to_string());
             let value = Box::new(value);
@@ -32,7 +32,7 @@ fn config_key(input: LocatedSpan) -> IResult<String> {
 /// Tries to parse a config map
 pub fn config_map(input: LocatedSpan) -> IResult<Token> {
     map_once(
-        tuple((mws(char('{')), many0(kvp), mws(char('}')))),
+        (mws(char('{')), many0(kvp), mws(char('}'))),
         move |(lparen, inner, rparen)| {
             Token::Config(Block {
                 lparen,
@@ -47,8 +47,8 @@ pub fn config_map(input: LocatedSpan) -> IResult<Token> {
 mod tests {
     use super::config_map::config_map;
     use super::{LocatedSpan, State};
-    use crate::parser::source::InMemoryParsingSource;
     use crate::parser::ParserInstance;
+    use crate::parser::source::InMemoryParsingSource;
     use std::sync::{Arc, Mutex};
 
     #[test]

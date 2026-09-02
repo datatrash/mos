@@ -1,5 +1,5 @@
-use crate::codegen::{Symbol, SymbolTable, SymbolType};
 use crate::LINE_ENDING;
+use crate::codegen::{Symbol, SymbolTable, SymbolType};
 use itertools::Itertools;
 
 pub fn to_vice_symbols(table: &SymbolTable<Symbol>) -> String {
