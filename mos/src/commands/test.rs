@@ -4,9 +4,9 @@ use crate::diagnostic_emitter::{DiagnosticEmitter, MosResult};
 use crate::test_runner::{ExecuteResult, TestRunner, enumerate_test_cases, format_cpu_details};
 use crate::utils::paint;
 use ansi_term::Colour;
+use mos_core::parser::IdentifierPath;
 use mos_core::parser::code_map::SpanLoc;
 use mos_core::parser::source::{FileSystemParsingSource, ParsingSource};
-use mos_core::parser::IdentifierPath;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -46,10 +46,7 @@ pub fn test_command(
 
     // Command-line flags take precedence over the [test] section of mos.toml.
     let test_name = test_args.name.clone().or_else(|| cfg.test.name.clone());
-    let test_filter = test_args
-        .filter
-        .clone()
-        .or_else(|| cfg.test.filter.clone());
+    let test_filter = test_args.filter.clone().or_else(|| cfg.test.filter.clone());
 
     let test_cases = filter_test_cases(test_cases, test_name.as_deref(), test_filter.as_deref());
 
@@ -57,7 +54,12 @@ pub fn test_command(
         // Emit one test per line as "name<TAB>relative-path:line" so clients (e.g. the IntelliJ
         // plugin) can enumerate tests and map them back to their source locations.
         for (location, test_case) in &test_cases {
-            log::info!("{}\t{}\t{}", test_case, location.file.name(), location.begin.line + 1);
+            log::info!(
+                "{}\t{}\t{}",
+                test_case,
+                location.file.name(),
+                location.begin.line + 1
+            );
         }
         log::info!(
             "test result: {}. {} passed; {} failed",
@@ -178,7 +180,16 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            test_command(&test_args(), &TestArgs { name: None, filter: None, list: false }, root().as_path(), &cfg)?,
+            test_command(
+                &test_args(),
+                &TestArgs {
+                    name: None,
+                    filter: None,
+                    list: false
+                },
+                root().as_path(),
+                &cfg
+            )?,
             0
         );
         Ok(())
@@ -200,7 +211,16 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            test_command(&test_args(), &TestArgs { name: None, filter: None, list: false }, root().as_path(), &cfg)?,
+            test_command(
+                &test_args(),
+                &TestArgs {
+                    name: None,
+                    filter: None,
+                    list: false
+                },
+                root().as_path(),
+                &cfg
+            )?,
             1
         );
         Ok(())
