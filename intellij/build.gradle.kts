@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "sh.datatra.mos"
-version = "0.1.0"
+version = "0.1.1"
 
 repositories {
     mavenCentral()
@@ -33,10 +33,10 @@ dependencies {
 
 java {
     // Target the JVM bytecode level of the IntelliJ platform (17). The compiler JVM runs on the
-    // newest JDK that is present — there is no strict single-version toolchain, so a newer JDK than
-    // the platform's own requirement (21) can be used to build the plugin.
+    // same JDK version the underlying IDE ships with (21), so the plugin and its test sandbox stay
+    // byte-for-byte compatible with the bundled JetBrains Runtime.
     toolchain {
-        languageVersion = JavaLanguageVersion.of(26)
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
