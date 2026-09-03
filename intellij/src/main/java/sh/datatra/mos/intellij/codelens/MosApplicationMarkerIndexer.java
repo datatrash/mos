@@ -62,7 +62,7 @@ public final class MosApplicationMarkerIndexer {
 
     /** The runnable start offsets (from {@link MosApplicationStarts#find}) for {@code file}. */
     public @NotNull Set<Integer> startOffsets(@NotNull VirtualFile file) {
-        Document document = FileDocumentManager.getInstance().getDocument(file, project);
+        Document document = FileDocumentManager.getInstance().getDocument(file);
         long stamp = document != null ? document.getModificationStamp() : file.getModificationStamp();
         if (file.equals(cachedStartFile) && stamp == cachedStartStamp) {
             return cachedStartOffsets;
