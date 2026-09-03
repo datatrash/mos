@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "sh.datatra.mos"
-version = "0.1.1"
+version = "0.1.2"
 
 repositories {
     mavenCentral()
@@ -19,6 +19,7 @@ dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.2")
         bundledPlugin("org.jetbrains.plugins.textmate")
+        bundledPlugin("com.intellij.modules.json")
         plugin("com.redhat.devtools.lsp4ij:0.21.0")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
         pluginVerifier()

@@ -3,6 +3,7 @@
     <name>MOS 6502</name>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
+    <depends>com.intellij.modules.json</depends>
 
     <resource-bundle>messages.MosBundle</resource-bundle>
 
@@ -53,6 +54,10 @@
                 language="MOS6502"
                 implementationClass="sh.datatra.mos.intellij.codelens.MosApplicationEntryLineMarkerContributor"/>
         <notificationGroup id="MOS" displayType="BALLOON"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="JavaScript.JsonSchema">
+        <ProviderFactory implementation="sh.datatra.mos.intellij.schema.MosTomlJsonSchemaProviderFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">

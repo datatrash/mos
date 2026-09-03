@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sh.datatra.mos:mos-toml-schema",
+  "title": "MOS 6502 Configuration",
+  "description": "Configuration for the MOS 6502 assembler toolchain (mos.toml).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Build",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "default": "main.asm",
+          "description": "Path to the assembly source file to assemble."
+        },
+        "target-directory": {
+          "type": "string",
+          "default": "target",
+          "description": "Directory where build artefacts are written."
+        },
+        "listing": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to also emit a .lst listing file."
+        },
+        "symbols": {
+          "type": "array",
+          "items": {
+            "enum": ["vice"],
+            "description": "Emit symbol output for the VICE emulator (.vs file)."
+          },
+          "description": "Symbol table formats to emit."
+        },
+        "output-format": {
+          "enum": ["prg", "bin"],
+          "description": "Binary output format. Defaults to prg for single-bank, bin otherwise."
+        },
+        "output-filename": {
+          "type": "string",
+          "description": "Override the generated binary's file name."
+        }
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Test",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Run only the test with this exact name."
+        },
+        "filter": {
+          "type": "string",
+          "description": "Run only tests whose name contains this substring."
+        }
+      }
+    },
+    "formatting": {
+      "type": "object",
+      "additionalProperties": false,
+      "title": "Formatting",
+      "properties": {
+        "mnemonics": {
+          "type": "object",
+          "additionalProperties": false,
+          "title": "Mnemonics",
+          "properties": {
+            "casing": {
+              "enum": ["lowercase", "uppercase"],
+              "default": "lowercase"
+            },
+            "register-casing": {
+              "enum": ["lowercase", "uppercase"],
+              "default": "lowercase"
+            }
+          }
+        },
+        "braces": {
+          "type": "object",
+          "additionalProperties": false,
+          "title": "Braces",
+          "properties": {
+            "position": {
+              "enum": ["same-line", "new-line"],
+              "default": "same-line"
+            }
+          }
+        },
+        "whitespace": {
+          "type": "object",
+          "additionalProperties": false,
+          "title": "Whitespace",
+          "properties": {
+            "indent": {
+              "type": "integer",
+              "default": 4
+            },
+            "label-margin": {
+              "type": "integer",
+              "default": 20
+            },
+            "label-alignment": {
+              "enum": ["left", "right"],
+              "default": "right"
+            },
+            "code-margin": {
+              "type": "integer",
+              "default": 30
+            }
+          }
+        },
+        "listing": {
+          "type": "object",
+          "additionalProperties": false,
+          "title": "Listing",
+          "properties": {
+            "num-bytes-per-line": {
+              "type": "integer",
+              "default": 8
+            }
+          }
+        }
+      }
+    }
+  }
+}
