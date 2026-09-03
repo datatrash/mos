@@ -8,6 +8,7 @@ import {
 } from "vscode-languageclient/node";
 import type {BinaryManager} from "./binary-manager.js";
 import type {MosLogger} from "./logging.js";
+import {isMosProject} from "./mos-project.js";
 import {
   DEBUG_ADAPTER_HOST,
   LANGUAGE_ID,
@@ -28,6 +29,11 @@ export class LanguageRuntime implements vscode.Disposable {
   ): Promise<number> {
     if (folder === undefined) {
       throw new Error("Open a MOS workspace before starting the language server.");
+    }
+    if (!(await isMosProject(folder))) {
+      throw new Error(
+        `Open a workspace containing mos.toml at its root before starting MOS.`
+      );
     }
     const key = folder.uri.toString();
     await this.runExclusively(async () => {

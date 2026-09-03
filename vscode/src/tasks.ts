@@ -44,7 +44,7 @@ export async function executeMosTask(
 ): Promise<void> {
   const folder = activeWorkspaceFolder();
   if (folder === undefined) {
-    throw new Error("Open a workspace containing mos.toml first.");
+    throw new Error("Open a workspace with mos.toml at its root first.");
   }
   const tasks = await provider.provideTasks();
   const task = tasks.find(

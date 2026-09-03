@@ -42,7 +42,7 @@ export class MosDebugConfigurationProvider
     }
     if (typeof configuration.workspace !== "string") {
       void vscode.window.showErrorMessage(
-        "Open a workspace containing mos.toml before starting MOS debugging."
+        "Open a workspace with mos.toml at its root before starting MOS debugging."
       );
       return undefined;
     }

@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.21
+
+- A workspace is now only treated as a MOS project when `mos.toml` is at its root, matching the IntelliJ plugin. The language server, Run MOS/Debug MOS CodeLens, and build/test tasks no longer activate for folders that only contain a nested `mos.toml`.
+
 ## 0.0.20
 
 - Replaced the legacy extension with a modern language server and debug adapter integration.

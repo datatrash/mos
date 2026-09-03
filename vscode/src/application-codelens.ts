@@ -6,7 +6,7 @@ import {
   parseLaunchConfigurations,
   writableLaunchConfigurations
 } from "./launch-config.js";
-import {parseBuildEntry} from "./project-config.js";
+import {buildEntryUri, isMosProject} from "./mos-project.js";
 
 export class ApplicationCodeLensProvider
   implements vscode.CodeLensProvider, vscode.Disposable
@@ -32,7 +32,12 @@ export class ApplicationCodeLensProvider
     ) {
       return [];
     }
-    if (!(await isBuildEntry(document))) {
+    const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (folder === undefined || !(await isMosProject(folder))) {
+      return [];
+    }
+    const entryUri = await buildEntryUri(folder);
+    if (entryUri === undefined || normalizedUri(document.uri) !== normalizedUri(entryUri)) {
       return [];
     }
 
@@ -136,29 +141,6 @@ async function ensureLaunchConfiguration(
       : vscode.ConfigurationTarget.Workspace
   );
   return true;
-}
-
-async function isBuildEntry(document: vscode.TextDocument): Promise<boolean> {
-  const folder = vscode.workspace.getWorkspaceFolder(document.uri);
-  if (folder === undefined) {
-    return false;
-  }
-  const matches = await vscode.workspace.findFiles(
-    new vscode.RelativePattern(folder, "mos.toml"),
-    null,
-    1
-  );
-  let entry = "main.asm";
-  const configUri = matches[0];
-  if (configUri !== undefined) {
-    const contents = await vscode.workspace.fs.readFile(configUri);
-    entry = parseBuildEntry(new TextDecoder().decode(contents));
-  }
-  const entryUri = vscode.Uri.joinPath(
-    folder.uri,
-    ...entry.replaceAll("\\", "/").split("/")
-  );
-  return normalizedUri(document.uri) === normalizedUri(entryUri);
 }
 
 function normalizedUri(uri: vscode.Uri): string {

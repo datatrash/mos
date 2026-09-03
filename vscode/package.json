@@ -2,7 +2,7 @@
   "name": "mos",
   "displayName": "MOS 6502",
   "description": "Language, build, test, and debugging support for the MOS 6502 assembler.",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "publisher": "datatrash",
   "license": "MIT",
   "preview": true,

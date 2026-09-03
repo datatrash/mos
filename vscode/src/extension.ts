@@ -13,6 +13,7 @@ import {LanguageRuntime} from "./language-runtime.js";
 import {MosLogger} from "./logging.js";
 import {LANGUAGE_ID} from "./protocol.js";
 import {executeMosTask, MosTaskProvider} from "./tasks.js";
+import {isMosProject} from "./mos-project.js";
 
 let runtime: LanguageRuntime | undefined;
 
@@ -168,6 +169,9 @@ async function startRuntime(
   status: vscode.StatusBarItem,
   folder?: vscode.WorkspaceFolder
 ): Promise<void> {
+  if (folder === undefined || !(await isMosProject(folder))) {
+    return;
+  }
   status.text = "$(sync~spin) MOS";
   try {
     await languageRuntime.ensureStarted(folder);
