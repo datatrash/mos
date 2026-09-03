@@ -1,8 +1,8 @@
 {
   "name": "mos",
-  "displayName": "MOS 6502",
-  "description": "Language, build, test, and debugging support for the MOS 6502 assembler.",
-  "version": "0.0.21",
+  "displayName": "MOS",
+  "description": "Language, build, test, and debugging support for the MOS assembler.",
+  "version": "0.0.22",
   "publisher": "datatrash",
   "license": "MIT",
   "preview": true,
@@ -63,7 +63,6 @@
       {
         "id": "mos6502",
         "aliases": [
-          "MOS 6502 Assembly",
           "MOS Assembly"
         ],
         "extensions": [

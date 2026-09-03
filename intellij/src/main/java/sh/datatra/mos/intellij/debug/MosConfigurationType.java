@@ -11,7 +11,7 @@ public final class MosConfigurationType extends ConfigurationTypeBase {
     public MosConfigurationType() {
         super(
                 ID,
-                "MOS 6502",
+                "MOS",
                 "Run or debug a MOS application or test",
                 NotNullLazyValue.createValue(() -> MosIcons.FILE)
         );

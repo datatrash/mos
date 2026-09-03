@@ -1,6 +1,6 @@
 <idea-plugin>
     <id>sh.datatra.mos</id>
-    <name>MOS 6502</name>
+    <name>MOS</name>
     <depends>com.intellij.modules.platform</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
     <depends>com.intellij.modules.json</depends>
@@ -9,7 +9,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType
-                name="MOS 6502 Assembly"
+                name="MOS Assembly"
                 language="MOS6502"
                 implementationClass="sh.datatra.mos.intellij.lang.MosFileType"
                 fieldName="INSTANCE"

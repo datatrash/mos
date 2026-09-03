@@ -14,7 +14,7 @@ public final class MosTestConfigurationType extends ConfigurationTypeBase {
         super(
                 ID,
                 "MOS Tests",
-                "Run tests in a MOS 6502 project",
+                "Run tests in a MOS project",
                 NotNullLazyValue.createValue(() -> MosIcons.FILE)
         );
         addFactory(new MosTestConfigurationFactory(this));

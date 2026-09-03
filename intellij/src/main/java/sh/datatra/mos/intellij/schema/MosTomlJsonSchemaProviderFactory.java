@@ -31,7 +31,7 @@ public final class MosTomlJsonSchemaProviderFactory implements JsonSchemaProvide
 
         @Override
         public @Nls @NotNull String getName() {
-            return "mos.toml (MOS 6502)";
+            return "mos.toml (MOS)";
         }
 
         @Override

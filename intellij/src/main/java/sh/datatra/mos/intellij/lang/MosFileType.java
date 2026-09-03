@@ -15,12 +15,12 @@ public final class MosFileType extends LanguageFileType {
 
     @Override
     public @NotNull String getName() {
-        return "MOS 6502 Assembly";
+        return "MOS Assembly";
     }
 
     @Override
     public @NotNull String getDescription() {
-        return "MOS 6502 assembly source";
+        return "MOS assembly source";
     }
 
     @Override

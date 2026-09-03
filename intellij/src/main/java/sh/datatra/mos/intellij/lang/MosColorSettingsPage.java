@@ -45,7 +45,7 @@ public final class MosColorSettingsPage implements ColorSettingsPage {
     @Override
     public @NotNull String getDemoText() {
         return """
-                // MOS 6502 assembly
+                // MOS assembly
                 .const border = $d020
                 .var frame = 0
                 .macro clear() {

@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.22
+
+- Renamed user-facing "MOS 6502" references to "MOS" throughout the extension (display name, description, grammar alias, and README).
+
 ## 0.0.21
 
 - A workspace is now only treated as a MOS project when `mos.toml` is at its root, matching the IntelliJ plugin. The language server, Run MOS/Debug MOS CodeLens, and build/test tasks no longer activate for folders that only contain a nested `mos.toml`.

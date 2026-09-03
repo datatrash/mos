@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "sh.datatra.mos:mos-toml-schema",
-  "title": "MOS 6502 Configuration",
-  "description": "Configuration for the MOS 6502 assembler toolchain (mos.toml).",
+  "title": "MOS Configuration",
+  "description": "Configuration for the MOS assembler toolchain (mos.toml).",
   "type": "object",
   "additionalProperties": false,
   "properties": {

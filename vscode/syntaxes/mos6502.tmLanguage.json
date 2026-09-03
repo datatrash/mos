@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "MOS 6502 Assembly",
+  "name": "MOS Assembly",
   "scopeName": "source.mos6502",
   "patterns": [
     {"include": "#comments"},

@@ -17,6 +17,6 @@ final class MosFile extends PsiFileBase {
 
     @Override
     public String toString() {
-        return "MOS 6502 Assembly";
+        return "MOS Assembly";
     }
 }

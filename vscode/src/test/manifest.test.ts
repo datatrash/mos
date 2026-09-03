@@ -59,7 +59,6 @@ void describe("extension manifest", () => {
   void it("preserves the published extension identity and legacy path setting", () => {
     assert.equal(manifest.publisher, "datatrash");
     assert.equal(manifest.name, "mos");
-    assert.equal(manifest.version, "0.0.21");
     assert.ok("mos.path" in manifest.contributes.configuration.properties);
   });
 

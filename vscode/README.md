@@ -1,6 +1,6 @@
-# MOS 6502 for Visual Studio Code
+# MOS for Visual Studio Code
 
-Modern language, build, test, and debugging support for the [MOS 6502 assembler](https://mos.datatra.sh/).
+Modern language, build, test, and debugging support for the [MOS assembler](https://mos.datatra.sh/).
 
 Opening an `.asm` file activates the extension. In a trusted workspace, it downloads the latest MOS release for the current platform into VS Code's extension storage and starts `mos lsp`. On later starts it checks GitHub for a newer release and asks before updating. Set `mos.executablePath` to use a custom build instead.
 
