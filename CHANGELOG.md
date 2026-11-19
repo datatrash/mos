@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.5 (2026-11-19)
 
 ### Bugfixes
 * `.align 0` (or a negative alignment) crashed the assembler and the language server; it is now reported as an error.
