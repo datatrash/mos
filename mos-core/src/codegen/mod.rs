@@ -1958,7 +1958,10 @@ pub mod tests {
     #[test]
     fn align() -> CoreResult<()> {
         let ctx = test_codegen("nop\n.align 4\nnop")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0, 0, 0, 0xea]);
+        assert_eq!(
+            ctx.current_segment().range_data(),
+            vec![0xea, 0, 0, 0, 0xea]
+        );
         Ok(())
     }
 
@@ -1972,7 +1975,10 @@ pub mod tests {
     #[test]
     fn align_must_be_positive() {
         let err = test_codegen("nop\n.align 0").err().unwrap();
-        assert!(err.to_string().contains("alignment must be greater than zero"));
+        assert!(
+            err.to_string()
+                .contains("alignment must be greater than zero")
+        );
     }
 
     #[test]

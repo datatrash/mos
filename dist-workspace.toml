@@ -26,3 +26,7 @@ checksum = "sha256"
 pr-run-mode = "plan"
 dispatch-releases = true
 github-attestations = true
+
+# GitHub no longer provides the macOS 14 runner that dist uses by default for this target.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"

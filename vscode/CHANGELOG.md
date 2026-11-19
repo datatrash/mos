@@ -1,10 +1,14 @@
 # Change Log
 
-## 0.0.22
+## 0.0.23
 
-- Renamed user-facing "MOS 6502" references to "MOS" throughout the extension (display name, description, grammar name, and README). "MOS 6502 Assembly" remains as a secondary language alias.
+- Restored "MOS 6502 Assembly" as a secondary language alias.
 - Extension activation no longer waits for the MOS update prompt to be answered; the language server starts in the background.
 - **MOS: Install or Update** now always performs its own update check, even when another check is already in progress.
+
+## 0.0.22
+
+- Renamed user-facing "MOS 6502" references to "MOS" throughout the extension (display name, description, grammar name, and README).
 
 ## 0.0.21
 
