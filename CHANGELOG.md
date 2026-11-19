@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Bugfixes
+* `.align 0` (or a negative alignment) crashed the assembler and the language server; it is now reported as an error.
+* `.align` added a full block of padding when the program counter was already aligned.
+* An out-of-range branch to address `$0000` was silently assembled with a zero offset instead of reporting "branch too far".
+* An error inside a `.segment "name" { ... }` block caused the code after the block to be emitted into that segment.
+* Preparing a rename in the language server could crash on lines containing non-ASCII characters or on positions past the end of a line.
+
 ## 0.8.4 (2026-9-2)
 
 ### Bugfixes

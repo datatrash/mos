@@ -1,6 +1,7 @@
 package sh.datatra.mos.intellij.lang;
 
 import com.intellij.openapi.fileTypes.LanguageFileType;
+import org.jetbrains.annotations.Nls;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -13,8 +14,14 @@ public final class MosFileType extends LanguageFileType {
         super(MosLanguage.INSTANCE);
     }
 
+    /** Persisted identifier for user file type associations; must match plugin.xml and never change. */
     @Override
     public @NotNull String getName() {
+        return "MOS 6502 Assembly";
+    }
+
+    @Override
+    public @Nls @NotNull String getDisplayName() {
         return "MOS Assembly";
     }
 

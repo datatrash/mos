@@ -38,11 +38,23 @@ export class BinaryManager {
     private readonly logger: MosLogger
   ) {}
 
+  /** Resolves the MOS executable. A forced call waits for any in-flight resolution, then runs its own. */
   getExecutable(forceUpdate = false): Promise<string> {
-    this.inFlight ??= this.resolveExecutable(forceUpdate).finally(() => {
-      this.inFlight = undefined;
-    });
-    return this.inFlight;
+    if (this.inFlight !== undefined && !forceUpdate) {
+      return this.inFlight;
+    }
+    const previous = this.inFlight ?? Promise.resolve("");
+    const next = previous
+      .catch(() => "")
+      .then(async () => this.resolveExecutable(forceUpdate));
+    this.inFlight = next;
+    const clear = (): void => {
+      if (this.inFlight === next) {
+        this.inFlight = undefined;
+      }
+    };
+    next.then(clear, clear);
+    return next;
   }
 
   private async resolveExecutable(forceUpdate: boolean): Promise<string> {

@@ -33,24 +33,31 @@ impl RequestHandler<PrepareRenameRequest> for PrepareRenameRequestHandler {
             let source_column = params.position.character as usize;
 
             if let Some(source_file) = codegen.tree().files.get(file_path) {
-                let line = source_file.file.source_line(source_line);
+                if source_line >= source_file.file.num_lines() {
+                    return Ok(None);
+                }
+                // Columns count characters, so index by char rather than by byte.
+                let line = source_file
+                    .file
+                    .source_line(source_line)
+                    .chars()
+                    .collect::<Vec<_>>();
+                let column = source_column.min(line.len());
+                let is_identifier_char = |c: &char| c.is_alphanumeric() || *c == '_';
 
-                // Try to find the start of identifier under the cursor
-                let start = line[..source_column]
-                    .rfind(|c: char| !c.is_alphanumeric() && c != '_')
+                // The identifier under the cursor spans [start, end)
+                let start = line[..column]
+                    .iter()
+                    .rposition(|c| !is_identifier_char(c))
                     .map(|pos| pos + 1)
                     .unwrap_or_default();
+                let end = column
+                    + line[column..]
+                        .iter()
+                        .position(|c| !is_identifier_char(c))
+                        .unwrap_or(line.len() - column);
 
-                // Find the end of the identifier under the cursor
-                let end = line[source_column..]
-                    .find(|c: char| !c.is_alphanumeric() && c != '_')
-                    .unwrap_or_else(|| line[source_column..].len());
-
-                // Adjust the offset to match the full line, not just the substring
-                let end = source_column + end;
-
-                // This is now the identifier under the cursor
-                let id = Identifier::from(&line[start..end]);
+                let id = Identifier::from(line[start..end].iter().collect::<String>().as_str());
 
                 if id.is_super() {
                     // We don't want to allow renaming 'super'
@@ -239,6 +246,32 @@ mod tests {
 
         // 'lda foo.bar.*s*uper'
         server.prepare_rename(test_root().join("main.asm"), Position::new(3, 12))?;
+        assert_can_rename(&server, false, 0, 0..0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_rename_handles_non_ascii_and_out_of_range_positions() -> MosResult<()> {
+        let mut server = LspServer::new(LspContext::new());
+
+        server.did_open_text_document(
+            test_root().join("main.asm"),
+            "foo: nop\n.text \"é\"\nlda foo ; é",
+        )?;
+
+        // '.text "é*"*' would split the 'é' if the column were used as a byte index
+        server.prepare_rename(test_root().join("main.asm"), Position::new(1, 8))?;
+        assert_can_rename(&server, false, 0, 0..0);
+
+        // 'lda foo ; é*' (end of line)
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 11))?;
+        assert_can_rename(&server, false, 0, 0..0);
+
+        // Past the end of the line and past the end of the file
+        server.prepare_rename(test_root().join("main.asm"), Position::new(2, 100))?;
+        assert_can_rename(&server, false, 0, 0..0);
+        server.prepare_rename(test_root().join("main.asm"), Position::new(100, 0))?;
         assert_can_rename(&server, false, 0, 0..0);
 
         Ok(())

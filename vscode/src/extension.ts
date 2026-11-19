@@ -17,7 +17,7 @@ import {isMosProject} from "./mos-project.js";
 
 let runtime: LanguageRuntime | undefined;
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export function activate(context: vscode.ExtensionContext): void {
   const logger = new MosLogger();
   const binaries = new BinaryManager(context, logger);
   const languageRuntime = new LanguageRuntime(binaries, logger);
@@ -151,9 +151,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
+  // Not awaited: starting can wait on an update prompt, which must not hold up activation.
   if (vscode.workspace.isTrusted) {
     for (const folder of openMosWorkspaceFolders()) {
-      await startRuntime(languageRuntime, logger, status, folder);
+      void startRuntime(languageRuntime, logger, status, folder);
     }
   }
 }

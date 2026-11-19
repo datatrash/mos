@@ -63,7 +63,8 @@
       {
         "id": "mos6502",
         "aliases": [
-          "MOS Assembly"
+          "MOS Assembly",
+          "MOS 6502 Assembly"
         ],
         "extensions": [
           ".asm"

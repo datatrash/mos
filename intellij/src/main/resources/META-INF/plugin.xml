@@ -9,7 +9,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType
-                name="MOS Assembly"
+                name="MOS 6502 Assembly"
                 language="MOS6502"
                 implementationClass="sh.datatra.mos.intellij.lang.MosFileType"
                 fieldName="INSTANCE"

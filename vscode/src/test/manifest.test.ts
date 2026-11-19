@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import manifest from "../../package.json";
+import lockfile from "../../package-lock.json";
 import {DEBUG_TYPE, LANGUAGE_ID} from "../protocol.js";
 
 void describe("extension manifest", () => {
@@ -60,6 +61,11 @@ void describe("extension manifest", () => {
     assert.equal(manifest.publisher, "datatrash");
     assert.equal(manifest.name, "mos");
     assert.ok("mos.path" in manifest.contributes.configuration.properties);
+  });
+
+  void it("keeps the lockfile version in sync with the manifest", () => {
+    assert.equal(lockfile.version, manifest.version);
+    assert.equal(lockfile.packages[""].version, manifest.version);
   });
 
   void it("checks for updates without silently auto-installing them", () => {

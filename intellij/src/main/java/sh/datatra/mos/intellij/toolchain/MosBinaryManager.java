@@ -10,11 +10,14 @@ import com.intellij.execution.process.CapturingProcessHandler;
 import com.intellij.execution.process.ProcessOutput;
 import com.intellij.ide.impl.TrustedProjects;
 import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.SystemInfo;
@@ -62,7 +65,31 @@ public final class MosBinaryManager {
         return ApplicationManager.getApplication().getService(MosBinaryManager.class);
     }
 
-    public synchronized @NotNull Path getExecutable(@NotNull Project project, boolean forceUpdate)
+    /**
+     * Resolves the MOS executable, downloading or updating it if needed. On the EDT the work runs in a
+     * modal background task, because it may block on the network and on a child process.
+     */
+    public @NotNull Path getExecutable(@NotNull Project project, boolean forceUpdate)
+            throws IOException, ExecutionException {
+        if (!ApplicationManager.getApplication().isDispatchThread()) {
+            return resolveExecutable(project, forceUpdate);
+        }
+        Task.WithResult<Path, Exception> task = new Task.WithResult<>(project, "Resolving MOS executable", true) {
+            @Override
+            protected Path compute(@NotNull ProgressIndicator indicator) throws Exception {
+                return resolveExecutable(project, forceUpdate);
+            }
+        };
+        try {
+            return ProgressManager.getInstance().run(task);
+        } catch (IOException | ExecutionException | RuntimeException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new ExecutionException(error);
+        }
+    }
+
+    private synchronized @NotNull Path resolveExecutable(@NotNull Project project, boolean forceUpdate)
             throws IOException, ExecutionException {
         if (!TrustedProjects.isTrusted(project)) {
             throw new ExecutionException("Trust this project before running or downloading MOS.");
@@ -97,6 +124,8 @@ public final class MosBinaryManager {
 
         try {
             return installLatest(platform, currentIsValid ? current : null, forceUpdate, project);
+        } catch (ProcessCanceledException cancelled) {
+            throw cancelled;
         } catch (IOException | ExecutionException | RuntimeException error) {
             if (currentIsValid && !forceUpdate) {
                 LOG.warn("Could not check for a MOS update; using " + settings.managedTag, error);
@@ -371,7 +400,8 @@ public final class MosBinaryManager {
         if (ApplicationManager.getApplication().isDispatchThread()) {
             prompt.run();
         } else {
-            ApplicationManager.getApplication().invokeAndWait(prompt);
+            // any(): the caller may be the modal task started by getExecutable on the EDT.
+            ApplicationManager.getApplication().invokeAndWait(prompt, ModalityState.any());
         }
         return accepted.get();
     }

@@ -538,7 +538,13 @@ impl CodegenContext {
             Token::Align { value, .. } => {
                 if let Some(pc) = self.try_current_target_pc() {
                     if let Some(align) = self.evaluate_expression_as_i64(value, true)? {
-                        let padding = (align - (pc.as_i64() % align)) as usize;
+                        if align <= 0 {
+                            return Err(Diagnostic::error()
+                                .with_message("alignment must be greater than zero")
+                                .with_labels(vec![value.span.to_label()])
+                                .into());
+                        }
+                        let padding = ((align - pc.as_i64() % align) % align) as usize;
                         let mut bytes = Vec::new();
                         bytes.resize(padding, 0u8);
                         self.emit(value.span, &bytes)?;
@@ -904,10 +910,6 @@ impl CodegenContext {
                                     offset += 256;
                                 }
                                 offset as i64
-                            } else if target_pc == 0 {
-                                // We probably couldn't determine the target_pc, so let's ignore the error for now.
-                                // We'll just return a dummy offset. This instruction will be re-emitted in a next pass anyway.
-                                0
                             } else {
                                 return Err(Diagnostic::error()
                                     .with_message(format!(
@@ -1071,8 +1073,9 @@ impl CodegenContext {
                         Some(block) => {
                             let old_segment =
                                 std::mem::replace(&mut self.current_segment, Some(segment_id));
-                            self.emit_tokens(&block.inner)?;
+                            let result = self.emit_tokens(&block.inner);
                             self.current_segment = old_segment;
+                            result?;
                         }
                         None => {
                             self.current_segment = Some(segment_id);
@@ -1954,8 +1957,47 @@ pub mod tests {
 
     #[test]
     fn align() -> CoreResult<()> {
-        let ctx = test_codegen("nop\n.align 3\nnop")?;
-        assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0, 0, 0xea]);
+        let ctx = test_codegen("nop\n.align 4\nnop")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0, 0, 0, 0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn align_is_a_no_op_when_already_aligned() -> CoreResult<()> {
+        let ctx = test_codegen("nop\n.align 1\nnop\n.align 2\nnop")?;
+        assert_eq!(ctx.current_segment().range_data(), vec![0xea, 0xea, 0xea]);
+        Ok(())
+    }
+
+    #[test]
+    fn align_must_be_positive() {
+        let err = test_codegen("nop\n.align 0").err().unwrap();
+        assert!(err.to_string().contains("alignment must be greater than zero"));
+    }
+
+    #[test]
+    fn branch_to_address_zero_must_be_in_range() {
+        let err = test_codegen("* = $c000\nbeq 0").err().unwrap();
+        assert!(err.to_string().contains("branch too far"));
+    }
+
+    #[test]
+    fn segment_block_errors_do_not_leak_the_segment() -> CoreResult<()> {
+        let src = r#"
+            .define segment { name = "a" start = $1000 }
+            .define segment { name = "b" start = $2000 }
+            .segment "b" { .align 0 }
+            asl
+            "#;
+        let ast = parse_or_err(
+            Path::new("test.asm"),
+            InMemoryParsingSource::new().add("test.asm", src).into(),
+        )?;
+        let (ctx, err) = codegen(ast, CodegenOptions::default());
+        assert!(!err.is_empty());
+        let ctx = ctx.unwrap();
+        assert_eq!(ctx.get_segment("a").range_data(), vec![0x0a]);
+        assert!(ctx.get_segment("b").range_data().is_empty());
         Ok(())
     }
 
